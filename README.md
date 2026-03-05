@@ -1,202 +1,187 @@
-# apps_backend — Centralized API Server
+# next-backend — Centralized Serverless API
 
-A standalone **Node.js + Express + TypeScript** backend that serves as the single source of truth for all database operations, payments, authentication, and business logic shared across the **Manasik Foundation** and **Ghadaq Association** platforms.
+A **Next.js 16 App Router** serverless backend deployed on **Vercel**. Single source of truth for all database operations, payments, authentication, and business logic shared across the **Manasik Foundation** and **Ghadaq Association** platforms.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    MongoDB Atlas (manasik)                   │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-       ┌──────────▼───────────┐
-       │    apps_backend      │
-       │   Express API :5000  │
-       └──┬──────┬────────────┘
-          │      │
-   ┌──────▼──┐ ┌─▼──────────┐ ┌─────────────┐
-   │manasik  │ │  ghadaq/   │ │ admin_panel │
-   │  :3000  │ │   :3002    │ │    :3001    │
-   └─────────┘ └────────────┘ └─────────────┘
++-------------------------------------------------------------+
+|                    MongoDB Atlas (manasik)                   |
++-----------------+-------------------------------------------+
+                  |
+       +----------v-----------+
+       |    next-backend       |
+       |   Next.js API :3000   |
+       |   (Vercel Serverless) |
+       +--+------+------+-----+
+          |      |      |
+   +------v--+ +-v------v---+ +-------------+
+   |manasik  | |  ghadaq/   | | admin_panel |
+   |  :3001  | |   :3002    | |    :3003    |
+   +---------+ +------------+ +-------------+
 ```
 
 All three Next.js apps proxy API calls to this backend via `next.config.ts` rewrites. **No frontend app connects to MongoDB directly.**
 
 ---
 
-## Tech Stack
+### Tech Stack
 
-| Concern   | Technology                                   |
-| --------- | -------------------------------------------- |
-| Runtime   | Node.js 18+                                  |
-| Framework | Express 5.1                                  |
-| Language  | TypeScript 5                                 |
-| Database  | MongoDB Atlas via Mongoose 9                 |
-| Auth      | JWT (7d) + bcryptjs + httpOnly cookies       |
-| Payment   | EasyKash Direct Payment API v1 (HMAC-SHA512) |
-| Email     | Resend                                       |
-| Images    | Cloudinary (multer memoryStorage)            |
-| Currency  | fawazahmed0 CDN (6 hr in-memory cache)       |
-| Facebook  | Conversions API v21 (SHA-256 hashing)        |
+| Concern  | Technology                                   |
+| -------- | -------------------------------------------- |
+| Runtime  | Node.js 18+ (Vercel Serverless Functions)    |
+| Framework| Next.js 16.1.6 (App Router)                  |
+| Language | TypeScript 5                                 |
+| Database | MongoDB Atlas via Mongoose 9                 |
+| Auth     | JWT (7d) + bcryptjs + httpOnly cookies        |
+| Payment  | EasyKash Direct Payment API v1 (HMAC-SHA512) |
+| Email    | Resend (dual-brand HTML templates)            |
+| Images   | Cloudinary (formData upload)                  |
+| Currency | fawazahmed0 CDN (6hr in-memory cache)         |
+| Facebook | Conversions API v21 (SHA-256 hashing)        |
+| Cron     | Vercel Cron (daily price updates)             |
 
 ---
 
-## Folder Structure
+### Folder Structure
 
 ```
-src/
-  app.ts             — Express app, CORS, route mounts
-  server.ts          — Entry point, dotenv load, DB connect
-  config/
-    db.ts            — MongoDB connection
-  middleware/
-    auth.ts          — requireAuth (JWT cookie → req.user)
-    error-handler.ts — Central error handler
-  models/            — 8 Mongoose models
-  services/          — jwt, logger, rate-limit, coupon, currency,
+lib/
+  db.ts              - MongoDB connection singleton
+  auth.ts            - Auth helpers (getAuthUser, requireAuth)
+  models/            - 9 Mongoose models (Product, Order, User,
+                       Coupon, Country, Referral, ActivityLog,
+                       Appearance, CronLog)
+  services/          - jwt, logger, rate-limit, coupon, currency,
                        easykash, fb-capi, cloudinary, email
-  routes/
-    public/          — Unauthenticated routes (/api/*)
-    admin/           — Protected routes (/api/admin/*)
-scripts/
-  create-admin.ts    — CLI tool to create first admin user
+app/api/
+  products/          - Public product routes
+  countries/         - Public country routes
+  coupons/           - Public coupon validation
+  currency/          - Public exchange rates
+  appearance/        - Public appearance config
+  fb-event/          - FB Conversions API proxy
+  payment/           - Checkout, status, webhook, referral-info
+  admin/             - Protected admin routes (all CRUD)
+  cron/              - Vercel Cron job routes
+middleware.ts        - CORS handling for all /api routes
+vercel.json          - Cron schedule configuration
 ```
 
 ---
 
-## API Routes
+### API Routes
 
-### Public (`/api/*`)
+**Public (`/api/*`)**
 
-| Method | Path                    | Description                     |
-| ------ | ----------------------- | ------------------------------- |
-| GET    | `/api/products`         | List products                   |
-| GET    | `/api/products/:id`     | Single product                  |
-| GET    | `/api/countries`        | List countries                  |
-| GET    | `/api/coupons/validate` | Validate coupon code            |
-| POST   | `/api/payment/checkout` | Create order + EasyKash session |
-| GET    | `/api/payment/status`   | Order status by `orderNumber`   |
-| POST   | `/api/payment/webhook`  | EasyKash payment webhook        |
-| GET    | `/api/currency`         | Exchange rates                  |
-| GET    | `/api/appearance`       | Homepage appearance config      |
-| POST   | `/api/fb-event`         | Browser-side FB event proxy     |
+| Method | Path                       | Description                     |
+| ------ | -------------------------- | ------------------------------- |
+| GET    | `/api/products`          | List products (pagination/filters) |
+| GET    | `/api/products/:id`      | Single product                  |
+| GET    | `/api/countries`         | List countries                  |
+| GET    | `/api/countries/:id`     | Single country                  |
+| POST   | `/api/coupons/validate`  | Validate coupon code            |
+| POST   | `/api/payment/checkout`  | Create order + EasyKash session |
+| GET    | `/api/payment/status`    | Order status by orderNumber     |
+| POST   | `/api/payment/webhook`   | EasyKash payment callback       |
+| GET    | `/api/payment/referral-info` | Referral info by order      |
+| GET    | `/api/currency/rates`    | Exchange rates                  |
+| GET    | `/api/appearance`        | Homepage appearance config      |
+| POST   | `/api/fb-event`          | Browser-side FB event proxy     |
 
-### Admin (`/api/admin/*` — requires `admin-token` cookie)
+**Admin (`/api/admin/*` - requires `admin-token` cookie)**
 
-| Method              | Path                      | Description                  |
-| ------------------- | ------------------------- | ---------------------------- |
-| POST                | `/api/admin/auth/login`   | Login                        |
-| GET                 | `/api/admin/auth/me`      | Current user                 |
-| POST                | `/api/admin/auth/logout`  | Logout                       |
-| GET/POST            | `/api/admin/products`     | Products CRUD                |
-| PUT/DELETE          | `/api/admin/products/:id` |                              |
-| GET/PUT             | `/api/admin/orders`       | Orders list + update         |
-| GET/POST/PUT/DELETE | `/api/admin/coupons`      | Coupons                      |
-| GET/POST/PUT/DELETE | `/api/admin/countries`    | Countries                    |
-| GET/POST/PUT/DELETE | `/api/admin/users`        | Admin users                  |
-| GET                 | `/api/admin/referrals`    | Referrals                    |
-| GET                 | `/api/admin/logs`         | Activity logs                |
-| POST                | `/api/admin/upload/image` | Cloudinary image upload      |
-| GET/PUT             | `/api/admin/appearance`   | Appearance config            |
-| GET                 | `/api/admin/currency`     | Force-refresh currency cache |
-| GET                 | `/api/admin/stats`        | Dashboard counts             |
+| Method              | Path                              | Description               |
+| ------------------- | --------------------------------- | ------------------------- |
+| POST                | `/api/admin/auth/login`         | Login (rate-limited)      |
+| GET                 | `/api/admin/auth/me`            | Current user              |
+| POST                | `/api/admin/auth/logout`        | Logout                    |
+| GET/POST            | `/api/admin/products`           | Products list + create    |
+| GET/PUT/DELETE       | `/api/admin/products/:id`      | Product CRUD              |
+| PUT                 | `/api/admin/products/reorder`   | Bulk reorder              |
+| POST                | `/api/admin/products/:id/auto-price` | Auto-price conversion |
+| GET                 | `/api/admin/orders`             | Orders list               |
+| GET/PUT             | `/api/admin/orders/:id`         | Order detail + update     |
+| GET/POST            | `/api/admin/coupons`            | Coupons list + create     |
+| POST                | `/api/admin/coupons/validate`   | Admin coupon validation   |
+| GET/PUT/DELETE       | `/api/admin/coupons/:id`       | Coupon CRUD               |
+| GET/POST            | `/api/admin/countries`          | Countries list + create   |
+| PUT                 | `/api/admin/countries/reorder`  | Bulk reorder              |
+| GET/PUT/DELETE       | `/api/admin/countries/:id`     | Country CRUD              |
+| GET/POST            | `/api/admin/users`              | Users list + create       |
+| GET/PUT/DELETE       | `/api/admin/users/:id`         | User CRUD                 |
+| GET/POST            | `/api/admin/referrals`          | Referrals list + create   |
+| GET/PUT/DELETE       | `/api/admin/referrals/:id`     | Referral CRUD             |
+| GET                 | `/api/admin/logs`               | Activity logs             |
+| POST/DELETE         | `/api/admin/upload/image`       | Cloudinary image mgmt     |
+| GET/PUT             | `/api/admin/appearance/:project`| Appearance config         |
+| GET                 | `/api/admin/currency/rates`     | Admin exchange rates      |
+| GET                 | `/api/admin/stats`              | Dashboard counts          |
+| GET                 | `/api/admin/exchange/logs`      | Cron execution logs       |
+| POST                | `/api/admin/exchange/update-prices` | Manual price update   |
+
+**Cron (`/api/cron/*` - requires `CRON_SECRET`)**
+
+| Method | Path                         | Schedule       | Description                     |
+| ------ | ---------------------------- | -------------- | ------------------------------- |
+| GET    | `/api/cron/update-prices`  | Daily 3:00 UTC | Auto-update product prices via exchange rates |
 
 ---
 
-## Getting Started
+### Getting Started
 
-### 1. Install
-
+**1. Install**
 ```bash
-cd apps_backend
+cd next-backend
 npm install
 ```
 
-### 2. Environment variables
-
-Create a `.env` file in `apps_backend/`:
-
+**2. Environment variables** - Create `.env.local`:
 ```env
-# Server
-PORT=5000
-NODE_ENV=development
-
-# Database
 DATA_BASE_URL=mongodb+srv://user:password@cluster.mongodb.net/manasik
-
-# JWT
 JWT_SECRET=a-long-random-secret-change-in-production
-
-# EasyKash
 EASYKASH_API_KEY=
 EASYKASH_HMAC_SECRET=
-
-# Cloudinary
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
-
-# Resend (transactional email)
 RESEND_API_KEY=
 MANASIK_FROM_EMAIL=orders@manasik.net
 GHADAQ_FROM_EMAIL=orders@ghadqplus.com
-
-# Facebook Conversions API
 API_TOKEN=
 FB_PIXEL_ID=
 FB_TEST_EVENT_CODE=
-
-# Site URLs (used in EasyKash redirects + emails)
 MANASIK_URL=https://www.manasik.net
 GHADAQ_URL=https://www.ghadqplus.com
-
-# CORS (comma-separated)
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:3002
+ALLOWED_ORIGINS=http://localhost:3001,http://localhost:3002,http://localhost:3003
+CRON_SECRET=a-random-secret-for-cron-auth
 ```
 
-### 3. Create first admin
-
+**3. Run**
 ```bash
-npm run create-admin
-```
-
-### 4. Run
-
-```bash
-npm run dev    # development (tsx watch)
-npm run build  # compile TypeScript
-npm start      # production (node dist/server.js)
+npm run dev    # http://localhost:3000
+npm run build  # production build
+npm start      # production server
 ```
 
 ---
 
-## Email Notifications
+### Vercel Deployment
 
-Order confirmation emails are sent automatically when a payment status transitions to **paid**, triggered by:
+1. Push `next-backend/` to a Git repo
+2. Import in Vercel, set Root Directory to `next-backend`
+3. Add all env vars in Vercel dashboard
+4. The cron job (`vercel.json`) runs daily at 3:00 AM UTC
+5. Set `BACKEND_URL` in each frontend app to the deployed URL
 
-- EasyKash webhook (`POST /api/payment/webhook`)
-- Admin manually marking an order paid via `PUT /api/admin/orders/:id`
+### Exchange Rate Updates
 
-Two fully branded HTML templates are used:
+- **Automatic**: Vercel Cron runs daily at 3:00 AM UTC, updating all non-manual product prices based on current exchange rates
+- **Manual**: Admins can trigger immediate updates from the Exchange Rates page in the admin panel
+- **Manual prices preserved**: Any price marked as `isManual: true` is never overwritten by automatic updates
 
-- **Manasik** — green gradient (#33ad6c), navy footer
-- **Ghadaq** — gold gradient (#ffc001), forest green footer
+### Email
 
-Emails are bilingual — Arabic RTL when the order locale is `ar`, English otherwise.
-
-> Requires `RESEND_API_KEY` and a verified sending domain configured in Resend.
-
----
-
-## Deployment
-
-The backend is intended to run as a standalone Node.js process (e.g. on a VPS or a PaaS like Railway, Render, or Fly.io). Point the three Next.js apps at it via their `BACKEND_URL` env variable.
-
-**Production checklist:**
-
-- Set `NODE_ENV=production`
-- Use a strong, unique `JWT_SECRET`
-- Set `ALLOWED_ORIGINS` to only your live domains
-- Use the MongoDB Atlas connection string for `DATA_BASE_URL`
+Order confirmation emails sent automatically when payment status becomes **paid**. Two branded HTML templates (Manasik green, Ghadaq gold). Bilingual - Arabic RTL when order locale is `ar`.
