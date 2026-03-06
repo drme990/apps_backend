@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     const inStock = searchParams.get('inStock');
     const sacrifice = searchParams.get('sacrifice');
 
-    const query: Record<string, unknown> = {};
+    const query: Record<string, unknown> = { isActive: true };
     if (inStock !== null) query.inStock = inStock === 'true';
     if (sacrifice === 'true') query.workAsSacrifice = true;
 
