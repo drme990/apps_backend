@@ -29,19 +29,19 @@ All three Next.js apps proxy API calls to this backend via `next.config.ts` rewr
 
 ### Tech Stack
 
-| Concern  | Technology                                   |
-| -------- | -------------------------------------------- |
-| Runtime  | Node.js 18+ (Vercel Serverless Functions)    |
-| Framework| Next.js 16.1.6 (App Router)                  |
-| Language | TypeScript 5                                 |
-| Database | MongoDB Atlas via Mongoose 9                 |
-| Auth     | JWT (7d) + bcryptjs + httpOnly cookies        |
-| Payment  | EasyKash Direct Payment API v1 (HMAC-SHA512) |
-| Email    | Resend (dual-brand HTML templates)            |
-| Images   | Cloudinary (formData upload)                  |
-| Currency | fawazahmed0 CDN (6hr in-memory cache)         |
-| Facebook | Conversions API v21 (SHA-256 hashing)        |
-| Cron     | Vercel Cron (daily price updates)             |
+| Concern   | Technology                                   |
+| --------- | -------------------------------------------- |
+| Runtime   | Node.js 18+ (Vercel Serverless Functions)    |
+| Framework | Next.js 16.1.6 (App Router)                  |
+| Language  | TypeScript 5                                 |
+| Database  | MongoDB Atlas via Mongoose 9                 |
+| Auth      | JWT (7d) + bcryptjs + httpOnly cookies       |
+| Payment   | EasyKash Direct Payment API v1 (HMAC-SHA512) |
+| Email     | Resend (dual-brand HTML templates)           |
+| Images    | Cloudinary (formData upload)                 |
+| Currency  | fawazahmed0 CDN (6hr in-memory cache)        |
+| Facebook  | Conversions API v21 (SHA-256 hashing)        |
+| Cron      | Vercel Cron (daily price updates)            |
 
 ---
 
@@ -76,69 +76,71 @@ vercel.json          - Cron schedule configuration
 
 **Public (`/api/*`)**
 
-| Method | Path                       | Description                     |
-| ------ | -------------------------- | ------------------------------- |
-| GET    | `/api/products`          | List products (pagination/filters) |
-| GET    | `/api/products/:id`      | Single product                  |
-| GET    | `/api/countries`         | List countries                  |
-| GET    | `/api/countries/:id`     | Single country                  |
-| POST   | `/api/coupons/validate`  | Validate coupon code            |
-| POST   | `/api/payment/checkout`  | Create order + EasyKash session |
-| GET    | `/api/payment/status`    | Order status by orderNumber     |
-| POST   | `/api/payment/webhook`   | EasyKash payment callback       |
-| GET    | `/api/payment/referral-info` | Referral info by order      |
-| GET    | `/api/currency/rates`    | Exchange rates                  |
-| GET    | `/api/appearance`        | Homepage appearance config      |
-| POST   | `/api/fb-event`          | Browser-side FB event proxy     |
+| Method | Path                         | Description                        |
+| ------ | ---------------------------- | ---------------------------------- |
+| GET    | `/api/products`              | List products (pagination/filters) |
+| GET    | `/api/products/:id`          | Single product                     |
+| GET    | `/api/countries`             | List countries                     |
+| GET    | `/api/countries/:id`         | Single country                     |
+| POST   | `/api/coupons/validate`      | Validate coupon code               |
+| POST   | `/api/payment/checkout`      | Create order + EasyKash session    |
+| GET    | `/api/payment/status`        | Order status by orderNumber        |
+| POST   | `/api/payment/webhook`       | EasyKash payment callback          |
+| GET    | `/api/payment/referral-info` | Referral info by order             |
+| GET    | `/api/currency/rates`        | Exchange rates                     |
+| GET    | `/api/appearance`            | Homepage appearance config         |
+| POST   | `/api/fb-event`              | Browser-side FB event proxy        |
 
 **Admin (`/api/admin/*` - requires `admin-token` cookie)**
 
-| Method              | Path                              | Description               |
-| ------------------- | --------------------------------- | ------------------------- |
-| POST                | `/api/admin/auth/login`         | Login (rate-limited)      |
-| GET                 | `/api/admin/auth/me`            | Current user              |
-| POST                | `/api/admin/auth/logout`        | Logout                    |
-| GET/POST            | `/api/admin/products`           | Products list + create    |
-| GET/PUT/DELETE       | `/api/admin/products/:id`      | Product CRUD              |
-| PUT                 | `/api/admin/products/reorder`   | Bulk reorder              |
-| POST                | `/api/admin/products/:id/auto-price` | Auto-price conversion |
-| GET                 | `/api/admin/orders`             | Orders list               |
-| GET/PUT             | `/api/admin/orders/:id`         | Order detail + update     |
-| GET/POST            | `/api/admin/coupons`            | Coupons list + create     |
-| POST                | `/api/admin/coupons/validate`   | Admin coupon validation   |
-| GET/PUT/DELETE       | `/api/admin/coupons/:id`       | Coupon CRUD               |
-| GET/POST            | `/api/admin/countries`          | Countries list + create   |
-| PUT                 | `/api/admin/countries/reorder`  | Bulk reorder              |
-| GET/PUT/DELETE       | `/api/admin/countries/:id`     | Country CRUD              |
-| GET/POST            | `/api/admin/users`              | Users list + create       |
-| GET/PUT/DELETE       | `/api/admin/users/:id`         | User CRUD                 |
-| GET/POST            | `/api/admin/referrals`          | Referrals list + create   |
-| GET/PUT/DELETE       | `/api/admin/referrals/:id`     | Referral CRUD             |
-| GET                 | `/api/admin/logs`               | Activity logs             |
-| POST/DELETE         | `/api/admin/upload/image`       | Cloudinary image mgmt     |
-| GET/PUT             | `/api/admin/appearance/:project`| Appearance config         |
-| GET                 | `/api/admin/currency/rates`     | Admin exchange rates      |
-| GET                 | `/api/admin/stats`              | Dashboard counts          |
-| GET                 | `/api/admin/exchange/logs`      | Cron execution logs       |
-| POST                | `/api/admin/exchange/update-prices` | Manual price update   |
+| Method         | Path                                 | Description             |
+| -------------- | ------------------------------------ | ----------------------- |
+| POST           | `/api/admin/auth/login`              | Login (rate-limited)    |
+| GET            | `/api/admin/auth/me`                 | Current user            |
+| POST           | `/api/admin/auth/logout`             | Logout                  |
+| GET/POST       | `/api/admin/products`                | Products list + create  |
+| GET/PUT/DELETE | `/api/admin/products/:id`            | Product CRUD            |
+| PUT            | `/api/admin/products/reorder`        | Bulk reorder            |
+| POST           | `/api/admin/products/:id/auto-price` | Auto-price conversion   |
+| GET            | `/api/admin/orders`                  | Orders list             |
+| GET/PUT        | `/api/admin/orders/:id`              | Order detail + update   |
+| GET/POST       | `/api/admin/coupons`                 | Coupons list + create   |
+| POST           | `/api/admin/coupons/validate`        | Admin coupon validation |
+| GET/PUT/DELETE | `/api/admin/coupons/:id`             | Coupon CRUD             |
+| GET/POST       | `/api/admin/countries`               | Countries list + create |
+| PUT            | `/api/admin/countries/reorder`       | Bulk reorder            |
+| GET/PUT/DELETE | `/api/admin/countries/:id`           | Country CRUD            |
+| GET/POST       | `/api/admin/users`                   | Users list + create     |
+| GET/PUT/DELETE | `/api/admin/users/:id`               | User CRUD               |
+| GET/POST       | `/api/admin/referrals`               | Referrals list + create |
+| GET/PUT/DELETE | `/api/admin/referrals/:id`           | Referral CRUD           |
+| GET            | `/api/admin/logs`                    | Activity logs           |
+| POST/DELETE    | `/api/admin/upload/image`            | Cloudinary image mgmt   |
+| GET/PUT        | `/api/admin/appearance/:project`     | Appearance config       |
+| GET            | `/api/admin/currency/rates`          | Admin exchange rates    |
+| GET            | `/api/admin/stats`                   | Dashboard counts        |
+| GET            | `/api/admin/exchange/logs`           | Cron execution logs     |
+| POST           | `/api/admin/exchange/update-prices`  | Manual price update     |
 
 **Cron (`/api/cron/*` - requires `CRON_SECRET`)**
 
-| Method | Path                         | Schedule       | Description                     |
-| ------ | ---------------------------- | -------------- | ------------------------------- |
-| GET    | `/api/cron/update-prices`  | Daily 3:00 UTC | Auto-update product prices via exchange rates |
+| Method | Path                      | Schedule       | Description                                   |
+| ------ | ------------------------- | -------------- | --------------------------------------------- |
+| GET    | `/api/cron/update-prices` | Daily 3:00 UTC | Auto-update product prices via exchange rates |
 
 ---
 
 ### Getting Started
 
 **1. Install**
+
 ```bash
 cd next-backend
 npm install
 ```
 
 **2. Environment variables** - Create `.env.local`:
+
 ```env
 DATA_BASE_URL=mongodb+srv://user:password@cluster.mongodb.net/manasik
 JWT_SECRET=a-long-random-secret-change-in-production
@@ -154,12 +156,13 @@ API_TOKEN=
 FB_PIXEL_ID=
 FB_TEST_EVENT_CODE=
 MANASIK_URL=https://www.manasik.net
-GHADAQ_URL=https://www.ghadqplus.com
+GHADAQ_URL=https://www.ghadaqplus.com
 ALLOWED_ORIGINS=http://localhost:3001,http://localhost:3002,http://localhost:3003
 CRON_SECRET=a-random-secret-for-cron-auth
 ```
 
 **3. Run**
+
 ```bash
 npm run dev    # http://localhost:3000
 npm run build  # production build

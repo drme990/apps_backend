@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
 
     const sourceBaseUrls: Record<string, string> = {
       manasik: process.env.MANASIK_URL || 'https://www.manasik.net',
-      ghadaq: process.env.GHADAQ_URL || 'https://www.ghadqplus.com',
+      ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
     };
     const baseUrl =
       sourceBaseUrls[order.source || 'manasik'] || sourceBaseUrls.manasik;
