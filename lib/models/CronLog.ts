@@ -4,6 +4,7 @@ export interface ICronLog {
   _id?: string;
   jobName: string;
   status: 'success' | 'failed';
+  source: 'cron' | 'manual';
   totalProducts: number;
   updatedCount: number;
   targetCurrencies: string[];
@@ -24,6 +25,12 @@ const CronLogSchema = new mongoose.Schema<ICronLog>(
       type: String,
       required: true,
       enum: ['success', 'failed'],
+    },
+    source: {
+      type: String,
+      required: true,
+      enum: ['cron', 'manual'],
+      default: 'cron',
     },
     totalProducts: { type: Number, default: 0 },
     updatedCount: { type: Number, default: 0 },

@@ -273,6 +273,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Use MongoDB _id as customerReference — guaranteed globally unique and
+    // never reused even if this order is later deleted and recreated.
+    const customerReference = order._id.toString();
+
     const sourceBaseUrls: Record<string, string> = {
       manasik: process.env.MANASIK_URL || 'https://www.manasik.net',
       ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
@@ -310,15 +314,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const easykashResponse = await createPayment({
-      amount: easykashAmount,
-      currency: paymentCurrency,
-      name: billingData.fullName,
-      email: billingData.email,
-      mobile: billingData.phone,
-      redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
-      customerReference: order.orderNumber,
-    });
+    let easykashResponse: Awaited<ReturnType<typeof createPayment>>;
+    try {
+      easykashResponse = await createPayment({
+        amount: easykashAmount,
+        currency: paymentCurrency,
+        name: billingData.fullName,
+        email: billingData.email,
+        mobile: billingData.phone,
+        redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
+        customerReference,
+      });
+    } catch (easykashError) {
+      // Clean up the orphaned order so it doesn't block future attempts
+      await Order.findByIdAndDelete(order._id);
+      console.error('EasyKash payment creation failed:', easykashError);
+      return NextResponse.json(
+        { success: false, error: 'Payment gateway error. Please try again.' },
+        { status: 502 },
+      );
+    }
 
     order.status = 'processing';
     await order.save();

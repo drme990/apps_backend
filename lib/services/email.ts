@@ -289,10 +289,14 @@ function buildEmailHtml(order: IOrder): string {
 
 // ─── Public API ──────────────────────────────────────────────────
 export async function sendOrderConfirmationEmail(order: IOrder): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
+  const isGhadaq = order.source === 'ghadaq';
+  const apiKey = isGhadaq
+    ? process.env.GHADAQ_RESEND_API_KEY
+    : process.env.MANASIK_RESEND_API_KEY;
+
   if (!apiKey) {
     console.log(
-      '[Email] RESEND_API_KEY not configured — skipping order confirmation email',
+      `[Email] ${isGhadaq ? 'GHADAQ' : 'MANASIK'}_RESEND_API_KEY not configured — skipping order confirmation email`,
     );
     return;
   }

@@ -5,7 +5,7 @@ import Product from '@/lib/models/Product';
 import Country from '@/lib/models/Country';
 import CronLog from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
-import { logActivity } from '@/lib/services/logger';
+import { roundPrice } from '@/lib/currency-rounding';
 
 export async function POST() {
   const startTime = Date.now();
@@ -53,13 +53,13 @@ export async function POST() {
 
           if (existingIndex >= 0) {
             if (!size.prices[existingIndex].isManual) {
-              size.prices[existingIndex].amount = Math.ceil(amount);
+              size.prices[existingIndex].amount = roundPrice(amount, code);
               modified = true;
             }
           } else {
             size.prices.push({
               currencyCode: code,
-              amount: Math.ceil(amount),
+              amount: roundPrice(amount, code),
               isManual: false,
             });
             modified = true;
@@ -92,13 +92,13 @@ export async function POST() {
                 !product.partialPayment.minimumPayments[existingIndex].isManual
               ) {
                 product.partialPayment.minimumPayments[existingIndex].value =
-                  Math.ceil(amount);
+                  roundPrice(amount, code);
                 modified = true;
               }
             } else {
               product.partialPayment.minimumPayments.push({
                 currencyCode: code,
-                value: Math.ceil(amount),
+                value: roundPrice(amount, code),
                 isManual: false,
               });
               modified = true;
@@ -118,19 +118,11 @@ export async function POST() {
     await CronLog.create({
       jobName: 'update-prices',
       status: 'success',
+      source: 'manual',
       totalProducts: products.length,
       updatedCount,
       targetCurrencies,
       duration,
-    });
-
-    await logActivity({
-      userId: auth.user.userId,
-      userName: auth.user.name,
-      userEmail: auth.user.email,
-      action: 'update',
-      resource: 'exchange',
-      details: `Manually triggered price update: ${updatedCount}/${products.length} products updated for ${targetCurrencies.join(', ')}`,
     });
 
     return NextResponse.json({
@@ -148,6 +140,7 @@ export async function POST() {
       await CronLog.create({
         jobName: 'update-prices',
         status: 'failed',
+        source: 'manual',
         totalProducts: 0,
         updatedCount: 0,
         targetCurrencies: [],

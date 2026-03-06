@@ -56,7 +56,7 @@ export async function createPayment(
   const body = {
     amount: params.amount,
     currency: params.currency.toUpperCase(),
-    paymentOptions: params.paymentOptions ?? [2, 3, 4, 5, 6],
+    paymentOptions: params.paymentOptions ?? [1, 2, 4, 5, 6, 31],
     cashExpiry: params.cashExpiry ?? 3,
     name: params.name,
     email: params.email,
@@ -80,7 +80,15 @@ export async function createPayment(
     throw new Error(`EasyKash API error: ${response.status} - ${errorText}`);
   }
 
-  return (await response.json()) as EasykashPayResponse;
+  const json = (await response.json()) as EasykashPayResponse & {
+    error?: string;
+  };
+  if (json.error) {
+    console.error('EasyKash create payment error (200):', json.error);
+    throw new Error(`EasyKash: ${json.error}`);
+  }
+
+  return json;
 }
 
 export function verifyCallbackSignature(

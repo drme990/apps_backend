@@ -37,7 +37,7 @@ All three Next.js apps proxy API calls to this backend via `next.config.ts` rewr
 | Database  | MongoDB Atlas via Mongoose 9                 |
 | Auth      | JWT (7d) + bcryptjs + httpOnly cookies       |
 | Payment   | EasyKash Direct Payment API v1 (HMAC-SHA512) |
-| Email     | Resend (dual-brand HTML templates)           |
+| Email     | Resend (per-brand API keys + HTML templates) |
 | Images    | Cloudinary (formData upload)                 |
 | Currency  | fawazahmed0 CDN (6hr in-memory cache)        |
 | Facebook  | Conversions API v21 (SHA-256 hashing)        |
@@ -49,8 +49,9 @@ All three Next.js apps proxy API calls to this backend via `next.config.ts` rewr
 
 ```
 lib/
-  db.ts              - MongoDB connection singleton
+  db.ts              - MongoDB connection singleton (cached promise pattern)
   auth.ts            - Auth helpers (getAuthUser, requireAuth)
+  currency-rounding.ts - Currency-specific rounding config
   models/            - 9 Mongoose models (Product, Order, User,
                        Coupon, Country, Referral, ActivityLog,
                        Appearance, CronLog)
@@ -149,7 +150,8 @@ EASYKASH_HMAC_SECRET=
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
-RESEND_API_KEY=
+MANASIK_RESEND_API_KEY=
+GHADAQ_RESEND_API_KEY=
 MANASIK_FROM_EMAIL=orders@manasik.net
 GHADAQ_FROM_EMAIL=orders@ghadqplus.com
 API_TOKEN=
@@ -184,7 +186,20 @@ npm start      # production server
 - **Automatic**: Vercel Cron runs daily at 3:00 AM UTC, updating all non-manual product prices based on current exchange rates
 - **Manual**: Admins can trigger immediate updates from the Exchange Rates page in the admin panel
 - **Manual prices preserved**: Any price marked as `isManual: true` is never overwritten by automatic updates
+- **Source tracking**: Each update is logged with `source: 'cron'` or `source: 'manual'` in the CronLog collection, visible in the admin Exchange Rates page
+
+### Currency-Specific Rounding
+
+Auto-calculated prices are rounded per currency using rules defined in `lib/currency-rounding.ts`:
+
+| Rule           | Currencies              | Example     |
+| -------------- | ----------------------- | ----------- |
+| Nearest 10     | EGP                     | 4→10, 11→20 |
+| Nearest 5      | SAR, QAR, USD, EUR, TRY | 2→5, 6→10   |
+| Ceil (default) | All others              | 4.1→5       |
+
+To add a new currency, add a line to `CURRENCY_ROUNDING` in `lib/currency-rounding.ts`.
 
 ### Email
 
-Order confirmation emails sent automatically when payment status becomes **paid**. Two branded HTML templates (Manasik green, Ghadaq gold). Bilingual - Arabic RTL when order locale is `ar`.
+Order confirmation emails sent automatically when payment status becomes **paid**. Each brand uses its own Resend API key (`MANASIK_RESEND_API_KEY` / `GHADAQ_RESEND_API_KEY`). Two branded HTML templates (Manasik green, Ghadaq gold). Bilingual — Arabic RTL when order locale is `ar`.

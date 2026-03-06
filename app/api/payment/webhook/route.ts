@@ -42,7 +42,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const order = await Order.findOne({ orderNumber: customerReference });
+    // New orders use _id as customerReference; legacy orders used orderNumber.
+    // Try _id lookup first, fall back to orderNumber for backward compatibility.
+    const order =
+      (await Order.findById(customerReference).exec()) ??
+      (await Order.findOne({ orderNumber: customerReference }));
 
     if (!order) {
       console.error(

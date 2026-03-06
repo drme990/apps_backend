@@ -4,6 +4,7 @@ import Product from '@/lib/models/Product';
 import Country from '@/lib/models/Country';
 import CronLog from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
+import { roundPrice } from '@/lib/currency-rounding';
 
 export async function GET(request: Request) {
   // Verify the request is from Vercel Cron
@@ -57,13 +58,13 @@ export async function GET(request: Request) {
 
           if (existingIndex >= 0) {
             if (!size.prices[existingIndex].isManual) {
-              size.prices[existingIndex].amount = Math.ceil(amount);
+              size.prices[existingIndex].amount = roundPrice(amount, code);
               modified = true;
             }
           } else {
             size.prices.push({
               currencyCode: code,
-              amount: Math.ceil(amount),
+              amount: roundPrice(amount, code),
               isManual: false,
             });
             modified = true;
@@ -96,13 +97,13 @@ export async function GET(request: Request) {
                 !product.partialPayment.minimumPayments[existingIndex].isManual
               ) {
                 product.partialPayment.minimumPayments[existingIndex].value =
-                  Math.ceil(amount);
+                  roundPrice(amount, code);
                 modified = true;
               }
             } else {
               product.partialPayment.minimumPayments.push({
                 currencyCode: code,
-                value: Math.ceil(amount),
+                value: roundPrice(amount, code),
                 isManual: false,
               });
               modified = true;
@@ -124,6 +125,7 @@ export async function GET(request: Request) {
     await CronLog.create({
       jobName: 'update-prices',
       status: 'success',
+      source: 'cron',
       totalProducts: products.length,
       updatedCount,
       targetCurrencies,
@@ -144,6 +146,7 @@ export async function GET(request: Request) {
       await CronLog.create({
         jobName: 'update-prices',
         status: 'failed',
+        source: 'cron',
         totalProducts: 0,
         updatedCount: 0,
         targetCurrencies: [],
