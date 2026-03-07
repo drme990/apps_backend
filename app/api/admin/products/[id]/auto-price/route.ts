@@ -4,6 +4,7 @@ import { requireAuth } from '@/lib/auth';
 import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
+import { roundPrice } from '@/lib/currency-rounding';
 
 export async function POST(
   request: NextRequest,
@@ -46,10 +47,14 @@ export async function POST(
 
         if (existingIndex >= 0) {
           if (!size.prices[existingIndex].isManual) {
-            size.prices[existingIndex].amount = amount;
+            size.prices[existingIndex].amount = roundPrice(amount, code);
           }
         } else {
-          size.prices.push({ currencyCode: code, amount, isManual: false });
+          size.prices.push({
+            currencyCode: code,
+            amount: roundPrice(amount, code),
+            isManual: false,
+          });
         }
       }
     }
@@ -79,12 +84,12 @@ export async function POST(
               !product.partialPayment.minimumPayments[existingIndex].isManual
             ) {
               product.partialPayment.minimumPayments[existingIndex].value =
-                Math.ceil(amount);
+                roundPrice(amount, code);
             }
           } else {
             product.partialPayment.minimumPayments.push({
               currencyCode: code,
-              value: Math.ceil(amount),
+              value: roundPrice(amount, code),
               isManual: false,
             });
           }
