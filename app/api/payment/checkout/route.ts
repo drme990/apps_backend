@@ -5,6 +5,7 @@ import Product from '@/lib/models/Product';
 import { createPayment } from '@/lib/services/easykash';
 import { validateCoupon, applyCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
+import { uploadImage } from '@/lib/services/cloudinary';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
       paymentOption = 'full',
       customPaymentAmount,
       termsAgreed,
-      notes,
+      reservationData,
       source,
     } = body;
 
@@ -67,6 +68,115 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Product is out of stock' },
         { status: 400 },
       );
+    }
+
+    // Validate reservation answers against product reservation field config
+    const reservationInput = Array.isArray(reservationData)
+      ? reservationData
+      : [];
+    const normalizedReservationData = (product.reservationFields || []).map(
+      (field, idx) => {
+        const rawValue = reservationInput[idx]?.value;
+        const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+        return {
+          label: field.label,
+          type: field.type,
+          value,
+          required: !!field.required,
+          maxLength: field.maxLength,
+          options: field.options || [],
+        };
+      },
+    );
+
+    const reservationAnswers: Array<{
+      label: { ar: string; en: string };
+      type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'picture';
+      value: string;
+    }> = [];
+
+    for (const field of normalizedReservationData) {
+      if (field.required && !field.value) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Missing required reservation field',
+          },
+          { status: 400 },
+        );
+      }
+
+      if (!field.value) continue;
+
+      if (
+        (field.type === 'text' || field.type === 'textarea') &&
+        field.maxLength &&
+        field.value.length > field.maxLength
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Reservation value exceeds max length (${field.maxLength})`,
+          },
+          { status: 400 },
+        );
+      }
+
+      if (field.type === 'select' && field.options.length > 0) {
+        const isValidOption = field.options.some(
+          (opt: { ar: string; en: string }) =>
+            opt.ar === field.value || opt.en === field.value,
+        );
+        if (!isValidOption) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Invalid reservation select option',
+            },
+            { status: 400 },
+          );
+        }
+      }
+
+      let finalValue = field.value;
+
+      if (field.type === 'picture') {
+        const isDataImage = finalValue.startsWith('data:image/');
+        const isHttpUrl = /^https?:\/\//i.test(finalValue);
+
+        if (!isDataImage && !isHttpUrl) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Invalid reservation picture format',
+            },
+            { status: 400 },
+          );
+        }
+
+        // Store reservation pictures as CDN URLs instead of large base64 strings.
+        if (isDataImage) {
+          const uploaded = await uploadImage(finalValue, 'reservations');
+          if (!uploaded.success || !uploaded.url) {
+            return NextResponse.json(
+              {
+                success: false,
+                error: uploaded.error || 'Failed to upload reservation picture',
+              },
+              { status: 500 },
+            );
+          }
+          finalValue = uploaded.url;
+        }
+      }
+
+      if (finalValue) {
+        reservationAnswers.push({
+          label: field.label,
+          type: field.type,
+          value: finalValue,
+        });
+      }
     }
 
     const currencyUpper = currency.toUpperCase();
@@ -210,7 +320,7 @@ export async function POST(request: NextRequest) {
       couponCode: appliedCouponCode,
       couponDiscount,
       termsAgreedAt: new Date(),
-      notes: notes || undefined,
+      reservationData: reservationAnswers,
       source: source === 'ghadaq' ? 'ghadaq' : 'manasik',
       countryCode: billingData.country || '',
       locale,

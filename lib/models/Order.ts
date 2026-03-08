@@ -31,6 +31,12 @@ export interface IBillingData {
   country: string;
 }
 
+export interface IReservationAnswer {
+  label: { ar: string; en: string };
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'picture';
+  value: string;
+}
+
 export interface IOrder {
   _id?: string;
   orderNumber: string;
@@ -52,7 +58,7 @@ export interface IOrder {
   isPartialPayment?: boolean;
   referralId?: string;
   termsAgreedAt?: Date;
-  notes?: string;
+  reservationData?: IReservationAnswer[];
   source?: 'manasik' | 'ghadaq';
   countryCode?: string;
   locale?: string;
@@ -80,6 +86,22 @@ const BillingDataSchema = new mongoose.Schema<IBillingData>(
     email: { type: String, required: true, trim: true, lowercase: true },
     phone: { type: String, required: true, trim: true },
     country: { type: String, required: true, trim: true },
+  },
+  { _id: false },
+);
+
+const ReservationAnswerSchema = new mongoose.Schema<IReservationAnswer>(
+  {
+    label: {
+      ar: { type: String, required: true, trim: true },
+      en: { type: String, required: true, trim: true },
+    },
+    type: {
+      type: String,
+      enum: ['text', 'textarea', 'number', 'date', 'select', 'picture'],
+      required: true,
+    },
+    value: { type: String, required: true, trim: true },
   },
   { _id: false },
 );
@@ -136,7 +158,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     isPartialPayment: { type: Boolean, default: false },
     referralId: { type: String, trim: true, index: true },
     termsAgreedAt: { type: Date },
-    notes: { type: String, trim: true },
+    reservationData: { type: [ReservationAnswerSchema], default: [] },
     source: {
       type: String,
       enum: ['manasik', 'ghadaq'],
@@ -164,6 +186,10 @@ OrderSchema.pre('validate', async function () {
 
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
+
+if (process.env.NODE_ENV !== 'production' && mongoose.models.Order) {
+  mongoose.deleteModel('Order');
+}
 
 const Order =
   (mongoose.models.Order as mongoose.Model<IOrder>) ||

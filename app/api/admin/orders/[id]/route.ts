@@ -42,7 +42,7 @@ export async function PUT(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const { status, notes } = await request.json();
+    const { status } = await request.json();
 
     const order = await Order.findById(id);
     if (!order) {
@@ -56,10 +56,6 @@ export async function PUT(
     if (status && status !== order.status) {
       order.status = status;
       changes.push(`status → ${status}`);
-    }
-    if (notes !== undefined && notes !== order.notes) {
-      order.notes = notes;
-      changes.push('notes updated');
     }
 
     if (changes.length === 0) {

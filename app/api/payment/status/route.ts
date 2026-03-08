@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
         fullAmount: order.fullAmount || order.totalAmount,
         paidAmount: order.paidAmount || order.totalAmount,
         remainingAmount: order.remainingAmount || 0,
-        notes: order.notes || null,
+        reservationData: order.reservationData || [],
         source: order.source || 'manasik',
         referralInfo,
         createdAt: order.createdAt,

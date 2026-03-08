@@ -26,6 +26,14 @@ export interface IPartialPayment {
   minimumPayments: ICurrencyMinimumPayment[];
 }
 
+export interface IReservationField {
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'picture';
+  label: { ar: string; en: string };
+  required: boolean;
+  maxLength?: number;
+  options?: { ar: string; en: string }[];
+}
+
 export interface IProduct {
   _id?: string;
   name: { ar: string; en: string };
@@ -37,8 +45,11 @@ export interface IProduct {
   images: string[];
   sizes: IProductSize[];
   partialPayment: IPartialPayment;
+  upgradeTo?: string;
+  upgradeDiscount?: number;
   workAsSacrifice?: boolean;
   sacrificeCount?: number;
+  reservationFields?: IReservationField[];
   displayOrder?: number;
   createdAt?: Date;
   updatedAt?: Date;
@@ -81,6 +92,30 @@ const PartialPaymentSchema = new mongoose.Schema(
         },
         value: { type: Number, required: true, min: 0 },
         isManual: { type: Boolean, default: false },
+        _id: false,
+      },
+    ],
+  },
+  { _id: false },
+);
+
+const ReservationFieldSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ['text', 'textarea', 'number', 'date', 'select', 'picture'],
+      required: true,
+    },
+    label: {
+      ar: { type: String, required: true, trim: true },
+      en: { type: String, required: true, trim: true },
+    },
+    required: { type: Boolean, default: false },
+    maxLength: { type: Number, min: 1 },
+    options: [
+      {
+        ar: { type: String, required: true, trim: true },
+        en: { type: String, required: true, trim: true },
         _id: false,
       },
     ],
@@ -133,12 +168,23 @@ const ProductSchema = new mongoose.Schema<IProduct>(
       },
     },
     partialPayment: { type: PartialPaymentSchema, default: () => ({}) },
+    upgradeTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      default: null,
+    },
+    upgradeDiscount: { type: Number, default: 0, min: 0, max: 100 },
     workAsSacrifice: { type: Boolean, default: false },
     sacrificeCount: { type: Number, default: 1, min: 1 },
+    reservationFields: { type: [ReservationFieldSchema], default: [] },
     displayOrder: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
+
+if (process.env.NODE_ENV !== 'production' && mongoose.models.Product) {
+  mongoose.deleteModel('Product');
+}
 
 const Product =
   (mongoose.models.Product as mongoose.Model<IProduct>) ||

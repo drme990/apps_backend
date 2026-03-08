@@ -92,7 +92,6 @@ function buildEmailHtml(order: IOrder): string {
     email: isAr ? 'البريد الإلكتروني' : 'Email',
     phone: isAr ? 'الهاتف' : 'Phone',
     country: isAr ? 'الدولة' : 'Country',
-    notesTitle: isAr ? 'ملاحظات' : 'Notes',
     supportTitle: isAr ? 'هل تحتاج مساعدة؟' : 'Need Help?',
     supportText: isAr
       ? 'للاستفسار عن طلبك، تواصل معنا عبر الواتساب أو البريد الإلكتروني.'
@@ -157,21 +156,6 @@ function buildEmailHtml(order: IOrder): string {
             <tr>
               <td style="background:#fff8e6;border:1px solid #ffc001;border-radius:8px;padding:12px 16px;font-size:13px;color:#a07000;">
                 ⚠️ ${L.partialNote}
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>`
-    : '';
-
-  const notesSection = order.notes
-    ? `<tr>
-        <td style="padding:0 30px 20px;">
-          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9fa;border-radius:8px;">
-            <tr>
-              <td style="padding:14px 16px;">
-                <p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#555;text-transform:uppercase;letter-spacing:.5px;">${L.notesTitle}</p>
-                <p style="margin:0;font-size:14px;color:#333;">${order.notes}</p>
               </td>
             </tr>
           </table>
@@ -265,7 +249,6 @@ function buildEmailHtml(order: IOrder): string {
               </table>
             </td>
           </tr>
-          ${notesSection}
           <tr>
             <td style="padding:0 30px 32px;text-align:center;">
               <a href="${statusUrl}" style="display:inline-block;background:linear-gradient(135deg,${brand.gradientFrom},${brand.gradientTo});color:${brand.headerTextColor};text-decoration:none;font-size:15px;font-weight:700;padding:14px 36px;border-radius:8px;">${L.viewOrder}</a>

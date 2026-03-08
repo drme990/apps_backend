@@ -42,16 +42,17 @@ export async function PUT(
 
     const { id } = await params;
     const body = await request.json();
-    const product = await Product.findByIdAndUpdate(id, body, {
-      new: true,
-      runValidators: true,
-    });
-    if (!product) {
+
+    // Use findById + set + save for reliable nested array updates (e.g. reservationFields)
+    const doc = await Product.findById(id);
+    if (!doc) {
       return NextResponse.json(
         { success: false, error: 'Product not found' },
         { status: 404 },
       );
     }
+    doc.set(body);
+    const product = await doc.save();
 
     await logActivity({
       userId: auth.user.userId,
