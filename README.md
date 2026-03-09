@@ -2,6 +2,15 @@
 
 A **Next.js 16 App Router** serverless backend deployed on **Vercel**. Single source of truth for all database operations, payments, authentication, and business logic shared across the **Manasik Foundation** and **Ghadaq Association** platforms.
 
+## Latest Updates (2026-03-09)
+
+- Storefront checkout flow was simplified to 2 steps: **Billing Information** then **Reservation Details**.
+- Reservation data remains optional and is only sent when product `reservationFields` exist.
+- Checkout requests remain compatible with themed custom date picker values (ISO `YYYY-MM-DD` for date fields).
+- Products without reservation fields continue to proceed directly to payment request creation.
+- Product `upgradeFeatures` are optional and can be stored independently of `upgradeTo`.
+- Upgrade discount offers in storefronts now render a top-aligned large countdown UI without changing backend checkout contract.
+
 ---
 
 ## Architecture

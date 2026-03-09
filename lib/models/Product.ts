@@ -47,6 +47,10 @@ export interface IProduct {
   partialPayment: IPartialPayment;
   upgradeTo?: string;
   upgradeDiscount?: number;
+  upgradeFeatures?: {
+    ar: string[];
+    en: string[];
+  } | null;
   workAsSacrifice?: boolean;
   sacrificeCount?: number;
   reservationFields?: IReservationField[];
@@ -123,6 +127,14 @@ const ReservationFieldSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const UpgradeFeaturesSchema = new mongoose.Schema(
+  {
+    ar: [{ type: String, trim: true }],
+    en: [{ type: String, trim: true }],
+  },
+  { _id: false },
+);
+
 const ProductSchema = new mongoose.Schema<IProduct>(
   {
     name: {
@@ -174,6 +186,11 @@ const ProductSchema = new mongoose.Schema<IProduct>(
       default: null,
     },
     upgradeDiscount: { type: Number, default: 0, min: 0, max: 100 },
+    upgradeFeatures: {
+      type: UpgradeFeaturesSchema,
+      required: false,
+      default: null,
+    },
     workAsSacrifice: { type: Boolean, default: false },
     sacrificeCount: { type: Number, default: 1, min: 1 },
     reservationFields: { type: [ReservationFieldSchema], default: [] },
