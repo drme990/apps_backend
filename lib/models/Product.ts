@@ -155,6 +155,7 @@ const ProductSchema = new mongoose.Schema<IProduct>(
       type: String,
       trim: true,
       lowercase: true,
+      unique: true,
       sparse: true,
       index: true,
     },
