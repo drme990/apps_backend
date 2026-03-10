@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
-import mongoose from 'mongoose';
 
 export async function GET(
   _request: NextRequest,
@@ -13,10 +12,7 @@ export async function GET(
     const normalizedSlug = id.trim().toLowerCase();
     const product = await Product.findOne({
       isActive: true,
-      $or: [
-        ...(mongoose.Types.ObjectId.isValid(id) ? [{ _id: id }] : []),
-        { slug: normalizedSlug },
-      ],
+      slug: normalizedSlug,
     }).lean();
 
     if (!product) {

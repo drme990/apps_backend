@@ -37,7 +37,7 @@ export interface IReservationField {
 export interface IProduct {
   _id?: string;
   name: { ar: string; en: string };
-  slug?: string;
+  slug: string;
   content?: { ar: string; en: string };
   baseCurrency: string;
   inStock: boolean;
@@ -153,10 +153,10 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     },
     slug: {
       type: String,
+      required: [true, 'Product slug is required'],
       trim: true,
       lowercase: true,
       unique: true,
-      sparse: true,
       index: true,
     },
     content: {
