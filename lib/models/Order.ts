@@ -4,6 +4,7 @@ export type OrderStatus =
   | 'pending'
   | 'processing'
   | 'paid'
+  | 'completed'
   | 'failed'
   | 'refunded'
   | 'cancelled';
@@ -141,6 +142,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
         'pending',
         'processing',
         'paid',
+        'completed',
         'failed',
         'refunded',
         'cancelled',

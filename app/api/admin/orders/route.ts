@@ -13,12 +13,14 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
     const status = searchParams.get('status');
+    const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
     const skip = (page - 1) * limit;
 
     const query: Record<string, unknown> = {};
     if (status && status !== 'all') query.status = status;
+    if (referralId && referralId !== 'all') query.referralId = referralId;
     if (source && source !== 'all') query.source = source;
 
     if (search) {

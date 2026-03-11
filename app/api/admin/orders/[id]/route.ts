@@ -1,9 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
-import Order, { type IOrder } from '@/lib/models/Order';
+import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
+
+const ALLOWED_ORDER_STATUSES = new Set([
+  'pending',
+  'processing',
+  'paid',
+  'completed',
+  'failed',
+  'refunded',
+  'cancelled',
+]);
+
+const STATUS_ALIASES: Record<string, string> = {
+  cancel: 'cancelled',
+  canceled: 'cancelled',
+  refounded: 'refunded',
+};
 
 export async function GET(
   _request: NextRequest,
@@ -43,6 +59,18 @@ export async function PUT(
 
     const { id } = await params;
     const { status } = await request.json();
+    const rawStatus =
+      typeof status === 'string' ? status.toLowerCase().trim() : '';
+    const normalizedStatus = STATUS_ALIASES[rawStatus] || rawStatus;
+
+    if (!normalizedStatus || !ALLOWED_ORDER_STATUSES.has(normalizedStatus)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid order status' },
+        { status: 400 },
+      );
+    }
+
+    const nextStatus = normalizedStatus as OrderStatus;
 
     const order = await Order.findById(id);
     if (!order) {
@@ -53,9 +81,9 @@ export async function PUT(
     }
 
     const changes: string[] = [];
-    if (status && status !== order.status) {
-      order.status = status;
-      changes.push(`status → ${status}`);
+    if (nextStatus !== order.status) {
+      order.status = nextStatus;
+      changes.push(`status → ${nextStatus}`);
     }
 
     if (changes.length === 0) {
@@ -64,7 +92,7 @@ export async function PUT(
 
     await order.save();
 
-    if (status === 'paid' && changes.includes('status → paid')) {
+    if (nextStatus === 'paid' && changes.includes('status → paid')) {
       sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => {});
     }
 
