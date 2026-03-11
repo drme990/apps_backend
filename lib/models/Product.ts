@@ -27,7 +27,14 @@ export interface IPartialPayment {
 }
 
 export interface IReservationField {
-  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'picture';
+  type:
+    | 'text'
+    | 'textarea'
+    | 'number'
+    | 'date'
+    | 'select'
+    | 'radio'
+    | 'picture';
   label: { ar: string; en: string };
   required: boolean;
   maxLength?: number;
@@ -107,7 +114,15 @@ const ReservationFieldSchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ['text', 'textarea', 'number', 'date', 'select', 'picture'],
+      enum: [
+        'text',
+        'textarea',
+        'number',
+        'date',
+        'select',
+        'radio',
+        'picture',
+      ],
       required: true,
     },
     label: {

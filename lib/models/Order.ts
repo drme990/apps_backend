@@ -33,7 +33,14 @@ export interface IBillingData {
 
 export interface IReservationAnswer {
   label: { ar: string; en: string };
-  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'picture';
+  type:
+    | 'text'
+    | 'textarea'
+    | 'number'
+    | 'date'
+    | 'select'
+    | 'radio'
+    | 'picture';
   value: string;
 }
 
@@ -98,7 +105,15 @@ const ReservationAnswerSchema = new mongoose.Schema<IReservationAnswer>(
     },
     type: {
       type: String,
-      enum: ['text', 'textarea', 'number', 'date', 'select', 'picture'],
+      enum: [
+        'text',
+        'textarea',
+        'number',
+        'date',
+        'select',
+        'radio',
+        'picture',
+      ],
       required: true,
     },
     value: { type: String, required: true, trim: true },

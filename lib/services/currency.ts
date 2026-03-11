@@ -7,26 +7,36 @@ const cache: Map<string, { data: Record<string, number>; expiry: number }> =
   new Map();
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
+function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export async function getExchangeRates(
   baseCurrency: string,
 ): Promise<Record<string, number>> {
-  const key = baseCurrency.toLowerCase();
-  const cached = cache.get(key);
+  const currencyKey = baseCurrency.toLowerCase();
+  const today = getTodayDateString();
+  const cacheKey = `${currencyKey}:${today}`;
+  const cached = cache.get(cacheKey);
 
   if (cached && cached.expiry > Date.now()) return cached.data;
 
   try {
     const res = await fetch(
-      `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${key}.json`,
+      `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${today}/v1/currencies/${currencyKey}.json`,
     );
 
     if (!res.ok) throw new Error(`Exchange rate API returned ${res.status}`);
 
     const data = (await res.json()) as ExchangeRateResponse;
-    const rates = data[key] as Record<string, number>;
+    const rates = data[currencyKey] as Record<string, number>;
 
     if (!rates || typeof rates !== 'object') {
-      throw new Error(`Invalid exchange rate data format for ${key}`);
+      throw new Error(`Invalid exchange rate data format for ${currencyKey}`);
     }
 
     const normalizedRates: Record<string, number> = {};
@@ -34,7 +44,7 @@ export async function getExchangeRates(
       normalizedRates[currency.toUpperCase()] = rate;
     }
 
-    cache.set(key, {
+    cache.set(cacheKey, {
       data: normalizedRates,
       expiry: Date.now() + CACHE_TTL_MS,
     });

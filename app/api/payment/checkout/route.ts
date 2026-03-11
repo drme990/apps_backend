@@ -91,7 +91,14 @@ export async function POST(request: NextRequest) {
 
     const reservationAnswers: Array<{
       label: { ar: string; en: string };
-      type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'picture';
+      type:
+        | 'text'
+        | 'textarea'
+        | 'number'
+        | 'date'
+        | 'select'
+        | 'radio'
+        | 'picture';
       value: string;
     }> = [];
 
@@ -122,7 +129,10 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (field.type === 'select' && field.options.length > 0) {
+      if (
+        (field.type === 'select' || field.type === 'radio') &&
+        field.options.length > 0
+      ) {
         const isValidOption = field.options.some(
           (opt: { ar: string; en: string }) =>
             opt.ar === field.value || opt.en === field.value,
@@ -131,7 +141,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json(
             {
               success: false,
-              error: 'Invalid reservation select option',
+              error: 'Invalid reservation option',
             },
             { status: 400 },
           );
