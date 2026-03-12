@@ -56,7 +56,7 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
     key: 'sacrificeFor',
     type: 'text',
     label: {
-      ar: 'اسم الشخص الذي يذبح عنه',
+      ar: 'اسم الشخص المؤدى عنه',
       en: 'Name of the person the sacrifice is for',
     },
   },
@@ -67,6 +67,10 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
     options: [
       { ar: 'ذكر', en: 'male' },
       { ar: 'انثى', en: 'female' },
+      {
+        ar: 'مذكر ومؤنث (أكثر من اسم واحد)',
+        en: 'Males and females (more than one name)',
+      },
     ],
   },
   {
@@ -91,7 +95,10 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
   {
     key: 'executionDate',
     type: 'date',
-    label: { ar: '(بدون تحديد = يتم التنفيذ في اليوم التالي تلقائيا) تاريخ التنفيذ', en: 'Execution Date (Leave blank to schedule automatically for the next day).' },
+    label: {
+      ar: '(بدون تحديد = يتم التنفيذ في اليوم التالي تلقائيا) تاريخ التنفيذ',
+      en: 'Execution Date (Leave blank to schedule automatically for the next day).',
+    },
   },
 ];
 
