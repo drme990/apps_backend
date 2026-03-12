@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Product from '@/lib/models/Product';
+import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
 
 export async function GET() {
@@ -13,7 +14,17 @@ export async function GET() {
     const products = await Product.find()
       .sort({ displayOrder: 1, createdAt: -1 })
       .lean();
-    return NextResponse.json({ success: true, data: { products } });
+    return NextResponse.json({
+      success: true,
+      data: {
+        products: products.map((product) => ({
+          ...product,
+          reservationFields: normalizeReservationFields(
+            product.reservationFields,
+          ),
+        })),
+      },
+    });
   } catch (error) {
     console.error('Error fetching products:', error);
     return NextResponse.json(
@@ -30,7 +41,10 @@ export async function POST(request: NextRequest) {
     if ('error' in auth) return auth.error;
 
     const body = await request.json();
-    const product = await Product.create(body);
+    const product = await Product.create({
+      ...body,
+      reservationFields: normalizeReservationFields(body.reservationFields),
+    });
 
     await logActivity({
       userId: auth.user.userId,

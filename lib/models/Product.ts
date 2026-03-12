@@ -27,6 +27,14 @@ export interface IPartialPayment {
 }
 
 export interface IReservationField {
+  key:
+    | 'intention'
+    | 'sacrificeFor'
+    | 'gender'
+    | 'isAlive'
+    | 'shortDuaa'
+    | 'photo'
+    | 'executionDate';
   type:
     | 'text'
     | 'textarea'
@@ -112,6 +120,19 @@ const PartialPaymentSchema = new mongoose.Schema(
 
 const ReservationFieldSchema = new mongoose.Schema(
   {
+    key: {
+      type: String,
+      enum: [
+        'intention',
+        'sacrificeFor',
+        'gender',
+        'isAlive',
+        'shortDuaa',
+        'photo',
+        'executionDate',
+      ],
+      required: true,
+    },
     type: {
       type: String,
       enum: [

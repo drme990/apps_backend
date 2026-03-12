@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Product from '@/lib/models/Product';
+import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
 
 export async function GET(
@@ -21,7 +22,15 @@ export async function GET(
         { status: 404 },
       );
     }
-    return NextResponse.json({ success: true, data: product });
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...product,
+        reservationFields: normalizeReservationFields(
+          product.reservationFields,
+        ),
+      },
+    });
   } catch (error) {
     console.error('Error fetching product:', error);
     return NextResponse.json(
@@ -51,7 +60,10 @@ export async function PUT(
         { status: 404 },
       );
     }
-    doc.set(body);
+    doc.set({
+      ...body,
+      reservationFields: normalizeReservationFields(body.reservationFields),
+    });
     const product = await doc.save();
 
     await logActivity({
@@ -63,8 +75,15 @@ export async function PUT(
       resourceId: product._id.toString(),
       details: `Updated product: ${product.name.en || product.name.ar}`,
     });
-
-    return NextResponse.json({ success: true, data: product });
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...product.toObject(),
+        reservationFields: normalizeReservationFields(
+          product.reservationFields,
+        ),
+      },
+    });
   } catch (error) {
     console.error('Error updating product:', error);
     return NextResponse.json(

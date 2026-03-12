@@ -54,6 +54,7 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
       enum: [
         'products',
         'orders',
+        'booking',
         'coupons',
         'countries',
         'users',

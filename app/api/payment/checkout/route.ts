@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Order from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
+import Booking from '@/lib/models/Booking';
+import {
+  findReservationInputByField,
+  matchReservationOption,
+  normalizeReservationFields,
+} from '@/lib/reservation-fields';
 import { createPayment } from '@/lib/services/easykash';
 import { validateCoupon, applyCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
@@ -70,26 +76,45 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const booking = await Booking.findOne({ key: 'global' }).lean();
+    const blockedExecutionDates = new Set(
+      (booking?.blockedExecutionDates ?? []).filter((value: string) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(value),
+      ),
+    );
+
     // Validate reservation answers against product reservation field config
     const reservationInput = Array.isArray(reservationData)
       ? reservationData
       : [];
-    const normalizedReservationData = (product.reservationFields || []).map(
-      (field, idx) => {
-        const rawValue = reservationInput[idx]?.value;
-        const value = typeof rawValue === 'string' ? rawValue.trim() : '';
-        return {
-          label: field.label,
-          type: field.type,
-          value,
-          required: !!field.required,
-          maxLength: field.maxLength,
-          options: field.options || [],
-        };
-      },
-    );
+    const normalizedReservationData = normalizeReservationFields(
+      product.reservationFields,
+    ).map((field) => {
+      const rawValue = findReservationInputByField(
+        field,
+        reservationInput,
+      )?.value;
+      const value = typeof rawValue === 'string' ? rawValue.trim() : '';
+      return {
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        value,
+        required: !!field.required,
+        maxLength: field.maxLength,
+        options: field.options || [],
+      };
+    });
 
     const reservationAnswers: Array<{
+      key:
+        | 'intention'
+        | 'sacrificeFor'
+        | 'gender'
+        | 'isAlive'
+        | 'shortDuaa'
+        | 'photo'
+        | 'executionDate';
       label: { ar: string; en: string };
       type:
         | 'text'
@@ -150,6 +175,39 @@ export async function POST(request: NextRequest) {
 
       let finalValue = field.value;
 
+      if (field.key === 'executionDate' && finalValue) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(finalValue)) {
+          return NextResponse.json(
+            { success: false, error: 'Execution date format is invalid' },
+            { status: 400 },
+          );
+        }
+
+        if (blockedExecutionDates.has(finalValue)) {
+          return NextResponse.json(
+            { success: false, error: 'Execution date is not available' },
+            { status: 400 },
+          );
+        }
+      }
+
+      if (
+        (field.type === 'select' || field.type === 'radio') &&
+        field.options.length > 0
+      ) {
+        const matchedOption = matchReservationOption(field, finalValue);
+        if (!matchedOption) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Invalid reservation option',
+            },
+            { status: 400 },
+          );
+        }
+        finalValue = matchedOption.ar;
+      }
+
       if (field.type === 'picture') {
         const isDataImage = finalValue.startsWith('data:image/');
         const isHttpUrl = /^https?:\/\//i.test(finalValue);
@@ -182,6 +240,7 @@ export async function POST(request: NextRequest) {
 
       if (finalValue) {
         reservationAnswers.push({
+          key: field.key,
           label: field.label,
           type: field.type,
           value: finalValue,
@@ -281,7 +340,7 @@ export async function POST(request: NextRequest) {
             (amountAfterDiscount * currencyMinimum.value) / 100,
           );
         } else {
-          minPayment = currencyMinimum.value;
+          minPayment = Math.ceil(currencyMinimum.value);
         }
       }
 
@@ -294,13 +353,19 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      if (customPaymentAmount >= amountAfterDiscount) {
-        payAmount = amountAfterDiscount;
-        isPartialPayment = false;
-      } else {
-        isPartialPayment = true;
-        payAmount = customPaymentAmount;
+
+      if (customPaymentAmount > amountAfterDiscount) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Custom payment amount cannot exceed the order total',
+          },
+          { status: 400 },
+        );
       }
+
+      isPartialPayment = customPaymentAmount < amountAfterDiscount;
+      payAmount = customPaymentAmount;
     }
 
     const order = await Order.create({
@@ -335,10 +400,6 @@ export async function POST(request: NextRequest) {
       countryCode: billingData.country || '',
       locale,
     });
-
-    if (appliedCouponCode) {
-      await applyCoupon(appliedCouponCode);
-    }
 
     // FB CAPI: InitiateCheckout (fire-and-forget)
     const reqIp =

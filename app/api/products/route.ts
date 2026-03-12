@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
+import { normalizeReservationFields } from '@/lib/reservation-fields';
 
 export async function GET(request: NextRequest) {
   try {
@@ -30,7 +31,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        products,
+        products: products.map((product) => ({
+          ...product,
+          reservationFields: normalizeReservationFields(
+            product.reservationFields,
+          ),
+        })),
         pagination: {
           currentPage: page,
           totalPages,

@@ -33,6 +33,14 @@ export interface IBillingData {
 }
 
 export interface IReservationAnswer {
+  key:
+    | 'intention'
+    | 'sacrificeFor'
+    | 'gender'
+    | 'isAlive'
+    | 'shortDuaa'
+    | 'photo'
+    | 'executionDate';
   label: { ar: string; en: string };
   type:
     | 'text'
@@ -100,6 +108,19 @@ const BillingDataSchema = new mongoose.Schema<IBillingData>(
 
 const ReservationAnswerSchema = new mongoose.Schema<IReservationAnswer>(
   {
+    key: {
+      type: String,
+      enum: [
+        'intention',
+        'sacrificeFor',
+        'gender',
+        'isAlive',
+        'shortDuaa',
+        'photo',
+        'executionDate',
+      ],
+      required: true,
+    },
     label: {
       ar: { type: String, required: true, trim: true },
       en: { type: String, required: true, trim: true },
