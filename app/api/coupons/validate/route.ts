@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { validateCoupon } from '@/lib/services/coupon';
+import { rateLimit, getClientIp } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit: 20 coupon attempts per IP per minute
+    const ip = getClientIp(request);
+    const rl = rateLimit(`coupon:${ip}`, 20, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many requests. Please try again later.' },
+        { status: 429 },
+      );
+    }
+
     await connectDB();
     const { code, orderAmount, currency, productId } = await request.json();
 

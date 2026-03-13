@@ -12,6 +12,8 @@ import { createPayment } from '@/lib/services/easykash';
 import { validateCoupon, applyCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
+import { rateLimit, getClientIp } from '@/lib/rate-limit';
+import { log } from '@/lib/request-logger';
 
 function toIsoLocalDate(date: Date): string {
   const year = date.getFullYear();
@@ -22,8 +24,21 @@ function toIsoLocalDate(date: Date): string {
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit: 5 checkout attempts per IP per minute
+    const ip = getClientIp(request);
+    const traceId = request.headers.get('x-request-id') ?? undefined;
+    const rl = rateLimit(`checkout:${ip}`, 5, 60_000);
+    if (!rl.allowed) {
+      log('warn', 'checkout.rate_limited', { ip, traceId });
+      return NextResponse.json(
+        { success: false, error: 'Too many requests. Please try again later.' },
+        { status: 429 },
+      );
+    }
+
     await connectDB();
     const body = await request.json();
+    log('info', 'checkout.initiated', { ip, traceId, source: body?.source });
 
     const {
       productId,

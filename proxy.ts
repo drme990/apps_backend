@@ -35,11 +35,28 @@ export function proxy(request: NextRequest) {
 
   const origin = request.headers.get('origin');
 
+  // Reuse incoming trace ID from load balancer/CDN or generate a fresh one.
+  const traceId =
+    request.headers.get('x-request-id') ?? crypto.randomUUID();
+
+  // Structured request log — newline-delimited JSON consumed by Vercel log drain
+  // or any standard log aggregator.
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      event: 'request.in',
+      traceId,
+      method: request.method,
+      path: request.nextUrl.pathname,
+    }),
+  );
+
   // Handle preflight
   if (request.method === 'OPTIONS') {
     return new NextResponse(null, {
       status: 204,
-      headers: getCorsHeaders(origin),
+      headers: { ...getCorsHeaders(origin), 'x-request-id': traceId },
     });
   }
 
@@ -48,6 +65,8 @@ export function proxy(request: NextRequest) {
   for (const [key, value] of Object.entries(corsHeaders)) {
     response.headers.set(key, value);
   }
+  // Propagate trace ID so callers can correlate frontend and backend logs.
+  response.headers.set('x-request-id', traceId);
 
   return response;
 }
