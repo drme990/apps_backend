@@ -13,6 +13,13 @@ import { validateCoupon, applyCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
 
+function toIsoLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -179,6 +186,19 @@ export async function POST(request: NextRequest) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(finalValue)) {
           return NextResponse.json(
             { success: false, error: 'Execution date format is invalid' },
+            { status: 400 },
+          );
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayIso = toIsoLocalDate(today);
+        if (finalValue <= todayIso) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Execution date must be after today',
+            },
             { status: 400 },
           );
         }

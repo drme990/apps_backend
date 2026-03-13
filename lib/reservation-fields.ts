@@ -26,11 +26,13 @@ export interface ReservationFieldConfig {
   type: ReservationFieldType;
   label: { ar: string; en: string };
   options?: ReservationFieldOption[];
+  supportsMulti?: boolean;
 }
 
 export interface ReservationFieldDefinition extends ReservationFieldConfig {
   required: boolean;
   maxLength?: number;
+  supportsMulti?: boolean;
 }
 
 export interface ReservationAnswerDefinition {
@@ -57,7 +59,7 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
     type: 'text',
     label: {
       ar: 'اسم الشخص المؤدى عنه',
-      en: 'Name of the person the sacrifice is for',
+      en: 'The person on whose behalf',
     },
   },
   {
@@ -68,8 +70,8 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
       { ar: 'ذكر', en: 'male' },
       { ar: 'انثى', en: 'female' },
       {
-        ar: 'مذكر ومؤنث (أكثر من اسم واحد)',
-        en: 'Males and females (more than one name)',
+        ar: 'ذكور و اناث',
+        en: 'Males and females',
       },
     ],
   },
@@ -79,7 +81,7 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
     label: { ar: 'حي', en: 'Is Alive' },
     options: [
       { ar: 'حي', en: 'Alive' },
-      { ar: 'ميت', en: 'dead' },
+      { ar: 'متوفي', en: 'dead' },
     ],
   },
   {
@@ -168,6 +170,9 @@ export function normalizeReservationFields(
         options: preset.options,
         required,
         maxLength,
+        supportsMulti: Boolean(
+          (matched as { supportsMulti?: unknown }).supportsMulti,
+        ),
       },
     ];
   });
@@ -191,6 +196,31 @@ export function matchReservationOption(
 ): ReservationFieldOption | undefined {
   if (!field.options?.length) return undefined;
   const normalizedValue = normalizeText(value);
+
+  if (field.key === 'isAlive') {
+    if (
+      normalizedValue === 'dead' ||
+      normalizedValue === 'deceased' ||
+      normalizedValue === 'ميت' ||
+      normalizedValue === 'متوفي'
+    ) {
+      return field.options.find(
+        (option) => normalizeText(option.ar) === 'متوفي',
+      );
+    }
+  }
+
+  if (field.key === 'gender') {
+    if (
+      normalizedValue === 'males and females' ||
+      normalizedValue === 'ذكور و اناث' ||
+      normalizedValue === 'مذكر ومؤنث (أكثر من اسم واحد)'
+    ) {
+      return field.options.find(
+        (option) => normalizeText(option.ar) === 'ذكور و اناث',
+      );
+    }
+  }
 
   return field.options.find(
     (option) =>

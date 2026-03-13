@@ -47,6 +47,7 @@ export interface IReservationField {
   required: boolean;
   maxLength?: number;
   options?: { ar: string; en: string }[];
+  supportsMulti?: boolean;
 }
 
 export interface IProduct {
@@ -159,6 +160,7 @@ const ReservationFieldSchema = new mongoose.Schema(
         _id: false,
       },
     ],
+    supportsMulti: { type: Boolean, default: false },
   },
   { _id: false },
 );
