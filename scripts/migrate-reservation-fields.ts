@@ -1,12 +1,59 @@
 import mongoose, { Document, Types } from 'mongoose';
 
+declare function require(name: string): any;
+const fs = require('fs');
+const path = require('path');
+
 declare const process: {
   env: Record<string, string | undefined>;
+  cwd: () => string;
+  argv: string[];
   exit: (code?: number) => never;
 };
 
-const MONGODB_URI =
-  process.env.DATA_BASE_URL || 'mongodb://localhost:27017/manasik';
+function loadEnvFile(filePath: string) {
+  if (!fs.existsSync(filePath)) return;
+
+  const content = fs.readFileSync(filePath, 'utf8');
+  const lines = content.split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) continue;
+
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function loadEnvFiles() {
+  const cwd = process.cwd();
+  loadEnvFile(path.join(cwd, '.env'));
+  loadEnvFile(path.join(cwd, '.env.local'));
+}
+
+function getMongoUri(): string {
+  const cliUriArg = process.argv.find((arg) => arg.startsWith('--uri='));
+  if (cliUriArg) {
+    return cliUriArg.slice('--uri='.length);
+  }
+
+  return process.env.DATA_BASE_URL || 'mongodb://localhost:27017/manasik';
+}
 
 type Localized = { ar: string; en: string };
 
@@ -110,7 +157,12 @@ function normalizeKey(field: { key?: string; label?: Localized }): string {
   const en = field.label?.en?.trim().toLowerCase();
 
   if (ar === 'النية' || en === 'intention') return 'intention';
-  if (ar === 'اسم الشخص الذي يذبح عنه' || ar === SACRIFICE_FOR_AR) {
+  if (
+    ar === 'اسم الشخص الذي يذبح عنه' ||
+    ar === SACRIFICE_FOR_AR ||
+    en === 'name of the person the sacrifice is for' ||
+    en === 'the person on whose behalf'
+  ) {
     return 'sacrificeFor';
   }
   if (ar === 'الجنس' || en === 'gender') return 'gender';
@@ -270,8 +322,21 @@ async function migrateOrders() {
 
 async function run() {
   try {
-    await mongoose.connect(MONGODB_URI);
+    loadEnvFiles();
+
+    const mongoUri = getMongoUri();
+    await mongoose.connect(mongoUri);
+
+    const connection = mongoose.connection;
     console.log('Connected to MongoDB');
+    if (mongoUri.includes('localhost')) {
+      console.warn(
+        'Warning: using localhost database. Pass --uri=... to target a different database.',
+      );
+    }
+    console.log(
+      `Database: ${connection.name || 'unknown'}${connection.host ? ` (${connection.host})` : ''}`,
+    );
 
     const updatedProducts = await migrateProducts();
     const updatedOrders = await migrateOrders();
