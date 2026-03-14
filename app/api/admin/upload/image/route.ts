@@ -8,6 +8,11 @@ import {
   extractPublicId,
 } from '@/lib/services/cloudinary';
 import { logActivity } from '@/lib/services/logger';
+import { validateInput } from '@/lib/validation/http';
+import {
+  uploadImageDeleteSchema,
+  uploadImageFormSchema,
+} from '@/lib/validation/schemas';
 
 const ALLOWED_TYPES = [
   'image/jpeg',
@@ -25,15 +30,19 @@ export async function POST(request: NextRequest) {
     if ('error' in auth) return auth.error;
 
     const formData = await request.formData();
-    const file = formData.get('file') as File | null;
-    const oldUrl = formData.get('oldUrl') as string | null;
+    const parsed = validateInput(
+      {
+        file: formData.get('file'),
+        oldUrl:
+          typeof formData.get('oldUrl') === 'string'
+            ? (formData.get('oldUrl') as string)
+            : undefined,
+      },
+      uploadImageFormSchema,
+    );
+    if (!parsed.success) return parsed.response;
 
-    if (!file) {
-      return NextResponse.json(
-        { success: false, error: 'No file uploaded' },
-        { status: 400 },
-      );
-    }
+    const { file, oldUrl } = parsed.data;
 
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
@@ -91,14 +100,13 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const url = request.nextUrl.searchParams.get('url');
+    const parsed = validateInput(
+      { url: request.nextUrl.searchParams.get('url') },
+      uploadImageDeleteSchema,
+    );
+    if (!parsed.success) return parsed.response;
 
-    if (!url) {
-      return NextResponse.json(
-        { success: false, error: 'URL is required' },
-        { status: 400 },
-      );
-    }
+    const { url } = parsed.data;
 
     if (!isCloudinaryUrl(url)) {
       return NextResponse.json(

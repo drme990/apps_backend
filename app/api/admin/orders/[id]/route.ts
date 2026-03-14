@@ -4,6 +4,8 @@ import { requireAuth } from '@/lib/auth';
 import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
+import { parseJsonBody } from '@/lib/validation/http';
+import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
 
 const ALLOWED_ORDER_STATUSES = new Set([
   'pending',
@@ -58,7 +60,9 @@ export async function PUT(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const { status } = await request.json();
+    const parsed = await parseJsonBody(request, orderStatusUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const { status } = parsed.data;
     const rawStatus =
       typeof status === 'string' ? status.toLowerCase().trim() : '';
     const normalizedStatus = STATUS_ALIASES[rawStatus] || rawStatus;

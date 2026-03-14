@@ -2,14 +2,19 @@
 
 A **Next.js 16 App Router** serverless backend deployed on **Vercel**. Single source of truth for all database operations, payments, authentication, and business logic shared across the **Manasik Foundation** and **Ghadaq Association** platforms.
 
-## Latest Updates (2026-03-09)
+## Latest Updates (2026-03-14)
 
-- Storefront checkout flow was simplified to 2 steps: **Billing Information** then **Reservation Details**.
-- Reservation data remains optional and is only sent when product `reservationFields` exist.
-- Checkout requests remain compatible with themed custom date picker values (ISO `YYYY-MM-DD` for date fields).
-- Products without reservation fields continue to proceed directly to payment request creation.
-- Product `upgradeFeatures` are optional and can be stored independently of `upgradeTo`.
-- Upgrade discount offers in storefronts now render a top-aligned large countdown UI without changing backend checkout contract.
+- Checkout contract now supports multi-name reservation input for **sacrificeFor** using newline-separated values from storefront chips UI.
+- Added centralized request observability at the edge/proxy layer with generated/propagated `x-request-id` trace IDs.
+- Added structured JSON request logs for easier production correlation.
+- Added public endpoint abuse controls with in-memory sliding-window rate limiting for:
+  - `POST /api/payment/checkout`
+  - `POST /api/coupons/validate`
+- Added startup-time environment validation through `instrumentation.ts` to fail fast in production when critical vars are missing.
+- Enforced EasyKash webhook signature preconditions (callback processing requires configured HMAC secret).
+- Added persistent webhook idempotency lock via `WebhookEvent` model to prevent duplicate callback processing.
+- Added centralized Zod validator layer for mutable endpoints under `lib/validation/*`.
+- Added payload examples by route class in [docs/ENDPOINT_PAYLOAD_EXAMPLES.md](../docs/ENDPOINT_PAYLOAD_EXAMPLES.md).
 
 ---
 
@@ -61,10 +66,13 @@ lib/
   db.ts              - MongoDB connection singleton (cached promise pattern)
   auth.ts            - Auth helpers (getAuthUser, requireAuth)
   currency-rounding.ts - Currency-specific rounding config
-  models/            - 9 Mongoose models (Product, Order, User,
+  rate-limit.ts      - Shared in-memory sliding-window limiter
+  request-logger.ts  - Structured JSON request/event logger
+  validation/        - Centralized request schemas + parser helpers (Zod)
+  models/            - 10 Mongoose models (Product, Order, User,
                        Coupon, Country, Referral, ActivityLog,
-                       Appearance, CronLog)
-  services/          - jwt, logger, rate-limit, coupon, currency,
+                       Appearance, CronLog, WebhookEvent)
+  services/          - jwt, logger, coupon, currency,
                        easykash, fb-capi, cloudinary, email
 app/api/
   products/          - Public product routes
@@ -76,7 +84,8 @@ app/api/
   payment/           - Checkout, status, webhook, referral-info
   admin/             - Protected admin routes (all CRUD)
   cron/              - Vercel Cron job routes
-middleware.ts        - CORS handling for all /api routes
+proxy.ts             - CORS + request tracing for all /api routes
+instrumentation.ts   - Startup env validation (fail-fast in production)
 vercel.json          - Cron schedule configuration
 ```
 
@@ -137,6 +146,12 @@ vercel.json          - Cron schedule configuration
 | Method | Path                      | Schedule       | Description                                   |
 | ------ | ------------------------- | -------------- | --------------------------------------------- |
 | GET    | `/api/cron/update-prices` | Daily 3:00 UTC | Auto-update product prices via exchange rates |
+
+### Payload Examples
+
+For request/response samples grouped by route class (public, admin, payment, cron), see:
+
+- [docs/ENDPOINT_PAYLOAD_EXAMPLES.md](../docs/ENDPOINT_PAYLOAD_EXAMPLES.md)
 
 ---
 

@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Country from '@/lib/models/Country';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { countryUpdateSchema } from '@/lib/validation/schemas';
 
 export async function GET(
   _request: NextRequest,
@@ -41,7 +43,9 @@ export async function PUT(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, countryUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     const country = await Country.findByIdAndUpdate(id, body, {
       new: true,
       runValidators: true,

@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import User from '@/lib/models/User';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { userUpdateSchema } from '@/lib/validation/schemas';
 
 export async function GET(
   _request: NextRequest,
@@ -77,7 +79,9 @@ export async function PUT(
       );
     }
 
-    const { name, email, password, role, allowedPages } = await request.json();
+    const parsed = await parseJsonBody(request, userUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const { name, email, password, role, allowedPages } = parsed.data;
     if (name) targetUser.name = name;
     if (email) targetUser.email = email;
     if (password) targetUser.password = password;

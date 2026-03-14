@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import User from '@/lib/models/User';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { userCreateSchema } from '@/lib/validation/schemas';
 
 export async function GET() {
   try {
@@ -34,7 +36,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, email, password, role, allowedPages } = await request.json();
+    const parsed = await parseJsonBody(request, userCreateSchema);
+    if (!parsed.success) return parsed.response;
+    const { name, email, password, role, allowedPages } = parsed.data;
 
     const existingUser = await User.findOne({ email: email?.toLowerCase() });
     if (existingUser) {

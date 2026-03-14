@@ -5,6 +5,8 @@ import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
 import { roundPrice } from '@/lib/currency-rounding';
+import { parseJsonBody } from '@/lib/validation/http';
+import { autoPriceSchema } from '@/lib/validation/schemas';
 
 export async function POST(
   request: NextRequest,
@@ -16,14 +18,9 @@ export async function POST(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const { targetCurrencies } = await request.json();
-
-    if (!Array.isArray(targetCurrencies) || targetCurrencies.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'targetCurrencies array is required' },
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(request, autoPriceSchema);
+    if (!parsed.success) return parsed.response;
+    const { targetCurrencies } = parsed.data;
 
     const product = await Product.findById(id);
     if (!product) {

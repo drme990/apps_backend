@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Order, { type OrderStatus } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { bulkOrderStatusSchema } from '@/lib/validation/schemas';
 
 const BULK_ALLOWED_STATUSES: ReadonlySet<OrderStatus> = new Set([
   'completed',
@@ -27,18 +29,18 @@ export async function PUT(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const body = (await request.json()) as {
-      orderIds?: string[];
-      status?: string;
-    };
+    const parsed = await parseJsonBody(request, bulkOrderStatusSchema);
+    if (!parsed.success) return parsed.response;
 
-    const orderIds = Array.isArray(body.orderIds)
-      ? body.orderIds.filter(
+    const orderIds = Array.isArray(parsed.data.orderIds)
+      ? parsed.data.orderIds.filter(
           (id): id is string => typeof id === 'string' && id.trim().length > 0,
         )
       : [];
     const requestedStatus =
-      typeof body.status === 'string' ? body.status.toLowerCase().trim() : '';
+      typeof parsed.data.status === 'string'
+        ? parsed.data.status.toLowerCase().trim()
+        : '';
     const normalizedStatus = STATUS_ALIASES[requestedStatus];
 
     if (orderIds.length === 0) {

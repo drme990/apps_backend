@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { validateCoupon } from '@/lib/services/coupon';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
+import { parseJsonBody } from '@/lib/validation/http';
+import { couponValidationSchema } from '@/lib/validation/schemas';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,17 +18,9 @@ export async function POST(request: NextRequest) {
     }
 
     await connectDB();
-    const { code, orderAmount, currency, productId } = await request.json();
-
-    if (!code || !orderAmount || !currency) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Missing required fields: code, orderAmount, currency',
-        },
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(request, couponValidationSchema);
+    if (!parsed.success) return parsed.response;
+    const { code, orderAmount, currency, productId } = parsed.data;
 
     const result = await validateCoupon(code, orderAmount, currency, productId);
 

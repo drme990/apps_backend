@@ -14,6 +14,8 @@ import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { checkoutSchema } from '@/lib/validation/schemas';
 
 function toIsoLocalDate(date: Date): string {
   const year = date.getFullYear();
@@ -37,7 +39,9 @@ export async function POST(request: NextRequest) {
     }
 
     await connectDB();
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, checkoutSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     log('info', 'checkout.initiated', { ip, traceId, source: body?.source });
 
     const {
@@ -59,26 +63,6 @@ export async function POST(request: NextRequest) {
     if (!termsAgreed) {
       return NextResponse.json(
         { success: false, error: 'Terms and conditions must be agreed to' },
-        { status: 400 },
-      );
-    }
-
-    if (!productId || !currency || !billingData) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Missing required fields: productId, currency, billingData',
-        },
-        { status: 400 },
-      );
-    }
-
-    if (!billingData.fullName || !billingData.email || !billingData.phone) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Billing data must include: fullName, email, phone',
-        },
         { status: 400 },
       );
     }

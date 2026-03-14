@@ -4,18 +4,15 @@ import User from '@/lib/models/User';
 import { generateToken } from '@/lib/services/jwt';
 import { logActivity } from '@/lib/services/logger';
 import { checkRateLimit } from '@/lib/services/rate-limit';
+import { parseJsonBody } from '@/lib/validation/http';
+import { loginSchema } from '@/lib/validation/schemas';
 
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const { email, password } = await request.json();
-
-    if (!email || !password) {
-      return NextResponse.json(
-        { success: false, error: 'Email and password are required' },
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(request, loginSchema);
+    if (!parsed.success) return parsed.response;
+    const { email, password } = parsed.data;
 
     const rateLimitKey = `login:${email.toLowerCase()}`;
     const rateLimit = checkRateLimit(rateLimitKey, {

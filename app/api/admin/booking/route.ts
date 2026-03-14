@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Booking from '@/lib/models/Booking';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { bookingUpdateSchema } from '@/lib/validation/schemas';
 
 function normalizeBlockedDates(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
@@ -43,7 +45,9 @@ export async function PUT(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, bookingUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     const blockedExecutionDates = normalizeBlockedDates(
       body?.blockedExecutionDates,
     );

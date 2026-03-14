@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Coupon from '@/lib/models/Coupon';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { couponCreateSchema } from '@/lib/validation/schemas';
 
 export async function GET() {
   try {
@@ -27,7 +29,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, couponCreateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
 
     const existing = await Coupon.findOne({
       code: body.code?.toUpperCase().trim(),

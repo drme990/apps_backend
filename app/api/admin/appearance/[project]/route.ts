@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Appearance from '@/lib/models/Appearance';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { appearanceUpdateSchema } from '@/lib/validation/schemas';
 
 const VALID_PROJECTS = ['ghadaq', 'manasik'];
 
@@ -57,7 +59,9 @@ export async function PUT(
       );
     }
 
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, appearanceUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     const appearance = await Appearance.findOneAndUpdate(
       { project },
       { ...body, project },

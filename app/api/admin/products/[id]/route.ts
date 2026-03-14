@@ -4,6 +4,8 @@ import { requireAuth } from '@/lib/auth';
 import Product from '@/lib/models/Product';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { productUpdateSchema } from '@/lib/validation/schemas';
 
 export async function GET(
   _request: NextRequest,
@@ -50,7 +52,9 @@ export async function PUT(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, productUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
 
     // Use findById + set + save for reliable nested array updates (e.g. reservationFields)
     const doc = await Product.findById(id);

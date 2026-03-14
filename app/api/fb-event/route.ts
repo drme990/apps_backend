@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendFBEvent } from '@/lib/services/fb-capi';
+import { parseJsonBody } from '@/lib/validation/http';
+import { fbEventSchema } from '@/lib/validation/schemas';
 
 export async function POST(request: NextRequest) {
   try {
+    const parsed = await parseJsonBody(request, fbEventSchema);
+    if (!parsed.success) return parsed.response;
     const { event_name, event_id, event_source_url, user_data, custom_data } =
-      await request.json();
-
-    if (!event_name) {
-      return NextResponse.json(
-        { success: false, error: 'event_name is required' },
-        { status: 400 },
-      );
-    }
+      parsed.data;
 
     const ip =
       request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||

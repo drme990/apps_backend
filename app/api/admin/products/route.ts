@@ -4,6 +4,8 @@ import { requireAuth } from '@/lib/auth';
 import Product from '@/lib/models/Product';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { productCreateSchema } from '@/lib/validation/schemas';
 
 export async function GET() {
   try {
@@ -40,7 +42,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const body = await request.json();
+    const parsed = await parseJsonBody(request, productCreateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     const product = await Product.create({
       ...body,
       reservationFields: normalizeReservationFields(body.reservationFields),

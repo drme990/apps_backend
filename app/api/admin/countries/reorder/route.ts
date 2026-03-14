@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Country from '@/lib/models/Country';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { reorderSchema } from '@/lib/validation/schemas';
 
 export async function PUT(request: NextRequest) {
   try {
@@ -10,14 +12,9 @@ export async function PUT(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const { orderedIds } = await request.json();
-
-    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'orderedIds array is required' },
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(request, reorderSchema);
+    if (!parsed.success) return parsed.response;
+    const { orderedIds } = parsed.data;
 
     const bulkOps = orderedIds.map((id: string, index: number) => ({
       updateOne: {

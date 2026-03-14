@@ -3,6 +3,8 @@ import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/auth';
 import Referral from '@/lib/models/Referral';
 import { logActivity } from '@/lib/services/logger';
+import { parseJsonBody } from '@/lib/validation/http';
+import { referralCreateSchema } from '@/lib/validation/schemas';
 
 export async function GET(request: NextRequest) {
   try {
@@ -39,7 +41,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const { name, referralId, phone } = await request.json();
+    const parsed = await parseJsonBody(request, referralCreateSchema);
+    if (!parsed.success) return parsed.response;
+    const { name, referralId, phone } = parsed.data;
 
     const existing = await Referral.findOne({ referralId });
     if (existing) {

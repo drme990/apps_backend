@@ -7,6 +7,9 @@ import {
 } from '@/lib/services/easykash';
 import { trackPurchase } from '@/lib/services/fb-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
+import WebhookEvent from '@/lib/models/WebhookEvent';
+import { parseJsonBody } from '@/lib/validation/http';
+import { webhookSchema } from '@/lib/validation/schemas';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 
@@ -14,21 +17,36 @@ export async function POST(request: NextRequest) {
   try {
     await connectDB();
 
-    const body: EasykashCallbackPayload = await request.json();
+    const parsed = await parseJsonBody(request, webhookSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data as EasykashCallbackPayload;
+
+    // Signature verification is mandatory in production environments.
+    if (!process.env.EASYKASH_HMAC_SECRET) {
+      console.error(
+        'EasyKash webhook rejected: EASYKASH_HMAC_SECRET is not configured',
+      );
+      return NextResponse.json(
+        { error: 'Webhook signature verification is not configured' },
+        { status: 503 },
+      );
+    }
+
+    if (!body.signatureHash) {
+      return NextResponse.json(
+        { error: 'Missing signatureHash' },
+        { status: 400 },
+      );
+    }
 
     // -----------------------------
     // 1️⃣ Verify signature
     // -----------------------------
-    if (process.env.EASYKASH_HMAC_SECRET) {
-      const isValid = verifyCallbackSignature(body);
+    const isValid = verifyCallbackSignature(body);
 
-      if (!isValid) {
-        console.error('EasyKash webhook: invalid signature');
-        return NextResponse.json(
-          { error: 'Invalid signature' },
-          { status: 403 },
-        );
-      }
+    if (!isValid) {
+      console.error('EasyKash webhook: invalid signature');
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
     }
 
     // -----------------------------
@@ -52,11 +70,17 @@ export async function POST(request: NextRequest) {
       Amount,
     } = body;
 
-    if (!customerReference) {
-      return NextResponse.json(
-        { error: 'Missing customerReference' },
-        { status: 400 },
-      );
+    // Idempotency key guarantees we process each callback event once.
+    const eventKey = `${easykashRef}:${status}:${body.Timestamp}`;
+    try {
+      await WebhookEvent.create({
+        provider: 'easykash',
+        eventKey,
+        orderReference: customerReference,
+      });
+    } catch {
+      console.log('Webhook duplicate ignored:', eventKey);
+      return NextResponse.json({ success: true, duplicate: true });
     }
 
     // -----------------------------
@@ -72,15 +96,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------
-    // 4️⃣ Idempotency protection
-    // -----------------------------
-    if (order.easykashRef && order.easykashRef === easykashRef) {
-      console.log('Webhook duplicate ignored:', easykashRef);
-      return NextResponse.json({ success: true });
-    }
-
-    // -----------------------------
-    // 5️⃣ Amount verification
+    // 4️⃣ Amount verification
     // -----------------------------
     const webhookAmount = Number(Amount);
 
@@ -92,7 +108,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------
-    // 6️⃣ Prevent already-paid reprocessing
+    // 5️⃣ Prevent already-paid reprocessing
     // -----------------------------
     if (order.status === 'paid') {
       console.log('Webhook ignored: order already paid');
@@ -100,7 +116,7 @@ export async function POST(request: NextRequest) {
     }
 
     // -----------------------------
-    // 7️⃣ Update order
+    // 6️⃣ Update order
     // -----------------------------
     order.easykashRef = easykashRef;
     order.easykashProductCode = ProductCode;
@@ -138,7 +154,7 @@ export async function POST(request: NextRequest) {
     await order.save();
 
     // -----------------------------
-    // 8️⃣ Fire background tasks
+    // 7️⃣ Fire background tasks
     // -----------------------------
     if (order.status === 'paid') {
       const item = order.items?.[0];
