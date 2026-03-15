@@ -15,6 +15,7 @@ A **Next.js 16 App Router** serverless backend deployed on **Vercel**. Single so
 - Added persistent webhook idempotency lock via `WebhookEvent` model to prevent duplicate callback processing.
 - Added centralized Zod validator layer for mutable endpoints under `lib/validation/*`.
 - Added payload examples by route class in [docs/ENDPOINT_PAYLOAD_EXAMPLES.md](../docs/ENDPOINT_PAYLOAD_EXAMPLES.md).
+- Payment status endpoint now performs redirect-parameter fallback synchronization (`status`, `providerRefNum`, `customerReference`) so orders do not remain stuck in `processing` when webhook delivery is delayed.
 
 ---
 
