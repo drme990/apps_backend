@@ -82,6 +82,7 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
     options: [
       { ar: 'حي', en: 'Alive' },
       { ar: 'متوفي', en: 'Dead' },
+      { ar: 'احياء و متوفين', en: 'Alive and dead' },
     ],
   },
   {
@@ -206,6 +207,17 @@ export function matchReservationOption(
     ) {
       return field.options.find(
         (option) => normalizeText(option.ar) === 'متوفي',
+      );
+    }
+
+    if (
+      normalizedValue === 'alive and dead' ||
+      normalizedValue === 'alive & dead' ||
+      normalizedValue === 'احياء و متوفين' ||
+      normalizedValue === 'أحياء و متوفين'
+    ) {
+      return field.options.find(
+        (option) => normalizeText(option.ar) === 'احياء و متوفين',
       );
     }
   }
