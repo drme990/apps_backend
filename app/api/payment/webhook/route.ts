@@ -4,6 +4,7 @@ import Order, { type IOrder } from '@/lib/models/Order';
 import {
   verifyCallbackSignature,
   type EasykashCallbackPayload,
+  mapEasykashStatusToOrderStatus,
 } from '@/lib/services/easykash';
 import { trackPurchase } from '@/lib/services/fb-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
@@ -144,12 +145,7 @@ export async function POST(request: NextRequest) {
     else if (methodLower.includes('valu')) order.paymentMethod = 'valu';
     else order.paymentMethod = 'other';
 
-    // status mapping
-    if (status === 'PAID') order.status = 'paid';
-    else if (status === 'FAILED' || status === 'EXPIRED')
-      order.status = 'failed';
-    else if (status === 'REFUNDED') order.status = 'refunded';
-    else order.status = 'processing';
+    order.status = mapEasykashStatusToOrderStatus(status);
 
     await order.save();
 

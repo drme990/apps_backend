@@ -402,6 +402,7 @@ export async function POST(request: NextRequest) {
       paidAmount: payAmount,
       remainingAmount: isPartialPayment ? amountAfterDiscount - payAmount : 0,
       isPartialPayment,
+      sizeIndex: activeSizeIndex,
       currency: currencyUpper,
       status: 'pending',
       billingData: {

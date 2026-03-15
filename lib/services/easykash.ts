@@ -48,6 +48,37 @@ export interface EasykashInquiryResponse {
   easykashRef: string;
 }
 
+export type SyncedOrderStatus =
+  | 'pending'
+  | 'processing'
+  | 'paid'
+  | 'failed'
+  | 'refunded';
+
+export function mapEasykashStatusToOrderStatus(
+  rawStatus?: string | null,
+): SyncedOrderStatus {
+  const status = (rawStatus || '').trim().toUpperCase();
+
+  if (status === 'PAID' || status === 'SUCCESS') {
+    return 'paid';
+  }
+
+  if (status === 'FAILED' || status === 'EXPIRED' || status === 'DECLINED') {
+    return 'failed';
+  }
+
+  if (status === 'PENDING') {
+    return 'pending';
+  }
+
+  if (status === 'REFUNDED') {
+    return 'refunded';
+  }
+
+  return 'processing';
+}
+
 export async function createPayment(
   params: EasykashPayRequest,
 ): Promise<EasykashPayResponse> {

@@ -2,20 +2,55 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Order from '@/lib/models/Order';
 import Referral from '@/lib/models/Referral';
+import { mapEasykashStatusToOrderStatus } from '@/lib/services/easykash';
+
+const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+
+function mapPaymentMethod(
+  methodRaw: string | null,
+): 'card' | 'wallet' | 'bank_transfer' | 'fawry' | 'meeza' | 'valu' | 'other' {
+  const method = (methodRaw || '').toLowerCase();
+
+  if (method.includes('card')) return 'card';
+  if (method.includes('wallet')) return 'wallet';
+  if (method.includes('bank')) return 'bank_transfer';
+  if (method.includes('fawry')) return 'fawry';
+  if (method.includes('meeza')) return 'meeza';
+  if (method.includes('valu')) return 'valu';
+  return 'other';
+}
 
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
     const orderNumber = request.nextUrl.searchParams.get('orderNumber');
+    const customerReference =
+      request.nextUrl.searchParams.get('customerReference');
+    const gatewayStatus = request.nextUrl.searchParams.get('status');
+    const providerRefNum = request.nextUrl.searchParams.get('providerRefNum');
+    const paymentMethod = request.nextUrl.searchParams.get('paymentMethod');
 
-    if (!orderNumber) {
+    if (!orderNumber && !customerReference) {
       return NextResponse.json(
-        { success: false, error: 'Missing orderNumber parameter' },
+        {
+          success: false,
+          error: 'Missing orderNumber/customerReference parameter',
+        },
         { status: 400 },
       );
     }
 
-    const order = await Order.findOne({ orderNumber }).lean();
+    let order = orderNumber ? await Order.findOne({ orderNumber }) : null;
+
+    if (!order && customerReference) {
+      if (OBJECT_ID_REGEX.test(customerReference)) {
+        order = await Order.findById(customerReference);
+      }
+
+      if (!order) {
+        order = await Order.findOne({ orderNumber: customerReference });
+      }
+    }
 
     if (!order) {
       return NextResponse.json(
@@ -24,10 +59,53 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Front-channel fallback sync: update status using gateway redirect params.
+    // This protects the user flow when webhook delivery is delayed or unavailable.
+    if (gatewayStatus) {
+      const matchesCustomerReference =
+        !customerReference ||
+        customerReference === order._id?.toString() ||
+        customerReference === order.orderNumber;
+
+      if (matchesCustomerReference) {
+        const mappedStatus = mapEasykashStatusToOrderStatus(gatewayStatus);
+        const shouldUpdateStatus =
+          order.status !== mappedStatus &&
+          !(order.status === 'paid' && mappedStatus !== 'paid');
+
+        if (shouldUpdateStatus) {
+          order.status = mappedStatus;
+        }
+
+        if (providerRefNum) {
+          order.easykashRef = providerRefNum;
+        }
+
+        if (paymentMethod) {
+          order.paymentMethod = mapPaymentMethod(paymentMethod);
+        }
+
+        order.easykashResponse = {
+          ...(order.easykashResponse || {}),
+          status: gatewayStatus,
+          easykashRef: providerRefNum || order.easykashRef,
+          PaymentMethod: paymentMethod || order.easykashResponse?.PaymentMethod,
+          customerReference: customerReference || undefined,
+          source: 'redirect',
+        };
+
+        if (shouldUpdateStatus || providerRefNum || paymentMethod) {
+          await order.save();
+        }
+      }
+    }
+
+    const orderObj = order.toObject();
+
     let referralInfo: { name: string; phone: string } | null = null;
-    if (order.referralId) {
+    if (orderObj.referralId) {
       const referral = await Referral.findOne({
-        referralId: order.referralId,
+        referralId: orderObj.referralId,
       }).lean();
       if (referral) {
         referralInfo = {
@@ -40,22 +118,24 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        orderNumber: order.orderNumber,
-        status: order.status,
-        totalAmount: order.totalAmount,
-        currency: order.currency,
-        items: order.items,
-        billingData: order.billingData,
-        couponCode: order.couponCode || null,
-        couponDiscount: order.couponDiscount || 0,
-        isPartialPayment: order.isPartialPayment || false,
-        fullAmount: order.fullAmount || order.totalAmount,
-        paidAmount: order.paidAmount || order.totalAmount,
-        remainingAmount: order.remainingAmount || 0,
-        reservationData: order.reservationData || [],
-        source: order.source || 'manasik',
+        orderNumber: orderObj.orderNumber,
+        status: orderObj.status,
+        totalAmount: orderObj.totalAmount,
+        currency: orderObj.currency,
+        items: orderObj.items,
+        billingData: orderObj.billingData,
+        couponCode: orderObj.couponCode || null,
+        couponDiscount: orderObj.couponDiscount || 0,
+        isPartialPayment: orderObj.isPartialPayment || false,
+        fullAmount: orderObj.fullAmount || orderObj.totalAmount,
+        paidAmount: orderObj.paidAmount || orderObj.totalAmount,
+        remainingAmount: orderObj.remainingAmount || 0,
+        reservationData: orderObj.reservationData || [],
+        referralId: orderObj.referralId || null,
+        sizeIndex: orderObj.sizeIndex ?? 0,
+        source: orderObj.source || 'manasik',
         referralInfo,
-        createdAt: order.createdAt,
+        createdAt: orderObj.createdAt,
       },
     });
   } catch (error) {

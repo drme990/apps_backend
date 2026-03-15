@@ -72,6 +72,7 @@ export interface IOrder {
   paidAmount?: number;
   remainingAmount?: number;
   isPartialPayment?: boolean;
+  sizeIndex?: number;
   referralId?: string;
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
@@ -194,6 +195,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     paidAmount: { type: Number, min: 0 },
     remainingAmount: { type: Number, min: 0 },
     isPartialPayment: { type: Boolean, default: false },
+    sizeIndex: { type: Number, min: 0, default: 0 },
     referralId: { type: String, trim: true, index: true },
     termsAgreedAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
