@@ -6,6 +6,20 @@ export async function GET(request: NextRequest) {
   const EMPTY = {
     worksImages: { row1: [] as string[], row2: [] as string[] },
     whatsAppDefaultMessage: '',
+    bannerText: { ar: '', en: '' },
+  };
+
+  const normalizeBannerText = (value: unknown): { ar: string; en: string } => {
+    if (typeof value === 'string') {
+      const text = value.trim();
+      return { ar: text, en: text };
+    }
+
+    const raw = value as { ar?: unknown; en?: unknown } | undefined;
+    return {
+      ar: typeof raw?.ar === 'string' ? raw.ar.trim() : '',
+      en: typeof raw?.en === 'string' ? raw.en.trim() : '',
+    };
   };
   try {
     await connectDB();
@@ -13,6 +27,7 @@ export async function GET(request: NextRequest) {
     const appearance = (await Appearance.findOne({ project }).lean()) as {
       worksImages?: { row1: string[]; row2: string[] };
       whatsAppDefaultMessage?: string;
+      bannerText?: unknown;
     } | null;
 
     if (!appearance) {
@@ -36,6 +51,7 @@ export async function GET(request: NextRequest) {
       data: {
         worksImages,
         whatsAppDefaultMessage: appearance.whatsAppDefaultMessage?.trim() || '',
+        bannerText: normalizeBannerText(appearance.bannerText),
         // Keep backward compatibility for existing consumers.
         row1: worksImages.row1,
         row2: worksImages.row2,

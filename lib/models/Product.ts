@@ -57,6 +57,7 @@ export interface IProduct {
   content?: { ar: string; en: string };
   baseCurrency: string;
   inStock: boolean;
+  isBestSeller?: boolean;
   isActive: boolean;
   images: string[];
   sizes: IProductSize[];
@@ -209,6 +210,7 @@ const ProductSchema = new mongoose.Schema<IProduct>(
       trim: true,
     },
     inStock: { type: Boolean, default: true },
+    isBestSeller: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
     images: [{ type: String, trim: true }],
     sizes: {

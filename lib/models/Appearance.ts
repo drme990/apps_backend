@@ -5,6 +5,7 @@ export interface IAppearance {
   project: 'ghadaq' | 'manasik';
   worksImages: { row1: string[]; row2: string[] };
   whatsAppDefaultMessage?: string;
+  bannerText?: { ar: string; en: string };
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -26,6 +27,18 @@ const AppearanceSchema = new mongoose.Schema<IAppearance>(
       type: String,
       trim: true,
       default: '',
+    },
+    bannerText: {
+      ar: {
+        type: String,
+        trim: true,
+        default: '',
+      },
+      en: {
+        type: String,
+        trim: true,
+        default: '',
+      },
     },
   },
   { timestamps: true },
