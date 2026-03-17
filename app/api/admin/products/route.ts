@@ -13,7 +13,7 @@ export async function GET() {
     const auth = await requireAuth();
     if ('error' in auth) return auth.error;
 
-    const products = await Product.find()
+    const products = await Product.find({ isDeleted: { $ne: true } })
       .sort({ displayOrder: 1, createdAt: -1 })
       .lean();
     return NextResponse.json({

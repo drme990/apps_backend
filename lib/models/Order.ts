@@ -19,6 +19,7 @@ export type PaymentMethod =
 
 export interface IOrderItem {
   productId: string;
+  productSlug?: string;
   productName: { ar: string; en: string };
   price: number;
   currency: string;
@@ -86,6 +87,7 @@ export interface IOrder {
 const OrderItemSchema = new mongoose.Schema<IOrderItem>(
   {
     productId: { type: String, required: true },
+    productSlug: { type: String, trim: true, lowercase: true },
     productName: {
       ar: { type: String, required: true },
       en: { type: String, required: true },

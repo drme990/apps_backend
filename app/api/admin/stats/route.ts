@@ -14,7 +14,7 @@ export async function GET() {
 
     const [totalProducts, totalUsers, totalOrders, totalCountries] =
       await Promise.all([
-        Product.countDocuments(),
+        Product.countDocuments({ isDeleted: { $ne: true } }),
         User.countDocuments(),
         Order.countDocuments(),
         Country.countDocuments(),

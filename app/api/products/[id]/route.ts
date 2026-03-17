@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
 
+const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -10,9 +12,13 @@ export async function GET(
     await connectDB();
     const { id } = await params;
     const normalizedSlug = id.trim().toLowerCase();
+    const isObjectId = OBJECT_ID_REGEX.test(id.trim());
     const product = await Product.findOne({
       isActive: true,
-      slug: normalizedSlug,
+      isDeleted: { $ne: true },
+      $or: isObjectId
+        ? [{ _id: id.trim() }, { slug: normalizedSlug }]
+        : [{ slug: normalizedSlug }],
     }).lean();
 
     if (!product) {

@@ -13,7 +13,10 @@ export async function GET(request: NextRequest) {
     const inStock = searchParams.get('inStock');
     const sacrifice = searchParams.get('sacrifice');
 
-    const query: Record<string, unknown> = { isActive: true };
+    const query: Record<string, unknown> = {
+      isActive: true,
+      isDeleted: { $ne: true },
+    };
     if (inStock !== null) query.inStock = inStock === 'true';
     if (sacrifice === 'true') query.workAsSacrifice = true;
 

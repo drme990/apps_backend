@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Order from '@/lib/models/Order';
 import Referral from '@/lib/models/Referral';
+import Product from '@/lib/models/Product';
 import { mapEasykashStatusToOrderStatus } from '@/lib/services/easykash';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -115,6 +116,33 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const items = Array.isArray(orderObj.items) ? [...orderObj.items] : [];
+    const missingSlugIds = items
+      .filter(
+        (item) =>
+          !item.productSlug &&
+          typeof item.productId === 'string' &&
+          OBJECT_ID_REGEX.test(item.productId),
+      )
+      .map((item) => item.productId);
+
+    if (missingSlugIds.length > 0) {
+      const products = await Product.find(
+        { _id: { $in: missingSlugIds } },
+        { _id: 1, slug: 1 },
+      ).lean();
+
+      const slugById = new Map(
+        products.map((product) => [String(product._id), product.slug]),
+      );
+
+      for (const item of items) {
+        if (!item.productSlug && item.productId) {
+          item.productSlug = slugById.get(item.productId) || undefined;
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
@@ -122,7 +150,7 @@ export async function GET(request: NextRequest) {
         status: orderObj.status,
         totalAmount: orderObj.totalAmount,
         currency: orderObj.currency,
-        items: orderObj.items,
+        items,
         billingData: orderObj.billingData,
         couponCode: orderObj.couponCode || null,
         couponDiscount: orderObj.couponDiscount || 0,

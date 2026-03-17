@@ -22,7 +22,10 @@ export async function POST(
     if (!parsed.success) return parsed.response;
     const { targetCurrencies } = parsed.data;
 
-    const product = await Product.findById(id);
+    const product = await Product.findOne({
+      _id: id,
+      isDeleted: { $ne: true },
+    });
     if (!product) {
       return NextResponse.json(
         { success: false, error: 'Product not found' },

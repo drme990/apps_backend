@@ -72,6 +72,13 @@ export interface IProduct {
   sacrificeCount?: number;
   reservationFields?: IReservationField[];
   displayOrder?: number;
+  isDeleted?: boolean;
+  deletedAt?: Date | null;
+  deletedBy?: {
+    userId: string;
+    userName: string;
+    userEmail: string;
+  } | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -236,9 +243,19 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     sacrificeCount: { type: Number, default: 1, min: 1 },
     reservationFields: { type: [ReservationFieldSchema], default: [] },
     displayOrder: { type: Number, default: 0 },
+    isDeleted: { type: Boolean, default: false, index: true },
+    deletedAt: { type: Date, default: null },
+    deletedBy: {
+      userId: { type: String },
+      userName: { type: String },
+      userEmail: { type: String },
+      _id: false,
+    },
   },
   { timestamps: true },
 );
+
+ProductSchema.index({ isDeleted: 1, isActive: 1, displayOrder: 1 });
 
 if (process.env.NODE_ENV !== 'production' && mongoose.models.Product) {
   mongoose.deleteModel('Product');

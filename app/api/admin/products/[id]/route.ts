@@ -17,7 +17,10 @@ export async function GET(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const product = await Product.findById(id).lean();
+    const product = await Product.findOne({
+      _id: id,
+      isDeleted: { $ne: true },
+    }).lean();
     if (!product) {
       return NextResponse.json(
         { success: false, error: 'Product not found' },
@@ -57,7 +60,7 @@ export async function PUT(
     const body = parsed.data;
 
     // Use findById + set + save for reliable nested array updates (e.g. reservationFields)
-    const doc = await Product.findById(id);
+    const doc = await Product.findOne({ _id: id, isDeleted: { $ne: true } });
     if (!doc) {
       return NextResponse.json(
         { success: false, error: 'Product not found' },
@@ -107,13 +110,26 @@ export async function DELETE(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
-    const product = await Product.findByIdAndDelete(id);
+    const product = await Product.findOne({
+      _id: id,
+      isDeleted: { $ne: true },
+    });
     if (!product) {
       return NextResponse.json(
         { success: false, error: 'Product not found' },
         { status: 404 },
       );
     }
+
+    product.isDeleted = true;
+    product.isActive = false;
+    product.deletedAt = new Date();
+    product.deletedBy = {
+      userId: auth.user.userId,
+      userName: auth.user.name,
+      userEmail: auth.user.email,
+    };
+    await product.save();
 
     await logActivity({
       userId: auth.user.userId,
@@ -122,12 +138,12 @@ export async function DELETE(
       action: 'delete',
       resource: 'product',
       resourceId: id,
-      details: `Deleted product: ${product.name.en || product.name.ar}`,
+      details: `Soft deleted product: ${product.name.en || product.name.ar}`,
     });
 
     return NextResponse.json({
       success: true,
-      message: 'Product deleted successfully',
+      message: 'Product archived successfully',
     });
   } catch (error) {
     console.error('Error deleting product:', error);

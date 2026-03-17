@@ -9,7 +9,7 @@ import {
   normalizeReservationFields,
 } from '@/lib/reservation-fields';
 import { createPayment } from '@/lib/services/easykash';
-import { validateCoupon, applyCoupon } from '@/lib/services/coupon';
+import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
@@ -67,7 +67,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const product = await Product.findById(productId);
+    const product = await Product.findOne({
+      _id: productId,
+      isDeleted: { $ne: true },
+    });
     if (!product) {
       return NextResponse.json(
         { success: false, error: 'Product not found' },
@@ -391,6 +394,7 @@ export async function POST(request: NextRequest) {
       items: [
         {
           productId: product._id.toString(),
+          productSlug: product.slug,
           productName: { ar: product.name.ar, en: product.name.en },
           price: unitPrice,
           currency: currencyUpper,
