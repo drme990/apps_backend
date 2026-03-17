@@ -79,17 +79,35 @@ export async function GET(
       );
     }
 
-    const easykashResponse = await createPayment({
-      amount: Math.ceil(paymentLink.amountRequested),
-      currency: paymentLink.currencyCode,
-      name: 'Payment Link Customer',
-      email: 'payment-link@manasik.local',
-      mobile: '+201000000000',
-      redirectUrl: `${baseUrl}/payment/status?status=pending&customPayment=1&amount=${encodeURIComponent(String(paymentLink.amountRequested))}&currency=${encodeURIComponent(paymentLink.currencyCode)}`,
-      customerReference: `custom-${paymentLink._id}`,
-    });
+    try {
+      const easykashResponse = await createPayment({
+        amount: Math.ceil(paymentLink.amountRequested),
+        currency: paymentLink.currencyCode,
+        name: 'Payment Link Customer',
+        email: 'payment-link@manasik.local',
+        mobile: '+201000000000',
+        redirectUrl: `${baseUrl}/payment/status?status=pending&customPayment=1&amount=${encodeURIComponent(String(paymentLink.amountRequested))}&currency=${encodeURIComponent(paymentLink.currencyCode)}`,
+        customerReference: `custom-${paymentLink._id}`,
+      });
 
-    return NextResponse.redirect(easykashResponse.redirectUrl, { status: 302 });
+      return NextResponse.redirect(easykashResponse.redirectUrl, {
+        status: 302,
+      });
+    } catch (gatewayError) {
+      await PaymentLink.updateOne(
+        { _id: paymentLink._id, usedAt: { $ne: null } },
+        { $set: { usedAt: null } },
+      );
+
+      console.error(
+        'Error creating payment for custom pay link:',
+        gatewayError,
+      );
+      return NextResponse.json(
+        { success: false, error: 'Failed to initialize payment' },
+        { status: 502 },
+      );
+    }
   } catch (error) {
     console.error('Error resolving custom pay link:', error);
     return NextResponse.json(

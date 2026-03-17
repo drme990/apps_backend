@@ -13,6 +13,25 @@ import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
+const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+const ORDER_REF_REGEX = /^ord_([a-f\d]{24})_[a-f\d]{24}_\d+$/i;
+
+function getOrderIdFromReference(
+  customerReference: string | undefined,
+): string | null {
+  if (!customerReference) return null;
+
+  if (OBJECT_ID_REGEX.test(customerReference)) {
+    return customerReference;
+  }
+
+  const prefixedMatch = customerReference.match(ORDER_REF_REGEX);
+  if (prefixedMatch) {
+    return prefixedMatch[1];
+  }
+
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -87,8 +106,9 @@ export async function POST(request: NextRequest) {
     // -----------------------------
     // 3️⃣ Find order
     // -----------------------------
+    const resolvedOrderId = getOrderIdFromReference(customerReference);
     const order =
-      (await Order.findById(customerReference).exec()) ??
+      (resolvedOrderId ? await Order.findById(resolvedOrderId).exec() : null) ??
       (await Order.findOne({ orderNumber: customerReference }));
 
     if (!order) {

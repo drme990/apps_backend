@@ -6,6 +6,24 @@ import Product from '@/lib/models/Product';
 import { mapEasykashStatusToOrderStatus } from '@/lib/services/easykash';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+const ORDER_REF_REGEX = /^ord_([a-f\d]{24})_[a-f\d]{24}_\d+$/i;
+
+function getOrderIdFromReference(
+  customerReference: string | null,
+): string | null {
+  if (!customerReference) return null;
+
+  if (OBJECT_ID_REGEX.test(customerReference)) {
+    return customerReference;
+  }
+
+  const prefixedMatch = customerReference.match(ORDER_REF_REGEX);
+  if (prefixedMatch) {
+    return prefixedMatch[1];
+  }
+
+  return null;
+}
 
 function mapPaymentMethod(
   methodRaw: string | null,
@@ -44,8 +62,9 @@ export async function GET(request: NextRequest) {
     let order = orderNumber ? await Order.findOne({ orderNumber }) : null;
 
     if (!order && customerReference) {
-      if (OBJECT_ID_REGEX.test(customerReference)) {
-        order = await Order.findById(customerReference);
+      const resolvedOrderId = getOrderIdFromReference(customerReference);
+      if (resolvedOrderId) {
+        order = await Order.findById(resolvedOrderId);
       }
 
       if (!order) {
@@ -63,10 +82,12 @@ export async function GET(request: NextRequest) {
     // Front-channel fallback sync: update status using gateway redirect params.
     // This protects the user flow when webhook delivery is delayed or unavailable.
     if (gatewayStatus) {
+      const resolvedOrderId = getOrderIdFromReference(customerReference);
       const matchesCustomerReference =
         !customerReference ||
         customerReference === order._id?.toString() ||
-        customerReference === order.orderNumber;
+        customerReference === order.orderNumber ||
+        resolvedOrderId === order._id?.toString();
 
       if (matchesCustomerReference) {
         const mappedStatus = mapEasykashStatusToOrderStatus(gatewayStatus);

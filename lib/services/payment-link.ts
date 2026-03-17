@@ -136,7 +136,7 @@ export async function createPayLinkForOrder({
     ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
   };
 
-  const payLinkUrl = `${sourceBaseUrls[source]}/checkout?payLink=${rawToken}`;
+  const payLinkUrl = `${sourceBaseUrls[source]}/payment/pay-link/${rawToken}`;
 
   await logActivity({
     userId: user.userId,
