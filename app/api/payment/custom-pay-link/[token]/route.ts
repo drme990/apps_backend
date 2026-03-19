@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import PaymentLink from '@/lib/models/PaymentLink';
 import { createPayment } from '@/lib/services/easykash';
+import { convertCurrency } from '@/lib/services/currency';
+import { EASYKASH_CURRENCIES } from '@/lib/services/payment-link';
 
 export async function GET(
   _request: NextRequest,
@@ -80,13 +82,46 @@ export async function GET(
     }
 
     try {
+      let easykashAmount = Math.ceil(paymentLink.amountRequested);
+      let paymentCurrency = (paymentLink.currencyCode || 'EGP').toUpperCase();
+
+      if (
+        !EASYKASH_CURRENCIES.includes(
+          paymentCurrency as (typeof EASYKASH_CURRENCIES)[number],
+        )
+      ) {
+        const converted = await convertCurrency(
+          paymentLink.amountRequested,
+          paymentCurrency,
+          'EGP',
+        );
+        easykashAmount = Math.ceil(converted);
+        paymentCurrency = 'EGP';
+      }
+
+      if (easykashAmount <= 1) {
+        await PaymentLink.updateOne(
+          { _id: paymentLink._id, usedAt: { $ne: null } },
+          { $set: { usedAt: null } },
+        );
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'Payment amount is too low. Minimum accepted by the payment gateway is 2.',
+          },
+          { status: 400 },
+        );
+      }
+
       const easykashResponse = await createPayment({
-        amount: Math.ceil(paymentLink.amountRequested),
-        currency: paymentLink.currencyCode,
+        amount: easykashAmount,
+        currency: paymentCurrency,
         name: 'Payment Link Customer',
         email: 'payment-link@manasik.local',
         mobile: '+201000000000',
-        redirectUrl: `${baseUrl}/payment/status?status=pending&customPayment=1&amount=${encodeURIComponent(String(paymentLink.amountRequested))}&currency=${encodeURIComponent(paymentLink.currencyCode)}`,
+        redirectUrl: `${baseUrl}/payment/status?status=pending&customPayment=1&amount=${encodeURIComponent(String(paymentLink.amountRequested))}&currency=${encodeURIComponent(paymentLink.currencyCode)}&gatewayAmount=${encodeURIComponent(String(easykashAmount))}&gatewayCurrency=${encodeURIComponent(paymentCurrency)}`,
         customerReference: `custom-${paymentLink._id}`,
       });
 

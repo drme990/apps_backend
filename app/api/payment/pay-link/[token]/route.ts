@@ -4,8 +4,8 @@ import { connectDB } from '@/lib/db';
 import PaymentLink from '@/lib/models/PaymentLink';
 import Order from '@/lib/models/Order';
 import { createPayment } from '@/lib/services/easykash';
-import Product from '@/lib/models/Product';
 import { EASYKASH_CURRENCIES } from '@/lib/services/payment-link';
+import { convertCurrency } from '@/lib/services/currency';
 
 export async function GET(
   _request: NextRequest,
@@ -117,70 +117,12 @@ export async function GET(
           paymentCurrency as (typeof EASYKASH_CURRENCIES)[number],
         )
       ) {
-        const firstItem = order.items?.[0];
-        if (!firstItem?.productId) {
-          await PaymentLink.updateOne(
-            { _id: paymentLink._id, usedAt: { $ne: null } },
-            { $set: { usedAt: null } },
-          );
-
-          return NextResponse.json(
-            {
-              success: false,
-              error:
-                'This pay link currency is not supported by the payment gateway and cannot be converted automatically.',
-            },
-            { status: 400 },
-          );
-        }
-
-        const product = await Product.findOne({
-          _id: firstItem.productId,
-          isDeleted: { $ne: true },
-        }).lean();
-        const sizeIndex =
-          order.sizeIndex !== undefined &&
-          order.sizeIndex !== null &&
-          order.sizeIndex >= 0
-            ? order.sizeIndex
-            : 0;
-        const selectedSize =
-          product?.sizes?.[sizeIndex] || product?.sizes?.[0] || null;
-        const egpPrice = selectedSize?.prices?.find(
-          (p: { currencyCode: string; amount: number }) =>
-            p.currencyCode === 'EGP',
-        )?.amount;
-
-        if (!egpPrice || egpPrice <= 0) {
-          await PaymentLink.updateOne(
-            { _id: paymentLink._id, usedAt: { $ne: null } },
-            { $set: { usedAt: null } },
-          );
-
-          return NextResponse.json(
-            {
-              success: false,
-              error:
-                'This pay link currency is not supported by the payment gateway and EGP fallback is unavailable for this product.',
-            },
-            { status: 400 },
-          );
-        }
-
-        const quantity = firstItem.quantity || 1;
-        const egpFullAmount = egpPrice * quantity;
-        const fullAmount =
-          order.fullAmount ||
-          (order.paidAmount || 0) + (order.remainingAmount || 0) ||
-          order.totalAmount;
-        const outstandingRatio =
-          fullAmount > 0 ? remainingAmount / fullAmount : 1;
-        const requestedRatio =
-          remainingAmount > 0 ? requestedAmount / remainingAmount : 1;
-
-        easykashAmount = Math.ceil(
-          egpFullAmount * outstandingRatio * requestedRatio,
+        const converted = await convertCurrency(
+          requestedAmount,
+          paymentCurrency,
+          'EGP',
         );
+        easykashAmount = Math.ceil(converted);
         paymentCurrency = 'EGP';
       }
 

@@ -179,13 +179,9 @@ export async function createStandaloneCustomPayLink({
   }
 
   const normalizedCurrency = currencyCode.trim().toUpperCase();
-  if (
-    !EASYKASH_CURRENCIES.includes(
-      normalizedCurrency as (typeof EASYKASH_CURRENCIES)[number],
-    )
-  ) {
+  if (!/^[A-Z]{3}$/.test(normalizedCurrency)) {
     throw new PaymentLinkError(
-      `Currency must be one of: ${EASYKASH_CURRENCIES.join(', ')}.`,
+      'Currency code must be a valid 3-letter ISO code.',
       400,
     );
   }
