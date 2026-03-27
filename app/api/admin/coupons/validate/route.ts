@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import { validateCoupon } from '@/lib/services/coupon';
 import { parseJsonBody } from '@/lib/validation/http';
 import { couponValidationSchema } from '@/lib/validation/schemas';
@@ -8,7 +8,7 @@ import { couponValidationSchema } from '@/lib/validation/schemas';
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('coupons');
     if ('error' in auth) return auth.error;
 
     const parsed = await parseJsonBody(request, couponValidationSchema);

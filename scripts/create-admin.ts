@@ -1,23 +1,51 @@
 import mongoose from 'mongoose';
 import readline from 'readline';
 
-// MongoDB connection
 const MONGODB_URI =
   process.env.DATA_BASE_URL || 'mongodb://localhost:27017/manasik';
 
-// User schema definition (inline to avoid import issues)
-const UserSchema = new mongoose.Schema(
+type AppId = 'admin_panel' | 'ghadaq' | 'manasik';
+
+const AdminUserSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
     role: { type: String, required: true, enum: ['admin', 'super_admin'] },
+    allowedPages: {
+      type: [String],
+      enum: [
+        'products',
+        'orders',
+        'booking',
+        'coupons',
+        'countries',
+        'users',
+        'referrals',
+        'activityLogs',
+        'appearance',
+        'exchange',
+        'payments',
+      ],
+      default: [],
+    },
+  },
+  { timestamps: true, collection: 'users_admin_panel' },
+);
+
+const AppUserSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true, lowercase: true },
+    password: { type: String, required: true },
+    phone: { type: String, default: '' },
+    country: { type: String, default: '' },
+    appId: { type: String, required: true, enum: ['ghadaq', 'manasik'] },
   },
   { timestamps: true },
 );
 
-// Hash password before saving
-UserSchema.pre('save', async function () {
+AdminUserSchema.pre('save', async function () {
   if (!this.isModified('password')) return;
 
   const bcrypt = await import('bcryptjs');
@@ -25,9 +53,24 @@ UserSchema.pre('save', async function () {
   this.password = await bcrypt.hash(this.password, salt);
 });
 
-const User = mongoose.models.User || mongoose.model('User', UserSchema);
+AppUserSchema.pre('save', async function () {
+  if (!this.isModified('password')) return;
 
-// Create readline interface
+  const bcrypt = await import('bcryptjs');
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+});
+
+const AdminUser =
+  mongoose.models.ScriptAdminUser ||
+  mongoose.model('ScriptAdminUser', AdminUserSchema);
+const GhadqUser =
+  mongoose.models.ScriptGhadqUser ||
+  mongoose.model('ScriptGhadqUser', AppUserSchema, 'users_ghadaq');
+const ManasikUser =
+  mongoose.models.ScriptManasikUser ||
+  mongoose.model('ScriptManasikUser', AppUserSchema, 'users_manasik');
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -37,63 +80,107 @@ function question(query: string): Promise<string> {
   return new Promise((resolve) => rl.question(query, resolve));
 }
 
-async function createAdmin() {
+function normalizeAppId(input: string): AppId {
+  const normalized = input.trim().toLowerCase();
+  if (normalized === 'ghadaq' || normalized === 'manasik') {
+    return normalized;
+  }
+  return 'admin_panel';
+}
+
+async function createUserFromScript() {
   try {
-    console.log('\n🔧 Creating Super Admin User for Admin Panel\n');
-    console.log('='.repeat(50));
+    console.log('\nCreate User Script\n');
+    console.log('='.repeat(60));
 
-    // Connect to MongoDB
     await mongoose.connect(MONGODB_URI);
-    console.log('✅ Connected to MongoDB\n');
+    console.log('Connected to MongoDB\n');
 
-    // Get user input
-    const name = await question('Enter admin name: ');
-    const email = await question('Enter admin email: ');
-    const password = await question('Enter admin password (min 6 chars): ');
+    const appIdInput = await question(
+      'App ID (admin_panel/ghadaq/manasik) [admin_panel]: ',
+    );
+    const appId = normalizeAppId(appIdInput || 'admin_panel');
+
+    const name = (await question('Enter user name: ')).trim();
+    const email = (await question('Enter user email: ')).trim().toLowerCase();
+    const password = await question('Enter password (min 6 chars): ');
     const confirmPassword = await question('Confirm password: ');
 
-    // Validation
     if (!name || !email || !password) {
-      console.error('\n❌ All fields are required!');
-      process.exit(1);
+      throw new Error('Name, email and password are required.');
     }
 
     if (password.length < 6) {
-      console.error('\n❌ Password must be at least 6 characters!');
-      process.exit(1);
+      throw new Error('Password must be at least 6 characters.');
     }
 
     if (password !== confirmPassword) {
-      console.error('\n❌ Passwords do not match!');
-      process.exit(1);
+      throw new Error('Passwords do not match.');
     }
 
-    // Check if email already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      console.error('\n❌ User with this email already exists!');
-      process.exit(1);
+    if (appId === 'admin_panel') {
+      const roleInput = (
+        await question('Role (admin/super_admin) [super_admin]: ')
+      )
+        .trim()
+        .toLowerCase();
+      const role = roleInput === 'admin' ? 'admin' : 'super_admin';
+
+      const existingUser = await AdminUser.findOne({ email });
+      if (existingUser) {
+        throw new Error('A user with this email already exists.');
+      }
+
+      const user = await AdminUser.create({
+        name,
+        email,
+        password,
+        role,
+        allowedPages: role === 'admin' ? [] : undefined,
+      });
+
+      console.log('\n' + '='.repeat(60));
+      console.log('User created successfully.');
+      console.log('Collection: users_admin_panel');
+      console.log('Email:', user.email);
+      console.log('Name:', user.name);
+      console.log('Role:', user.role);
+      console.log('='.repeat(60) + '\n');
+    } else {
+      const phone = (await question('Phone (optional): ')).trim();
+      const country = (await question('Country (optional): ')).trim();
+      const Model = appId === 'ghadaq' ? GhadqUser : ManasikUser;
+
+      const existingUser = await Model.findOne({ email });
+      if (existingUser) {
+        throw new Error('A user with this email already exists.');
+      }
+
+      const user = await Model.create({
+        name,
+        email,
+        password,
+        phone,
+        country,
+        appId,
+      });
+
+      console.log('\n' + '='.repeat(60));
+      console.log('User created successfully.');
+      console.log(
+        `Collection: ${appId === 'ghadaq' ? 'users_ghadaq' : 'users_manasik'}`,
+      );
+      console.log('Email:', user.email);
+      console.log('Name:', user.name);
+      console.log('App ID:', user.appId);
+      console.log('Phone:', user.phone || '-');
+      console.log('Country:', user.country || '-');
+      console.log('='.repeat(60) + '\n');
     }
-
-    // Create admin user
-    const admin = await User.create({
-      name,
-      email,
-      password,
-      role: 'super_admin',
-    });
-
-    console.log('\n' + '='.repeat(50));
-    console.log('✅ Super Admin user created successfully!\n');
-    console.log('📧 Email:', admin.email);
-    console.log('👤 Name:', admin.name);
-    console.log('🔑 Role:', admin.role);
-    console.log('\n🌐 You can now login at: http://localhost:3001/login');
-    console.log('='.repeat(50) + '\n');
 
     process.exit(0);
   } catch (error) {
-    console.error('\n❌ Error creating admin:', error);
+    console.error('\nError creating user:', error);
     process.exit(1);
   } finally {
     rl.close();
@@ -101,4 +188,4 @@ async function createAdmin() {
   }
 }
 
-createAdmin();
+createUserFromScript();

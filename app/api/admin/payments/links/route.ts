@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import PaymentLink from '@/lib/models/PaymentLink';
 
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('payments');
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;
@@ -26,9 +26,11 @@ export async function GET(request: NextRequest) {
     if (source && source !== 'all') query.source = source;
     if (kind && kind !== 'all') query.kind = kind;
     if (usage === 'used') {
-      query.usedAt = { $ne: null };
+      query.status = 'used';
     } else if (usage === 'unused') {
-      query.usedAt = null;
+      query.status = 'unused';
+    } else if (usage === 'opened') {
+      query.status = 'opened';
     }
 
     const [rows, total] = await Promise.all([
@@ -41,9 +43,23 @@ export async function GET(request: NextRequest) {
     ]);
 
     const now = Date.now();
+    const sourceBaseUrls: Record<'manasik' | 'ghadaq', string> = {
+      manasik: process.env.MANASIK_URL || 'https://www.manasik.net',
+      ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
+    };
+
     const links = rows.map((row) => {
       const isExpired = new Date(row.expiresAt).getTime() <= now;
       const usedAt = (row as { usedAt?: Date }).usedAt || null;
+      const openedAt = (row as { openedAt?: Date }).openedAt || null;
+      const status = row.status || (usedAt ? 'used' : 'unused');
+      const linkPath =
+        row.kind === 'order'
+          ? `/payment/pay-link/${row.publicToken}`
+          : `/payment/custom-pay-link/${row.publicToken}`;
+      const payLinkUrl = row.publicToken
+        ? `${sourceBaseUrls[row.source]}${linkPath}`
+        : null;
 
       return {
         _id: String(row._id),
@@ -54,11 +70,14 @@ export async function GET(request: NextRequest) {
         amountRequested: row.amountRequested,
         currency: row.currencyCode,
         isCustomAmount: !!row.isCustomAmount,
+        status,
         isUsed: !!usedAt,
         isExpired,
+        openedAt,
         usedAt,
         expiresAt: row.expiresAt,
         createdAt: row.createdAt,
+        payLinkUrl,
         createdBy: row.createdBy,
       };
     });

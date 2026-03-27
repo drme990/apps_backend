@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Booking from '@/lib/models/Booking';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -19,7 +19,7 @@ function normalizeBlockedDates(input: unknown): string[] {
 export async function GET() {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('booking');
     if ('error' in auth) return auth.error;
 
     const booking = await Booking.findOne({ key: 'global' }).lean();
@@ -42,7 +42,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('booking');
     if ('error' in auth) return auth.error;
 
     const parsed = await parseJsonBody(request, bookingUpdateSchema);

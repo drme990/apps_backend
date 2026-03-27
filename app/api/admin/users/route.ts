@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import User from '@/lib/models/User';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -9,7 +9,7 @@ import { userCreateSchema } from '@/lib/validation/schemas';
 export async function GET() {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('users');
     if ('error' in auth) return auth.error;
 
     const users = await User.find().sort({ createdAt: -1 });
@@ -26,7 +26,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('users');
     if ('error' in auth) return auth.error;
 
     if (auth.user.role !== 'super_admin') {

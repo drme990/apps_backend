@@ -10,6 +10,16 @@ const localizedTextSchema = z.object({
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  appId: z.enum(['manasik', 'ghadaq', 'admin_panel']).optional(),
+});
+
+export const registerSchema = z.object({
+  name: z.string().trim().min(1),
+  email: z.string().email(),
+  password: z.string().min(6),
+  phone: z.string().trim().optional(),
+  country: z.string().trim().optional(),
+  appId: z.enum(['manasik', 'ghadaq', 'admin_panel']),
 });
 
 export const couponValidationSchema = z.object({
@@ -36,6 +46,8 @@ export const checkoutSchema = z
     sizeIndex: z.coerce.number().int().nonnegative().optional(),
     paymentOption: z.enum(['full', 'half', 'custom']).optional(),
     customPaymentAmount: z.coerce.number().positive().optional(),
+    createAccount: z.boolean().optional(),
+    accountPassword: z.string().optional(),
     termsAgreed: z.boolean(),
     reservationData: z.unknown().optional(),
     source: z.enum(['manasik', 'ghadaq']).optional(),

@@ -1,19 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import ActivityLog from '@/lib/models/ActivityLog';
 
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('activityLogs');
     if ('error' in auth) return auth.error;
 
     const page = parseInt(request.nextUrl.searchParams.get('page') || '1');
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '50');
     const skip = (page - 1) * limit;
 
-    const logs = await ActivityLog.find()
+    const logs = await ActivityLog.find({
+      $or: [
+        { resource: { $ne: 'auth' } },
+        {
+          details: {
+            $not: /Logged in to (ghadaq|manasik) successfully/i,
+          },
+        },
+      ],
+    })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)

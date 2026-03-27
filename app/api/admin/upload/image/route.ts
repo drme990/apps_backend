@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import {
   uploadImage,
   deleteImage,
@@ -26,7 +26,7 @@ const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('appearance');
     if ('error' in auth) return auth.error;
 
     const formData = await request.formData();
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('appearance');
     if ('error' in auth) return auth.error;
 
     const parsed = validateInput(

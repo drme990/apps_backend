@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('orders');
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;
@@ -37,12 +37,23 @@ export async function GET(request: NextRequest) {
       Order.countDocuments(query),
     ]);
 
+    const normalizedOrders = orders.map((order) => {
+      const hasIsGuest = typeof order.isGuest === 'boolean';
+      const hasUserId =
+        typeof order.userId === 'string' && order.userId.trim().length > 0;
+
+      return {
+        ...order,
+        isGuest: hasIsGuest ? order.isGuest : !hasUserId,
+      };
+    });
+
     const totalPages = Math.ceil(total / limit);
 
     return NextResponse.json({
       success: true,
       data: {
-        orders,
+        orders: normalizedOrders,
         pagination: {
           currentPage: page,
           totalPages,

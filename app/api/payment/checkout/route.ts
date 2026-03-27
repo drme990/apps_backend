@@ -3,6 +3,9 @@ import { connectDB } from '@/lib/db';
 import Order from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
+import { getAuthUser } from '@/lib/auth';
+import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
+import { generateToken } from '@/lib/services/jwt';
 import {
   findReservationInputByField,
   matchReservationOption,
@@ -16,12 +19,36 @@ import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { checkoutSchema } from '@/lib/validation/schemas';
+import { randomBytes } from 'crypto';
 
 function toIsoLocalDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function generatePaymentId(): string {
+  return `pay_${randomBytes(12).toString('hex')}`;
+}
+
+function getPaymentAttemptNumber(order: { payments?: unknown[] }): number {
+  return (order.payments?.length ?? 0) + 1;
+}
+
+function setAuthCookie(
+  response: NextResponse,
+  appId: Exclude<AppId, 'admin_panel'>,
+  token: string,
+) {
+  const isProduction = process.env.NODE_ENV === 'production';
+  response.cookies.set(`${appId}-token`, token, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 7 * 24 * 60 * 60,
+    path: '/',
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -58,7 +85,87 @@ export async function POST(request: NextRequest) {
       termsAgreed,
       reservationData,
       source,
+      createAccount,
+      accountPassword,
     } = body;
+
+    const checkoutAppId: Exclude<AppId, 'admin_panel'> =
+      source === 'ghadaq' ? 'ghadaq' : 'manasik';
+
+    const sessionUser = await getAuthUser(checkoutAppId);
+    const isAuthenticated = !!sessionUser;
+    const requiresAccountForPayment =
+      paymentOption === 'half' || paymentOption === 'custom';
+    const shouldCreateOrLoginFromCheckout =
+      Boolean(createAccount) || requiresAccountForPayment;
+
+    let tokenToSet: string | null = null;
+
+    if (!isAuthenticated && shouldCreateOrLoginFromCheckout) {
+      const normalizedPassword =
+        typeof accountPassword === 'string' ? accountPassword.trim() : '';
+
+      if (normalizedPassword.length < 6) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'A password with at least 6 characters is required for this payment option',
+          },
+          { status: 400 },
+        );
+      }
+
+      const UserModel = getUserModelByAppId(checkoutAppId);
+      const normalizedEmail = billingData.email.trim().toLowerCase();
+      const existingUser = await UserModel.findOne({ email: normalizedEmail })
+        .select('+password')
+        .lean(false);
+
+      if (existingUser) {
+        if ('isBanned' in existingUser && existingUser.isBanned) {
+          return NextResponse.json(
+            { success: false, error: 'Your account has been banned' },
+            { status: 403 },
+          );
+        }
+
+        const isMatch = await existingUser.comparePassword(normalizedPassword);
+        if (!isMatch) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                'This email is already registered. Please enter the correct password.',
+            },
+            { status: 401 },
+          );
+        }
+
+        tokenToSet = generateToken({
+          _id: existingUser._id.toString(),
+          appId: checkoutAppId,
+          name: existingUser.name,
+          email: existingUser.email,
+        });
+      } else {
+        const newUser = await UserModel.create({
+          name: billingData.fullName.trim(),
+          email: normalizedEmail,
+          password: normalizedPassword,
+          phone: billingData.phone.trim(),
+          country: billingData.country?.trim() || '',
+          appId: checkoutAppId,
+        });
+
+        tokenToSet = generateToken({
+          _id: newUser._id.toString(),
+          appId: checkoutAppId,
+          name: newUser.name,
+          email: newUser.email,
+        });
+      }
+    }
 
     if (!termsAgreed) {
       return NextResponse.json(
@@ -401,6 +508,8 @@ export async function POST(request: NextRequest) {
           quantity,
         },
       ],
+      userId: sessionUser?._id ? sessionUser._id.toString() : undefined,
+      isGuest: !isAuthenticated && !tokenToSet,
       totalAmount: payAmount,
       fullAmount: amountAfterDiscount,
       paidAmount: payAmount,
@@ -423,6 +532,8 @@ export async function POST(request: NextRequest) {
       source: source === 'ghadaq' ? 'ghadaq' : 'manasik',
       countryCode: billingData.country || '',
       locale,
+      payments: [],
+      paymentAttempts: [],
     });
 
     // FB CAPI: InitiateCheckout (fire-and-forget)
@@ -455,7 +566,7 @@ export async function POST(request: NextRequest) {
 
     // EasyKash payment
     if (!process.env.EASYKASH_API_KEY) {
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
         data: {
           order: {
@@ -476,6 +587,12 @@ export async function POST(request: NextRequest) {
             'Payment gateway not configured. Order created successfully.',
         },
       });
+
+      if (tokenToSet) {
+        setAuthCookie(response, checkoutAppId, tokenToSet);
+      }
+
+      return response;
     }
 
     // Use MongoDB _id as customerReference — guaranteed globally unique and
@@ -519,6 +636,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Generate payment ids and easykashOrderId before calling createPayment
+    const paymentAttemptNum = getPaymentAttemptNumber(order);
+    const easykashOrderId = `${order.orderNumber}-P${paymentAttemptNum}`;
+    const paymentId = generatePaymentId();
+
     let easykashResponse: Awaited<ReturnType<typeof createPayment>>;
     try {
       easykashResponse = await createPayment({
@@ -528,7 +650,7 @@ export async function POST(request: NextRequest) {
         email: billingData.email,
         mobile: billingData.phone,
         redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
-        customerReference,
+        customerReference: easykashOrderId,
       });
     } catch (easykashError) {
       // Clean up the orphaned order so it doesn't block future attempts
@@ -540,10 +662,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Create first payment record in payments array with -P1 suffix
+    order.payments = [
+      {
+        paymentId,
+        easykashOrderId,
+        amount: easykashAmount,
+        currency: paymentCurrency,
+        status: 'pending',
+        redirectUrl: easykashResponse.redirectUrl,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+        createdAt: new Date(),
+      },
+    ];
+    order.paymentAttempts = [
+      {
+        createdAt: new Date(),
+        ip: ip || undefined,
+        userId: sessionUser?._id ? sessionUser._id.toString() : undefined,
+      },
+    ];
     order.status = 'processing';
     await order.save();
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
         order: {
@@ -562,6 +704,12 @@ export async function POST(request: NextRequest) {
         checkoutUrl: easykashResponse.redirectUrl,
       },
     });
+
+    if (tokenToSet) {
+      setAuthCookie(response, checkoutAppId, tokenToSet);
+    }
+
+    return response;
   } catch (error) {
     console.error('Error creating checkout:', error);
     return NextResponse.json(

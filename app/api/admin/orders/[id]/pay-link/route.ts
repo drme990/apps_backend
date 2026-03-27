@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import {
   createPayLinkForOrder,
@@ -13,7 +13,7 @@ export async function POST(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('orders');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;

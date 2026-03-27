@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
@@ -13,7 +13,7 @@ export async function GET(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -51,7 +51,7 @@ export async function PUT(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -106,7 +106,7 @@ export async function DELETE(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;

@@ -54,9 +54,34 @@ export interface IReservationAnswer {
   value: string;
 }
 
+export interface IPayment {
+  paymentId: string;
+  easykashOrderId: string;
+  amount: number;
+  currency: string;
+  status: 'pending' | 'paid' | 'failed' | 'expired';
+  paymentMethod?: PaymentMethod;
+  easykashRef?: string;
+  easykashProductCode?: string;
+  easykashVoucher?: string;
+  easykashResponse?: Record<string, unknown>;
+  redirectUrl?: string;
+  expiresAt?: Date;
+  createdAt: Date;
+  paidAt?: Date;
+}
+
+export interface IPaymentAttempt {
+  createdAt: Date;
+  ip?: string;
+  userId?: string;
+}
+
 export interface IOrder {
   _id?: string;
   orderNumber: string;
+  userId?: string;
+  isGuest: boolean;
   items: IOrderItem[];
   totalAmount: number;
   currency: string;
@@ -77,6 +102,8 @@ export interface IOrder {
   referralId?: string;
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
+  payments?: IPayment[];
+  paymentAttempts?: IPaymentAttempt[];
   source?: 'manasik' | 'ghadaq';
   countryCode?: string;
   locale?: string;
@@ -146,9 +173,57 @@ const ReservationAnswerSchema = new mongoose.Schema<IReservationAnswer>(
   { _id: false },
 );
 
+const PaymentSchema = new mongoose.Schema<IPayment>(
+  {
+    paymentId: { type: String, required: true, index: true },
+    easykashOrderId: { type: String, required: true, index: true },
+    amount: { type: Number, required: true, min: 0 },
+    currency: { type: String, required: true, uppercase: true },
+    status: {
+      type: String,
+      required: true,
+      enum: ['pending', 'paid', 'failed', 'expired'],
+      default: 'pending',
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: [
+        'card',
+        'wallet',
+        'bank_transfer',
+        'fawry',
+        'meeza',
+        'valu',
+        'other',
+      ],
+    },
+    easykashRef: { type: String, index: true },
+    easykashProductCode: { type: String },
+    easykashVoucher: { type: String },
+    easykashResponse: { type: mongoose.Schema.Types.Mixed },
+    redirectUrl: { type: String },
+    expiresAt: { type: Date },
+    createdAt: { type: Date, required: true, default: () => new Date() },
+    paidAt: { type: Date },
+  },
+  { _id: false },
+);
+
+const PaymentAttemptSchema = new mongoose.Schema<IPaymentAttempt>(
+  {
+    createdAt: { type: Date, required: true, default: () => new Date() },
+    ip: { type: String },
+    userId: { type: String },
+  },
+  { _id: false },
+);
+
 const OrderSchema = new mongoose.Schema<IOrder>(
   {
     orderNumber: { type: String, required: true, unique: true, index: true },
+    userId: { type: String, index: true },
+    isGuest: { type: Boolean, required: true, default: true, index: true },
     items: {
       type: [OrderItemSchema],
       required: true,
@@ -201,6 +276,8 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     referralId: { type: String, trim: true, index: true },
     termsAgreedAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
+    payments: { type: [PaymentSchema], default: [] },
+    paymentAttempts: { type: [PaymentAttemptSchema], default: [] },
     source: {
       type: String,
       enum: ['manasik', 'ghadaq'],

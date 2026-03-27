@@ -116,6 +116,8 @@ export async function createPayLinkForOrder({
 
   await PaymentLink.create({
     kind: 'order',
+    status: 'unused',
+    publicToken: rawToken,
     tokenHash,
     orderId: order._id.toString(),
     orderNumber: order.orderNumber,
@@ -193,6 +195,8 @@ export async function createStandaloneCustomPayLink({
 
   await PaymentLink.create({
     kind: 'custom',
+    status: 'unused',
+    publicToken: rawToken,
     tokenHash,
     source: normalizedSource,
     amountRequested: amount,

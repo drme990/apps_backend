@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
@@ -10,7 +10,7 @@ import { productCreateSchema } from '@/lib/validation/schemas';
 export async function GET() {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
     const products = await Product.find({ isDeleted: { $ne: true } })
@@ -39,7 +39,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
     const parsed = await parseJsonBody(request, productCreateSchema);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
@@ -29,7 +29,7 @@ export async function GET(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('orders');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -40,7 +40,18 @@ export async function GET(
         { status: 404 },
       );
     }
-    return NextResponse.json({ success: true, data: order });
+
+    const hasIsGuest = typeof order.isGuest === 'boolean';
+    const hasUserId =
+      typeof order.userId === 'string' && order.userId.trim().length > 0;
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...order,
+        isGuest: hasIsGuest ? order.isGuest : !hasUserId,
+      },
+    });
   } catch (error) {
     console.error('Error fetching order:', error);
     return NextResponse.json(
@@ -56,7 +67,7 @@ export async function PUT(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('orders');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;

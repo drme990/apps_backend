@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 
 function parseMonth(month: string | null): {
@@ -20,7 +20,7 @@ function parseMonth(month: string | null): {
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('payments');
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;

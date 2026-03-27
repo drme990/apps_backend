@@ -67,7 +67,7 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
       default: [],
     },
   },
-  { timestamps: true },
+  { timestamps: true, collection: 'users_admin_panel' },
 );
 
 UserSchema.pre('save', async function () {

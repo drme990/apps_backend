@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
@@ -14,7 +14,7 @@ export async function POST(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;

@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAppAuth } from '@/lib/auth';
 import { logActivity } from '@/lib/services/logger';
 
 export async function POST() {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAppAuth('admin_panel');
     if ('error' in auth) return auth.error;
 
     const { user } = auth;
@@ -27,6 +27,14 @@ export async function POST() {
     });
 
     response.cookies.set('admin-token', '', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 0,
+      path: '/',
+    });
+
+    response.cookies.set('admin_panel-token', '', {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' : 'lax',

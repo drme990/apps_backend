@@ -22,7 +22,9 @@ export async function GET(
     }
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    const paymentLink = await PaymentLink.findOne({ tokenHash }).lean();
+    const paymentLink = await PaymentLink.findOne({
+      $or: [{ publicToken: token }, { tokenHash }],
+    }).lean();
 
     if (
       !paymentLink ||
@@ -35,7 +37,7 @@ export async function GET(
       );
     }
 
-    if (paymentLink.usedAt) {
+    if (paymentLink.status === 'used') {
       return NextResponse.json(
         { success: false, error: 'Pay link has already been used' },
         { status: 410 },
@@ -63,18 +65,18 @@ export async function GET(
     const source = paymentLink.source === 'ghadaq' ? 'ghadaq' : 'manasik';
     const baseUrl = sourceBaseUrls[source];
 
-    const consumeResult = await PaymentLink.updateOne(
+    const openResult = await PaymentLink.updateOne(
       {
         _id: paymentLink._id,
         isDeleted: { $ne: true },
-        usedAt: null,
+        status: { $in: ['unused', 'opened'] },
       },
       {
-        $set: { usedAt: new Date() },
+        $set: { status: 'opened', openedAt: new Date() },
       },
     );
 
-    if (!consumeResult.modifiedCount) {
+    if (!openResult.modifiedCount) {
       return NextResponse.json(
         { success: false, error: 'Pay link has already been used' },
         { status: 410 },
@@ -101,8 +103,8 @@ export async function GET(
 
       if (easykashAmount <= 1) {
         await PaymentLink.updateOne(
-          { _id: paymentLink._id, usedAt: { $ne: null } },
-          { $set: { usedAt: null } },
+          { _id: paymentLink._id, status: 'opened' },
+          { $set: { status: 'unused', openedAt: null } },
         );
 
         return NextResponse.json(
@@ -130,8 +132,8 @@ export async function GET(
       });
     } catch (gatewayError) {
       await PaymentLink.updateOne(
-        { _id: paymentLink._id, usedAt: { $ne: null } },
-        { $set: { usedAt: null } },
+        { _id: paymentLink._id, status: 'opened' },
+        { $set: { status: 'unused', openedAt: null } },
       );
 
       console.error(

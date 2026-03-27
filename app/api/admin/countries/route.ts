@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Country from '@/lib/models/Country';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -9,7 +9,7 @@ import { countryCreateSchema } from '@/lib/validation/schemas';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('countries');
     if ('error' in auth) return auth.error;
 
     const activeOnly = request.nextUrl.searchParams.get('active') !== 'false';
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('countries');
     if ('error' in auth) return auth.error;
 
     const parsed = await parseJsonBody(request, countryCreateSchema);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import User from '@/lib/models/User';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -12,7 +12,7 @@ export async function GET(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('users');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -50,7 +50,7 @@ export async function PUT(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('users');
     if ('error' in auth) return auth.error;
 
     if (auth.user.role !== 'super_admin') {
@@ -125,7 +125,7 @@ export async function DELETE(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('users');
     if ('error' in auth) return auth.error;
 
     if (auth.user.role !== 'super_admin') {

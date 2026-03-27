@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 export interface IPaymentLink {
   _id?: string;
   kind: 'order' | 'custom';
+  status: 'unused' | 'opened' | 'used';
+  publicToken: string;
   tokenHash: string;
   orderId?: string;
   orderNumber?: string;
@@ -10,6 +12,7 @@ export interface IPaymentLink {
   amountRequested: number;
   currencyCode: string;
   isCustomAmount: boolean;
+  openedAt?: Date;
   usedAt?: Date;
   isDeleted: boolean;
   deletedAt?: Date;
@@ -37,6 +40,14 @@ const PaymentLinkSchema = new mongoose.Schema<IPaymentLink>(
       default: 'order',
       index: true,
     },
+    status: {
+      type: String,
+      enum: ['unused', 'opened', 'used'],
+      required: true,
+      default: 'unused',
+      index: true,
+    },
+    publicToken: { type: String, required: true, unique: true, index: true },
     tokenHash: { type: String, required: true, unique: true, index: true },
     orderId: { type: String, index: true },
     orderNumber: { type: String, index: true },
@@ -54,6 +65,7 @@ const PaymentLinkSchema = new mongoose.Schema<IPaymentLink>(
       trim: true,
     },
     isCustomAmount: { type: Boolean, default: false },
+    openedAt: { type: Date },
     usedAt: { type: Date },
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date },
@@ -75,6 +87,7 @@ const PaymentLinkSchema = new mongoose.Schema<IPaymentLink>(
 PaymentLinkSchema.index({ orderId: 1, expiresAt: -1 });
 PaymentLinkSchema.index({ kind: 1, source: 1, expiresAt: -1 });
 PaymentLinkSchema.index({ usedAt: -1, createdAt: -1 });
+PaymentLinkSchema.index({ status: 1, expiresAt: -1, createdAt: -1 });
 PaymentLinkSchema.index({ isDeleted: 1, createdAt: -1 });
 
 if (process.env.NODE_ENV !== 'production' && mongoose.models.PaymentLink) {

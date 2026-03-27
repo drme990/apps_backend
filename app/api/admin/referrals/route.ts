@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import Referral from '@/lib/models/Referral';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -9,7 +9,7 @@ import { referralCreateSchema } from '@/lib/validation/schemas';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('referrals');
     if ('error' in auth) return auth.error;
 
     const page = parseInt(request.nextUrl.searchParams.get('page') || '1');
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('referrals');
     if ('error' in auth) return auth.error;
 
     const parsed = await parseJsonBody(request, referralCreateSchema);

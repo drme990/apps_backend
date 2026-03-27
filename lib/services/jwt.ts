@@ -1,20 +1,23 @@
 import jwt from 'jsonwebtoken';
+import type { AppId } from '@/lib/auth/app-users';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
 export interface TokenPayload {
   userId: string;
+  appId: AppId;
   name: string;
   email: string;
-  role: string;
+  role?: 'admin' | 'super_admin';
   allowedPages?: string[];
 }
 
 export function generateToken(user: {
   _id: string;
+  appId: AppId;
   name: string;
   email: string;
-  role: string;
+  role?: 'admin' | 'super_admin';
   allowedPages?: string[];
 }): string {
   if (!JWT_SECRET) {
@@ -23,10 +26,11 @@ export function generateToken(user: {
 
   const payload: TokenPayload = {
     userId: user._id,
+    appId: user.appId,
     name: user.name,
     email: user.email,
-    role: user.role,
-    allowedPages: user.allowedPages || [],
+    ...(user.role ? { role: user.role } : {}),
+    ...(user.allowedPages ? { allowedPages: user.allowedPages } : {}),
   };
 
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });

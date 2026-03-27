@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAppAuth } from '@/lib/auth';
 import User from '@/lib/models/User';
 
 export async function GET() {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAppAuth('admin_panel');
     if ('error' in auth) return auth.error;
 
     const fullUser = await User.findById(auth.user.userId);

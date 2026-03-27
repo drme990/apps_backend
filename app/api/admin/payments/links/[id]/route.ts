@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAuth } from '@/lib/auth';
+import { requireAdminPageAccess } from '@/lib/auth';
 import PaymentLink from '@/lib/models/PaymentLink';
 
 export async function DELETE(
@@ -9,7 +9,7 @@ export async function DELETE(
 ) {
   try {
     await connectDB();
-    const auth = await requireAuth();
+    const auth = await requireAdminPageAccess('payments');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
