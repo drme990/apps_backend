@@ -1,6 +1,6 @@
 import mongoose, { Document, Types } from 'mongoose';
 
-declare function require(name: string): any;
+declare function require(name: string): unknown;
 const fs = require('fs');
 const path = require('path');
 

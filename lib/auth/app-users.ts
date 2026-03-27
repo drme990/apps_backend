@@ -9,10 +9,12 @@ export type AppId = (typeof APP_IDS)[number];
 export const ADMIN_ALLOWED_PAGES = [
   'products',
   'orders',
+  'customers',
+  'analytics',
   'booking',
   'coupons',
   'countries',
-  'users',
+  'admins',
   'referrals',
   'activityLogs',
   'appearance',

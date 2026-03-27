@@ -595,10 +595,6 @@ export async function POST(request: NextRequest) {
       return response;
     }
 
-    // Use MongoDB _id as customerReference — guaranteed globally unique and
-    // never reused even if this order is later deleted and recreated.
-    const customerReference = order._id.toString();
-
     const sourceBaseUrls: Record<string, string> = {
       manasik: process.env.MANASIK_URL || 'https://www.manasik.net',
       ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',

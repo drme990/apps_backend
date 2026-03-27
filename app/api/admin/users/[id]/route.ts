@@ -12,7 +12,7 @@ export async function GET(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('users');
+    const auth = await requireAdminPageAccess('admins');
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -50,7 +50,7 @@ export async function PUT(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('users');
+    const auth = await requireAdminPageAccess('admins');
     if ('error' in auth) return auth.error;
 
     if (auth.user.role !== 'super_admin') {
@@ -125,7 +125,7 @@ export async function DELETE(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('users');
+    const auth = await requireAdminPageAccess('admins');
     if ('error' in auth) return auth.error;
 
     if (auth.user.role !== 'super_admin') {

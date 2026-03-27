@@ -65,7 +65,7 @@ function buildMonthSeries(
 export async function GET() {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess('analytics');
     if ('error' in auth) return auth.error;
 
     const dayStart = getLastDaysRange(30);

@@ -9,7 +9,7 @@ import { userCreateSchema } from '@/lib/validation/schemas';
 export async function GET() {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('users');
+    const auth = await requireAdminPageAccess('admins');
     if ('error' in auth) return auth.error;
 
     const users = await User.find().sort({ createdAt: -1 });
@@ -26,7 +26,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('users');
+    const auth = await requireAdminPageAccess('admins');
     if ('error' in auth) return auth.error;
 
     if (auth.user.role !== 'super_admin') {

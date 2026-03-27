@@ -31,7 +31,7 @@ type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('users');
+    const auth = await requireAdminPageAccess('customers');
     if ('error' in auth) return auth.error;
 
     const parsed = querySchema.safeParse({

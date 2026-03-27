@@ -1,175 +1,82 @@
-# next-backend — Centralized Serverless API
+# apps_backend
 
-A **Next.js 16 App Router** serverless backend deployed on **Vercel**. Single source of truth for all database operations, payments, authentication, and business logic shared across the **Manasik Foundation** and **Ghadaq Association** platforms.
+Canonical backend/API for the Ghadaq + Manasik ecosystem.
 
-## Latest Updates (2026-03-14)
+## Last Updated
 
-- Checkout contract now supports multi-name reservation input for **sacrificeFor** using newline-separated values from storefront chips UI.
-- Added centralized request observability at the edge/proxy layer with generated/propagated `x-request-id` trace IDs.
-- Added structured JSON request logs for easier production correlation.
-- Added public endpoint abuse controls with in-memory sliding-window rate limiting for:
-  - `POST /api/payment/checkout`
-  - `POST /api/coupons/validate`
-- Added startup-time environment validation through `instrumentation.ts` to fail fast in production when critical vars are missing.
-- Enforced EasyKash webhook signature preconditions (callback processing requires configured HMAC secret).
-- Added persistent webhook idempotency lock via `WebhookEvent` model to prevent duplicate callback processing.
-- Added centralized Zod validator layer for mutable endpoints under `lib/validation/*`.
-- Added payload examples by route class in [docs/ENDPOINT_PAYLOAD_EXAMPLES.md](../docs/ENDPOINT_PAYLOAD_EXAMPLES.md).
-- Payment status endpoint now performs redirect-parameter fallback synchronization (`status`, `providerRefNum`, `customerReference`) so orders do not remain stuck in `processing` when webhook delivery is delayed.
+- 2026-03-27
 
----
+## Release Notes
 
-## Architecture
+- 2026-03-27: Added auth route support for admin_panel, ghadaq, and manasik apps.
+- 2026-03-19: Added payment-link currency conversion and stronger currency validation.
+- 2026-03-18: Improved custom pay-link processing and error handling.
+- 2026-03-17: Added soft-delete support for products and payment links.
+- 2026-03-16: Improved payment status fallback synchronization for delayed webhook scenarios.
+- 2026-03-14: Added centralized Zod request validation.
+- 2026-03-13: Added structured logging and rate limiting for checkout/coupon endpoints.
 
-```
-+-------------------------------------------------------------+
-|                    MongoDB Atlas (manasik)                   |
-+-----------------+-------------------------------------------+
-                  |
-       +----------v-----------+
-       |    next-backend       |
-       |   Next.js API :3000   |
-       |   (Vercel Serverless) |
-       +--+------+------+-----+
-          |      |      |
-   +------v--+ +-v------v---+ +-------------+
-   |manasik  | |  ghadaq/   | | admin_panel |
-   |  :3001  | |   :3002    | |    :3003    |
-   +---------+ +------------+ +-------------+
-```
+## Role in the System
 
-All three Next.js apps proxy API calls to this backend via `next.config.ts` rewrites. **No frontend app connects to MongoDB directly.**
+- Owns business logic, DB access, payment flows, auth checks, and admin APIs.
+- All app UIs should call this backend (directly or via rewrites/proxy routes).
 
----
+Request flow:
 
-### Tech Stack
+- storefront/admin -> /api/\* -> apps_backend -> MongoDB + external services
 
-| Concern   | Technology                                   |
-| --------- | -------------------------------------------- |
-| Runtime   | Node.js 18+ (Vercel Serverless Functions)    |
-| Framework | Next.js 16.1.6 (App Router)                  |
-| Language  | TypeScript 5                                 |
-| Database  | MongoDB Atlas via Mongoose 9                 |
-| Auth      | JWT (7d) + bcryptjs + httpOnly cookies       |
-| Payment   | EasyKash Direct Payment API v1 (HMAC-SHA512) |
-| Email     | Resend (per-brand API keys + HTML templates) |
-| Images    | Cloudinary (formData upload)                 |
-| Currency  | fawazahmed0 CDN (6hr in-memory cache)        |
-| Facebook  | Conversions API v21 (SHA-256 hashing)        |
-| Cron      | Vercel Cron (daily price updates)            |
+## Stack
 
----
+- Next.js 16.1.6 (App Router)
+- TypeScript
+- MongoDB + Mongoose
+- EasyKash
+- Zod
+- Resend
+- Cloudinary
 
-### Folder Structure
+## Main Domains
 
-```
-lib/
-  db.ts              - MongoDB connection singleton (cached promise pattern)
-  auth.ts            - Auth helpers (getAuthUser, requireAuth)
-  currency-rounding.ts - Currency-specific rounding config
-  rate-limit.ts      - Shared in-memory sliding-window limiter
-  request-logger.ts  - Structured JSON request/event logger
-  validation/        - Centralized request schemas + parser helpers (Zod)
-  models/            - 10 Mongoose models (Product, Order, User,
-                       Coupon, Country, Referral, ActivityLog,
-                       Appearance, CronLog, WebhookEvent)
-  services/          - jwt, logger, coupon, currency,
-                       easykash, fb-capi, cloudinary, email
-app/api/
-  products/          - Public product routes
-  countries/         - Public country routes
-  coupons/           - Public coupon validation
-  currency/          - Public exchange rates
-  appearance/        - Public appearance config
-  fb-event/          - FB Conversions API proxy
-  payment/           - Checkout, status, webhook, referral-info
-  admin/             - Protected admin routes (all CRUD)
-  cron/              - Vercel Cron job routes
-proxy.ts             - CORS + request tracing for all /api routes
-instrumentation.ts   - Startup env validation (fail-fast in production)
-vercel.json          - Cron schedule configuration
-```
+- Authentication and admin authorization.
+- Products, countries, coupons, referrals.
+- Orders lifecycle and reservation metadata.
+- Payments lifecycle (checkout, status, pay links, webhook).
+- Analytics and admin stats.
+- Activity logging (admin activity only).
 
----
+## Admin Permission Keys
 
-### API Routes
+- products
+- orders
+- customers
+- analytics
+- booking
+- coupons
+- countries
+- users
+- referrals
+- activityLogs
+- appearance
+- exchange
+- payments
 
-**Public (`/api/*`)**
+## Route Inventory
 
-| Method | Path                         | Description                        |
-| ------ | ---------------------------- | ---------------------------------- |
-| GET    | `/api/products`              | List products (pagination/filters) |
-| GET    | `/api/products/:id`          | Single product                     |
-| GET    | `/api/countries`             | List countries                     |
-| GET    | `/api/countries/:id`         | Single country                     |
-| POST   | `/api/coupons/validate`      | Validate coupon code               |
-| POST   | `/api/payment/checkout`      | Create order + EasyKash session    |
-| GET    | `/api/payment/status`        | Order status by orderNumber        |
-| POST   | `/api/payment/webhook`       | EasyKash payment callback          |
-| GET    | `/api/payment/referral-info` | Referral info by order             |
-| GET    | `/api/currency/rates`        | Exchange rates                     |
-| GET    | `/api/appearance`            | Homepage appearance config         |
-| POST   | `/api/fb-event`              | Browser-side FB event proxy        |
+- Verified route list and usage notes are documented in [docs/ROUTES_INVENTORY.md](../docs/ROUTES_INVENTORY.md).
 
-**Admin (`/api/admin/*` - requires `admin-token` cookie)**
+## Payment Link Lifecycle
 
-| Method         | Path                                 | Description             |
-| -------------- | ------------------------------------ | ----------------------- |
-| POST           | `/api/admin/auth/login`              | Login (rate-limited)    |
-| GET            | `/api/admin/auth/me`                 | Current user            |
-| POST           | `/api/admin/auth/logout`             | Logout                  |
-| GET/POST       | `/api/admin/products`                | Products list + create  |
-| GET/PUT/DELETE | `/api/admin/products/:id`            | Product CRUD            |
-| PUT            | `/api/admin/products/reorder`        | Bulk reorder            |
-| POST           | `/api/admin/products/:id/auto-price` | Auto-price conversion   |
-| GET            | `/api/admin/orders`                  | Orders list             |
-| GET/PUT        | `/api/admin/orders/:id`              | Order detail + update   |
-| GET/POST       | `/api/admin/coupons`                 | Coupons list + create   |
-| POST           | `/api/admin/coupons/validate`        | Admin coupon validation |
-| GET/PUT/DELETE | `/api/admin/coupons/:id`             | Coupon CRUD             |
-| GET/POST       | `/api/admin/countries`               | Countries list + create |
-| PUT            | `/api/admin/countries/reorder`       | Bulk reorder            |
-| GET/PUT/DELETE | `/api/admin/countries/:id`           | Country CRUD            |
-| GET/POST       | `/api/admin/users`                   | Users list + create     |
-| GET/PUT/DELETE | `/api/admin/users/:id`               | User CRUD               |
-| GET/POST       | `/api/admin/referrals`               | Referrals list + create |
-| GET/PUT/DELETE | `/api/admin/referrals/:id`           | Referral CRUD           |
-| GET            | `/api/admin/logs`                    | Activity logs           |
-| POST/DELETE    | `/api/admin/upload/image`            | Cloudinary image mgmt   |
-| GET/PUT        | `/api/admin/appearance/:project`     | Appearance config       |
-| GET            | `/api/admin/currency/rates`          | Admin exchange rates    |
-| GET            | `/api/admin/stats`                   | Dashboard counts        |
-| GET            | `/api/admin/exchange/logs`           | Cron execution logs     |
-| POST           | `/api/admin/exchange/update-prices`  | Manual price update     |
+- Status values: unused -> opened -> used.
+- Tokenized public link handling for order/custom links.
+- Webhook finalizes successful payment status.
 
-**Cron (`/api/cron/*` - requires `CRON_SECRET`)**
+## Environment
 
-| Method | Path                      | Schedule       | Description                                   |
-| ------ | ------------------------- | -------------- | --------------------------------------------- |
-| GET    | `/api/cron/update-prices` | Daily 3:00 UTC | Auto-update product prices via exchange rates |
-
-### Payload Examples
-
-For request/response samples grouped by route class (public, admin, payment, cron), see:
-
-- [docs/ENDPOINT_PAYLOAD_EXAMPLES.md](../docs/ENDPOINT_PAYLOAD_EXAMPLES.md)
-
----
-
-### Getting Started
-
-**1. Install**
-
-```bash
-cd next-backend
-npm install
-```
-
-**2. Environment variables** - Create `.env.local`:
+Create apps_backend/.env.local with required values:
 
 ```env
-DATA_BASE_URL=mongodb+srv://user:password@cluster.mongodb.net/manasik
-JWT_SECRET=a-long-random-secret-change-in-production
+DATA_BASE_URL=
+JWT_SECRET=
 EASYKASH_API_KEY=
 EASYKASH_HMAC_SECRET=
 CLOUDINARY_CLOUD_NAME=
@@ -177,54 +84,34 @@ CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 MANASIK_RESEND_API_KEY=
 GHADAQ_RESEND_API_KEY=
-MANASIK_FROM_EMAIL=orders@manasik.net
-GHADAQ_FROM_EMAIL=orders@ghadqplus.com
-API_TOKEN=
-FB_PIXEL_ID=
-FB_TEST_EVENT_CODE=
-MANASIK_URL=https://www.manasik.net
-GHADAQ_URL=https://www.ghadaqplus.com
-ALLOWED_ORIGINS=http://localhost:3001,http://localhost:3002,http://localhost:3003
-CRON_SECRET=a-random-secret-for-cron-auth
+MANASIK_FROM_EMAIL=
+GHADAQ_FROM_EMAIL=
+MANASIK_URL=
+GHADAQ_URL=
+ALLOWED_ORIGINS=
+CRON_SECRET=
 ```
 
-**3. Run**
+## Scripts
+
+- npm run dev
+- npm run build
+- npm start
+- npm run lint
+
+## Run Locally
 
 ```bash
-npm run dev    # http://localhost:3000
-npm run build  # production build
-npm start      # production server
+cd apps_backend
+npm install
+npm run dev
 ```
 
----
+Default local URL:
 
-### Vercel Deployment
+- http://localhost:3000
 
-1. Push `next-backend/` to a Git repo
-2. Import in Vercel, set Root Directory to `next-backend`
-3. Add all env vars in Vercel dashboard
-4. The cron job (`vercel.json`) runs daily at 3:00 AM UTC
-5. Set `BACKEND_URL` in each frontend app to the deployed URL
+## Notes
 
-### Exchange Rate Updates
-
-- **Automatic**: Vercel Cron runs daily at 3:00 AM UTC, updating all non-manual product prices based on current exchange rates
-- **Manual**: Admins can trigger immediate updates from the Exchange Rates page in the admin panel
-- **Manual prices preserved**: Any price marked as `isManual: true` is never overwritten by automatic updates
-- **Source tracking**: Each update is logged with `source: 'cron'` or `source: 'manual'` in the CronLog collection, visible in the admin Exchange Rates page
-
-### Currency-Specific Rounding
-
-Auto-calculated prices are rounded per currency using rules defined in `lib/currency-rounding.ts`:
-
-| Rule           | Currencies              | Example     |
-| -------------- | ----------------------- | ----------- |
-| Nearest 10     | EGP                     | 4→10, 11→20 |
-| Nearest 5      | SAR, QAR, USD, EUR, TRY | 2→5, 6→10   |
-| Ceil (default) | All others              | 4.1→5       |
-
-To add a new currency, add a line to `CURRENCY_ROUNDING` in `lib/currency-rounding.ts`.
-
-### Email
-
-Order confirmation emails sent automatically when payment status becomes **paid**. Each brand uses its own Resend API key (`MANASIK_RESEND_API_KEY` / `GHADAQ_RESEND_API_KEY`). Two branded HTML templates (Manasik green, Ghadaq gold). Bilingual — Arabic RTL when order locale is `ar`.
+- This is the canonical API layer; avoid duplicating DB/business logic in UI apps.
+- Keep admin auth/permission checks backend-enforced for every admin route.

@@ -61,7 +61,15 @@ export async function requireAdminPageAccess(
   const { user } = auth;
   if (user.role === 'super_admin') return auth;
 
-  if (user.role !== 'admin' || !user.allowedPages?.includes(page)) {
+  const allowedPages = Array.isArray(user.allowedPages)
+    ? user.allowedPages
+    : [];
+
+  const hasAccess =
+    allowedPages.includes(page) ||
+    (page === 'admins' && allowedPages.includes('users'));
+
+  if (user.role !== 'admin' || !hasAccess) {
     return {
       error: NextResponse.json(
         { success: false, error: 'Forbidden' },
