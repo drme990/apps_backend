@@ -13,6 +13,7 @@ import {
 } from '@/lib/services/easykash';
 import { trackPurchase } from '@/lib/services/fb-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
+import { captureException } from '@/lib/services/error-monitor';
 import WebhookEvent from '@/lib/models/WebhookEvent';
 import PaymentLink from '@/lib/models/PaymentLink';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -23,6 +24,11 @@ const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 const ORDER_REF_REGEX = /^ord_([a-f\d]{24})_[a-f\d]{24}_\d+$/i;
 const ORDER_LINK_REF_REGEX = /^ord_([a-f\d]{24})_([a-f\d]{24})_\d+$/i;
 const CUSTOM_LINK_REF_REGEX = /^custom-([a-f\d]{24})$/i;
+
+function stripPaymentAttemptSuffix(reference: string | undefined): string {
+  if (!reference) return '';
+  return reference.replace(/-p\d+$/i, '');
+}
 
 function getOrderIdFromReference(
   customerReference: string | undefined,
@@ -160,20 +166,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, duplicate: true });
     }
 
-    // Find order: customerReference can be order _id or easykashOrderId (with -PX suffix)
-    let order: HydratedDocument<IOrder> | null = null;
+    // Find order: Strict lookup by the exact recorded payment reference
+    let order: HydratedDocument<IOrder> | null = await Order.findOne({
+      'payments.easykashOrderId': customerReference,
+    }).exec();
 
-    // First, try to find by _id if customerReference is a valid MongoDB ObjectId
-    const resolvedOrderId = getOrderIdFromReference(customerReference);
-    if (resolvedOrderId) {
-      order = await Order.findById(resolvedOrderId).exec();
+    // Fallback 1: valid MongoDB ObjectId or legacy prefixed reference
+    if (!order) {
+      const resolvedOrderId = getOrderIdFromReference(customerReference);
+      if (resolvedOrderId) {
+        order = await Order.findById(resolvedOrderId).exec();
+      }
     }
 
-    // If not found by _id, try to find by orderNumber (for backward compatibility)
+    // Fallback 2: strip attempt suffix to find by orderNumber
     if (!order) {
       order = await Order.findOne({
-        orderNumber: customerReference.split('-P')[0],
-      });
+        orderNumber: stripPaymentAttemptSuffix(customerReference),
+      }).exec();
     }
 
     if (!order) {
@@ -182,8 +192,28 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, customLink: true });
       }
 
-      console.error('Webhook order not found:', customerReference);
-      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+      console.error(
+        'Webhook order not found, routing to DLQ:',
+        customerReference,
+      );
+
+      // Dead-Letter Queue (DLQ): Save failed hook and return 200 to prevent retries
+      await WebhookEvent.updateOne(
+        { provider: 'easykash', eventKey },
+        {
+          $set: {
+            status: 'dead_letter',
+            payload: body,
+            errorReason: `Order not found for customerReference: ${customerReference}`,
+          },
+        },
+      );
+
+      return NextResponse.json({
+        success: true,
+        dlq: true,
+        message: 'Saved to DLQ',
+      });
     }
 
     // Find the payment record in payments array by easykashOrderId
@@ -203,7 +233,7 @@ export async function POST(request: NextRequest) {
         easykashResponse: undefined,
         redirectUrl: undefined,
         expiresAt: undefined,
-        createdAt: order.createdAt,
+        createdAt: order.createdAt || new Date(),
         paidAt: undefined,
       };
       order.payments = [legacyPayment];
@@ -286,12 +316,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    order.paidAmount = totalPaid;
-    order.remainingAmount = Math.max(0, (order.fullAmount ?? 0) - totalPaid);
+    const fullAmount = order.fullAmount ?? order.totalAmount ?? 0;
+    const remainingAmount = Math.max(0, fullAmount - totalPaid);
 
-    // Update order status based on remaining amount
-    if (order.remainingAmount <= 0) {
+    order.paidAmount = totalPaid;
+    order.remainingAmount = remainingAmount;
+
+    // Update order status based on total paid progression.
+    if (remainingAmount <= 0) {
       order.status = 'paid';
+    } else if (totalPaid > 0) {
+      order.status = 'partially-paid';
     } else {
       order.status = 'processing';
     }
@@ -318,7 +353,7 @@ export async function POST(request: NextRequest) {
           sourceBaseUrls[order.source || 'manasik'] || sourceBaseUrls.manasik;
 
         trackPurchase({
-          productId: item.productId,
+          productId: String(item.productId),
           productName: item.productName?.en || item.productName?.ar || '',
           value: order.fullAmount ?? 0,
           currency: order.currency || 'SAR',
@@ -338,11 +373,22 @@ export async function POST(request: NextRequest) {
         }).catch(() => {});
       }
 
-      sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => {});
+      sendOrderConfirmationEmail(order.toObject() as IOrder).catch((e) => {
+        captureException(e, {
+          service: 'EmailService',
+          operation: 'sendOrderConfirmationEmail',
+          severity: 'high',
+          metadata: { orderId: order._id.toString() },
+        });
+      });
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('EasyKash webhook error:', error);
+    captureException(error, {
+      service: 'Webhook',
+      operation: 'POST',
+      severity: 'critical',
+    });
 
     return NextResponse.json(
       { success: false, error: 'Webhook processing failed' },

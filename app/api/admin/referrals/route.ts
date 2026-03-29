@@ -14,14 +14,15 @@ export async function GET(request: NextRequest) {
 
     const page = parseInt(request.nextUrl.searchParams.get('page') || '1');
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '100');
-    const skip = (page - 1) * limit;
+    const maxLimit = limit > 200 ? 200 : limit;
+    const skip = (page - 1) * maxLimit;
 
     const [referrals, total] = await Promise.all([
-      Referral.find().sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Referral.find().sort({ createdAt: -1 }).skip(skip).limit(maxLimit).lean(),
       Referral.countDocuments(),
     ]);
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / maxLimit);
     return NextResponse.json({
       success: true,
       data: { referrals, pagination: { totalPages } },

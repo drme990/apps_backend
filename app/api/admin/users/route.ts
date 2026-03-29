@@ -12,7 +12,7 @@ export async function GET() {
     const auth = await requireAdminPageAccess('admins');
     if ('error' in auth) return auth.error;
 
-    const users = await User.find().sort({ createdAt: -1 });
+    const users = await User.find().sort({ createdAt: -1 }).limit(500);
     return NextResponse.json({ success: true, data: { users } });
   } catch (error) {
     console.error('Error fetching users:', error);

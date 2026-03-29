@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendFBEvent } from '@/lib/services/fb-capi';
+import { captureException } from '@/lib/services/error-monitor';
 import { parseJsonBody } from '@/lib/validation/http';
 import { fbEventSchema } from '@/lib/validation/schemas';
 
@@ -27,11 +28,22 @@ export async function POST(request: NextRequest) {
         client_user_agent: userAgent,
       },
       custom_data,
-    }).catch(() => {});
+    }).catch((fbError) => {
+      captureException(fbError, {
+        service: 'FacebookCAPI',
+        operation: 'sendFBEvent',
+        severity: 'low',
+        metadata: { event_name, event_id },
+      });
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[FB Event API] Error:', error);
+    captureException(error, {
+      service: 'FacebookCAPI_Route',
+      operation: 'POST',
+      severity: 'medium',
+    });
     return NextResponse.json(
       { success: false, error: 'Failed to process event' },
       { status: 500 },

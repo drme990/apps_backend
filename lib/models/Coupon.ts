@@ -61,6 +61,7 @@ const CouponSchema = new mongoose.Schema<ICoupon>(
 
 CouponSchema.index({ code: 1, status: 1 });
 CouponSchema.index({ validUntil: 1, status: 1 });
+CouponSchema.index({ code: 1, status: 1, validUntil: 1 });
 
 const Coupon =
   (mongoose.models.Coupon as mongoose.Model<ICoupon>) ||

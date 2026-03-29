@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
 
     const paidCompletedQuery: Record<string, unknown> = {
       ...baseQuery,
-      status: { $in: ['paid', 'completed'] },
+      status: { $in: ['partially-paid', 'paid', 'completed'] },
     };
 
     const [orders, total, analyticsRows, paidCount] = await Promise.all([

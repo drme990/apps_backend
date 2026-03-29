@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
     const query = activeOnly ? { isActive: true } : {};
     const countries = await Country.find(query)
       .sort({ sortOrder: 1, 'name.ar': 1 })
+      .limit(500)
       .lean();
     return NextResponse.json({ success: true, data: countries });
   } catch (error) {

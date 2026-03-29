@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 export type OrderStatus =
   | 'pending'
   | 'processing'
+  | 'partially-paid'
   | 'paid'
   | 'completed'
   | 'failed'
@@ -18,7 +19,7 @@ export type PaymentMethod =
   | 'other';
 
 export interface IOrderItem {
-  productId: string;
+  productId: mongoose.Types.ObjectId | string;
   productSlug?: string;
   productName: { ar: string; en: string };
   price: number;
@@ -80,7 +81,7 @@ export interface IPaymentAttempt {
 export interface IOrder {
   _id?: string;
   orderNumber: string;
-  userId?: string;
+  userId?: mongoose.Types.ObjectId | string;
   isGuest: boolean;
   items: IOrderItem[];
   totalAmount: number;
@@ -93,6 +94,7 @@ export interface IOrder {
   easykashVoucher?: string;
   easykashResponse?: Record<string, string | number | undefined>;
   couponCode?: string;
+  couponId?: mongoose.Types.ObjectId | string;
   couponDiscount?: number;
   fullAmount?: number;
   paidAmount?: number;
@@ -113,7 +115,11 @@ export interface IOrder {
 
 const OrderItemSchema = new mongoose.Schema<IOrderItem>(
   {
-    productId: { type: String, required: true },
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      required: true,
+    },
     productSlug: { type: String, trim: true, lowercase: true },
     productName: {
       ar: { type: String, required: true },
@@ -222,7 +228,7 @@ const PaymentAttemptSchema = new mongoose.Schema<IPaymentAttempt>(
 const OrderSchema = new mongoose.Schema<IOrder>(
   {
     orderNumber: { type: String, required: true, unique: true, index: true },
-    userId: { type: String, index: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, index: true }, // Polymorphic ref (Users_manasik, Users_ghadaq)
     isGuest: { type: Boolean, required: true, default: true, index: true },
     items: {
       type: [OrderItemSchema],
@@ -240,6 +246,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       enum: [
         'pending',
         'processing',
+        'partially-paid',
         'paid',
         'completed',
         'failed',
@@ -267,6 +274,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     easykashVoucher: { type: String },
     easykashResponse: { type: mongoose.Schema.Types.Mixed },
     couponCode: { type: String, trim: true, uppercase: true },
+    couponId: { type: mongoose.Schema.Types.ObjectId, ref: 'Coupon' },
     couponDiscount: { type: Number, min: 0, default: 0 },
     fullAmount: { type: Number, min: 0 },
     paidAmount: { type: Number, min: 0 },
@@ -305,6 +313,8 @@ OrderSchema.pre('validate', async function () {
 
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
+OrderSchema.index({ source: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ 'billingData.email': 1, source: 1 });
 
 if (process.env.NODE_ENV !== 'production' && mongoose.models.Order) {
   mongoose.deleteModel('Order');

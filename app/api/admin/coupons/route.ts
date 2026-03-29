@@ -6,14 +6,39 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { couponCreateSchema } from '@/lib/validation/schemas';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess('coupons');
     if ('error' in auth) return auth.error;
 
-    const coupons = await Coupon.find().sort({ createdAt: -1 }).lean();
-    return NextResponse.json({ success: true, data: { coupons } });
+    const { searchParams } = request.nextUrl;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '50');
+    // Enforce MAX_LIMIT
+    const maxLimit = limit > 100 ? 100 : limit;
+    const skip = (page - 1) * maxLimit;
+
+    const [coupons, total] = await Promise.all([
+      Coupon.find().sort({ createdAt: -1 }).skip(skip).limit(maxLimit).lean(),
+      Coupon.countDocuments(),
+    ]);
+
+    const totalPages = Math.ceil(total / maxLimit);
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        coupons,
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalItems: total,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+      },
+    });
   } catch (error) {
     console.error('Error fetching coupons:', error);
     return NextResponse.json(

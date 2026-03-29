@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
+import { captureException } from '@/lib/services/error-monitor';
 import Order from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
@@ -11,7 +13,10 @@ import {
   matchReservationOption,
   normalizeReservationFields,
 } from '@/lib/reservation-fields';
-import { createPayment } from '@/lib/services/easykash';
+import {
+  createPayment,
+  getEasykashCashExpiryHours,
+} from '@/lib/services/easykash';
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
@@ -116,7 +121,20 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const UserModel = getUserModelByAppId(checkoutAppId);
+      const UserModel = getUserModelByAppId(
+        checkoutAppId,
+      ) as unknown as mongoose.Model<
+        mongoose.Document & {
+          _id: mongoose.Types.ObjectId;
+          email: string;
+          name: string;
+          password?: string;
+          phone?: string;
+          country?: string;
+          appId?: string;
+          comparePassword(candidatePassword: string): Promise<boolean>;
+        }
+      >;
       const normalizedEmail = billingData.email.trim().toLowerCase();
       const existingUser = await UserModel.findOne({ email: normalizedEmail })
         .select('+password')
@@ -419,6 +437,7 @@ export async function POST(request: NextRequest) {
 
     let couponDiscount = 0;
     let appliedCouponCode: string | undefined;
+    let appliedCouponId: string | undefined;
     if (couponCode) {
       const couponResult = await validateCoupon(
         couponCode,
@@ -434,6 +453,7 @@ export async function POST(request: NextRequest) {
       }
       couponDiscount = couponResult.discountAmount || 0;
       appliedCouponCode = couponResult.coupon?.code;
+      appliedCouponId = couponResult.coupon?._id?.toString();
     }
 
     const amountAfterDiscount = totalAmount - couponDiscount;
@@ -508,12 +528,12 @@ export async function POST(request: NextRequest) {
           quantity,
         },
       ],
-      userId: sessionUser?._id ? sessionUser._id.toString() : undefined,
+      userId: sessionUser?.userId ? sessionUser.userId.toString() : undefined,
       isGuest: !isAuthenticated && !tokenToSet,
       totalAmount: payAmount,
       fullAmount: amountAfterDiscount,
-      paidAmount: payAmount,
-      remainingAmount: isPartialPayment ? amountAfterDiscount - payAmount : 0,
+      paidAmount: 0,
+      remainingAmount: amountAfterDiscount,
       isPartialPayment,
       sizeIndex: activeSizeIndex,
       currency: currencyUpper,
@@ -526,6 +546,7 @@ export async function POST(request: NextRequest) {
       },
       referralId: referralId || undefined,
       couponCode: appliedCouponCode,
+      couponId: appliedCouponId,
       couponDiscount,
       termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
@@ -637,6 +658,7 @@ export async function POST(request: NextRequest) {
     const easykashOrderId = `${order.orderNumber}-P${paymentAttemptNum}`;
     const paymentId = generatePaymentId();
 
+    const cashExpiryHours = getEasykashCashExpiryHours();
     let easykashResponse: Awaited<ReturnType<typeof createPayment>>;
     try {
       easykashResponse = await createPayment({
@@ -645,13 +667,19 @@ export async function POST(request: NextRequest) {
         name: billingData.fullName,
         email: billingData.email,
         mobile: billingData.phone,
+        cashExpiry: cashExpiryHours,
         redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
         customerReference: easykashOrderId,
       });
     } catch (easykashError) {
       // Clean up the orphaned order so it doesn't block future attempts
       await Order.findByIdAndDelete(order._id);
-      console.error('EasyKash payment creation failed:', easykashError);
+      captureException(easykashError, {
+        service: 'Checkout',
+        operation: 'createPayment_EasyKash',
+        severity: 'high',
+        metadata: { easykashOrderId, orderNumber: order.orderNumber },
+      });
       return NextResponse.json(
         { success: false, error: 'Payment gateway error. Please try again.' },
         { status: 502 },
@@ -667,7 +695,7 @@ export async function POST(request: NextRequest) {
         currency: paymentCurrency,
         status: 'pending',
         redirectUrl: easykashResponse.redirectUrl,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+        expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
         createdAt: new Date(),
       },
     ];
@@ -675,7 +703,7 @@ export async function POST(request: NextRequest) {
       {
         createdAt: new Date(),
         ip: ip || undefined,
-        userId: sessionUser?._id ? sessionUser._id.toString() : undefined,
+        userId: sessionUser?.userId ? sessionUser.userId.toString() : undefined,
       },
     ];
     order.status = 'processing';
@@ -707,7 +735,11 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
-    console.error('Error creating checkout:', error);
+    captureException(error, {
+      service: 'Checkout',
+      operation: 'POST',
+      severity: 'critical',
+    });
     return NextResponse.json(
       { success: false, error: 'Failed to create checkout' },
       { status: 500 },

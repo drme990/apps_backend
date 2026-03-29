@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     const rateLimitKey = `login:${appId}:${email.toLowerCase()}`;
-    const rateLimit = checkRateLimit(rateLimitKey, {
+    const rateLimit = await checkRateLimit(rateLimitKey, {
       maxAttempts: 5,
       windowSeconds: 15 * 60,
     });
@@ -91,14 +91,6 @@ export async function POST(request: NextRequest) {
     });
 
     response.cookies.set('admin_panel-token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60,
-      path: '/',
-    });
-
-    response.cookies.set('admin-token', token, {
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? 'none' : 'lax',

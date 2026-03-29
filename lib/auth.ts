@@ -11,10 +11,8 @@ export async function getAuthUser(
   appId: AppId = 'admin_panel',
 ): Promise<TokenPayload | null> {
   const cookieStore = await cookies();
-  const appToken = cookieStore.get(getAuthCookieName(appId))?.value;
-  const legacyAdminToken =
-    appId === 'admin_panel' ? cookieStore.get('admin-token')?.value : undefined;
-  const token = appToken || legacyAdminToken;
+  const token = cookieStore.get(getAuthCookieName(appId))?.value;
+
   if (!token) return null;
   const payload = verifyToken(token);
   if (!payload || payload.appId !== appId) return null;

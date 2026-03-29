@@ -12,11 +12,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
+    // Enforce hard limit to prevent OOM
+    const maxLimit = limit > 200 ? 200 : limit;
     const status = searchParams.get('status');
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
-    const skip = (page - 1) * limit;
+    const skip = (page - 1) * maxLimit;
 
     const query: Record<string, unknown> = {};
     if (status && status !== 'all') query.status = status;
@@ -33,7 +35,11 @@ export async function GET(request: NextRequest) {
     }
 
     const [orders, total] = await Promise.all([
-      Order.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Order.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(maxLimit)
+        .lean(),
       Order.countDocuments(query),
     ]);
 
@@ -48,7 +54,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil(total / maxLimit);
 
     return NextResponse.json({
       success: true,

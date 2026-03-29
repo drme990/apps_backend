@@ -4,6 +4,7 @@ import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 
 type RevenuePoint = { label: string; revenue: number };
+type AnalyticsMatchFilter = { status?: string };
 
 function getLastDaysRange(days: number): Date {
   const now = new Date();
@@ -62,14 +63,28 @@ function buildMonthSeries(
   return points;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess('analytics');
     if ('error' in auth) return auth.error;
 
-    const dayStart = getLastDaysRange(30);
-    const monthStart = getLastMonthsRange(12);
+    const { searchParams } = new URL(request.url);
+    const daysParam = searchParams.get('days');
+    const monthsParam = searchParams.get('months');
+    const statusParam = searchParams.get('status');
+
+    const days = daysParam ? parseInt(daysParam, 10) : 30;
+    const months = monthsParam ? parseInt(monthsParam, 10) : 12;
+
+    const dayStart = getLastDaysRange(days);
+    const monthStart = getLastMonthsRange(months);
+
+    // Build common match filter
+    const matchFilter: AnalyticsMatchFilter = {};
+    if (statusParam && statusParam !== 'all') {
+      matchFilter.status = statusParam;
+    }
 
     const [
       ordersByCountry,
@@ -84,6 +99,7 @@ export async function GET() {
       Order.aggregate([
         {
           $match: {
+            ...matchFilter,
             'billingData.country': { $exists: true, $ne: null },
           },
         },
@@ -105,6 +121,7 @@ export async function GET() {
       Order.aggregate([
         {
           $match: {
+            ...matchFilter,
             createdAt: { $exists: true },
           },
         },
@@ -125,6 +142,7 @@ export async function GET() {
       Order.aggregate([
         {
           $match: {
+            ...matchFilter,
             createdAt: { $gte: dayStart },
           },
         },
@@ -147,6 +165,7 @@ export async function GET() {
       Order.aggregate([
         {
           $match: {
+            ...matchFilter,
             createdAt: { $gte: monthStart },
           },
         },
@@ -167,6 +186,9 @@ export async function GET() {
       // Orders by status
       Order.aggregate([
         {
+          $match: matchFilter,
+        },
+        {
           $group: {
             _id: '$status',
             value: { $sum: 1 },
@@ -176,6 +198,9 @@ export async function GET() {
 
       // Full vs partial
       Order.aggregate([
+        {
+          $match: matchFilter,
+        },
         {
           $group: {
             _id: {
@@ -188,6 +213,9 @@ export async function GET() {
 
       // Top products by sold quantity
       Order.aggregate([
+        {
+          $match: matchFilter,
+        },
         { $unwind: '$items' },
         {
           $group: {
@@ -245,8 +273,8 @@ export async function GET() {
       ),
     );
 
-    const revenueByDay = buildDaySeries(revenueByDayMap, 30);
-    const revenueByMonth = buildMonthSeries(revenueByMonthMap, 12);
+    const revenueByDay = buildDaySeries(revenueByDayMap, days);
+    const revenueByMonth = buildMonthSeries(revenueByMonthMap, months);
 
     const statusOrder = [
       'pending',

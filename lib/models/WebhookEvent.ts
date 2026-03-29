@@ -4,6 +4,9 @@ interface IWebhookEvent {
   provider: 'easykash';
   eventKey: string;
   orderReference: string;
+  status: 'processed' | 'failed' | 'dead_letter';
+  payload?: Record<string, unknown>;
+  errorReason?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -26,6 +29,18 @@ const WebhookEventSchema = new mongoose.Schema<IWebhookEvent>(
       type: String,
       required: true,
       trim: true,
+    },
+    status: {
+      type: String,
+      enum: ['processed', 'failed', 'dead_letter'],
+      default: 'processed',
+      index: true,
+    },
+    payload: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    errorReason: {
+      type: String,
     },
   },
   { timestamps: true },

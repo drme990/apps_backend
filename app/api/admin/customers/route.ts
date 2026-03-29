@@ -60,9 +60,23 @@ export async function GET(request: NextRequest) {
     const results = await Promise.all(
       appIds.map(async (appId) => {
         const model = getUserModelByAppId(appId) as unknown as AppCustomerModel;
+
+        const filterQuery: Record<string, unknown> = {};
+        if (normalizedSearch) {
+          filterQuery.$or = [
+            { name: { $regex: normalizedSearch, $options: 'i' } },
+            { email: { $regex: normalizedSearch, $options: 'i' } },
+            { phone: { $regex: normalizedSearch, $options: 'i' } },
+          ];
+        }
+        if (typeof isBannedFilter === 'boolean') {
+          filterQuery.isBanned = isBannedFilter;
+        }
+
         const customers = await model
-          .find()
+          .find(filterQuery)
           .sort({ createdAt: -1 })
+          .limit(200)
           .select('name email phone country isBanned createdAt')
           .lean();
 
@@ -87,22 +101,10 @@ export async function GET(request: NextRequest) {
 
     let customers: CustomerDTO[] = results.flat();
 
-    if (normalizedSearch) {
-      customers = customers.filter(
-        (customer) =>
-          customer.name.toLowerCase().includes(normalizedSearch) ||
-          customer.email.toLowerCase().includes(normalizedSearch) ||
-          customer.phone.toLowerCase().includes(normalizedSearch),
-      );
-    }
-
-    if (typeof isBannedFilter === 'boolean') {
-      customers = customers.filter(
-        (customer) => customer.isBanned === isBannedFilter,
-      );
-    }
-
     customers.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    // Limit global merged results to 200 to prevent huge payloads
+    customers = customers.slice(0, 200);
 
     return NextResponse.json({
       success: true,

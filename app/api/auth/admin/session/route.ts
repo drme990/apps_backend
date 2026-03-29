@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import {
   getSessionForApp,
-  updateSessionForApp,
+  updateProfileForApp,
 } from '@/lib/auth/app-route-auth';
 
 export async function GET() {
@@ -9,5 +9,5 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  return updateSessionForApp(request, 'admin_panel');
+  return updateProfileForApp(request, 'admin_panel');
 }

@@ -1,9 +1,5 @@
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
-
-const rateLimitMap = new Map<string, RateLimitEntry>();
+import RateLimit from '@/lib/models/RateLimit';
+import { connectDB } from '@/lib/db';
 
 interface RateLimitOptions {
   maxAttempts: number;
@@ -16,33 +12,48 @@ interface RateLimitResult {
   resetInSeconds: number;
 }
 
-export function checkRateLimit(
+export async function checkRateLimit(
   identifier: string,
   options: RateLimitOptions = { maxAttempts: 5, windowSeconds: 15 * 60 },
-): RateLimitResult {
-  const now = Date.now();
-  const windowMs = options.windowSeconds * 1000;
-  const entry = rateLimitMap.get(identifier);
+): Promise<RateLimitResult> {
+  await connectDB();
 
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(identifier, { count: 1, resetAt: now + windowMs });
+  const now = new Date();
+  const windowMs = options.windowSeconds * 1000;
+
+  try {
+    const entry = await RateLimit.findOneAndUpdate(
+      { identifier },
+      {
+        $setOnInsert: { resetAt: new Date(now.getTime() + windowMs) },
+        $inc: { count: 1 },
+      },
+      {
+        upsert: true,
+        returnDocument: 'after',
+      },
+    );
+
+    const resetInSeconds = Math.max(
+      0,
+      Math.ceil((entry!.resetAt.getTime() - now.getTime()) / 1000),
+    );
+
+    if (entry!.count > options.maxAttempts) {
+      return { allowed: false, remaining: 0, resetInSeconds };
+    }
+
     return {
       allowed: true,
+      remaining: options.maxAttempts - entry!.count,
+      resetInSeconds,
+    };
+  } catch (error) {
+    console.error('Rate limit DB error, falling back to allow:', error);
+    return {
+      allowed: true, // Fail open so users aren't locked out if DB rate-limit fails randomly
       remaining: options.maxAttempts - 1,
       resetInSeconds: options.windowSeconds,
     };
   }
-
-  entry.count += 1;
-  const resetInSeconds = Math.ceil((entry.resetAt - now) / 1000);
-
-  if (entry.count > options.maxAttempts) {
-    return { allowed: false, remaining: 0, resetInSeconds };
-  }
-
-  return {
-    allowed: true,
-    remaining: options.maxAttempts - entry.count,
-    resetInSeconds,
-  };
 }

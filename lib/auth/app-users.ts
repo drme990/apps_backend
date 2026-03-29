@@ -62,6 +62,8 @@ function buildBaseAppUserModel(
     { timestamps: true, collection },
   );
 
+  schema.index({ email: 1, isBanned: 1 });
+
   schema.pre('save', async function () {
     if (!this.isModified('password')) return;
     const salt = await bcrypt.genSalt(10);

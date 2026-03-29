@@ -15,6 +15,7 @@ export async function GET() {
 
     const products = await Product.find({ isDeleted: { $ne: true } })
       .sort({ displayOrder: 1, createdAt: -1 })
+      .limit(1000)
       .lean();
     return NextResponse.json({
       success: true,

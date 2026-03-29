@@ -26,14 +26,6 @@ export async function POST() {
       message: 'Logged out successfully',
     });
 
-    response.cookies.set('admin-token', '', {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 0,
-      path: '/',
-    });
-
     response.cookies.set('admin_panel-token', '', {
       httpOnly: true,
       secure: isProduction,

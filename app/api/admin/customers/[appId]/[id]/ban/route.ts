@@ -18,7 +18,7 @@ type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ appId: 'ghadaq' | 'manasik'; id: string }> },
+  { params }: { params: Promise<{ appId: string; id: string }> },
 ) {
   try {
     await connectDB();

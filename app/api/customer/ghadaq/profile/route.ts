@@ -1,13 +1,13 @@
 import { NextRequest } from 'next/server';
 import {
-  getSessionForApp,
-  updateSessionForApp,
+  getProfileForApp,
+  updateProfileForApp,
 } from '@/lib/auth/app-route-auth';
 
 export async function GET() {
-  return getSessionForApp('admin_panel');
+  return getProfileForApp('ghadaq');
 }
 
 export async function PUT(request: NextRequest) {
-  return updateSessionForApp(request, 'admin_panel');
+  return updateProfileForApp(request, 'ghadaq');
 }

@@ -33,10 +33,24 @@ const updateProfileSchema = z
     email: z.string().email().optional(),
     phone: z.string().trim().optional(),
     country: z.string().trim().optional(),
+    currentPassword: z.string().min(6).optional(),
+    newPassword: z.string().min(6).optional(),
   })
-  .refine((payload) => Object.keys(payload).length > 0, {
-    message: 'At least one field must be provided',
-  });
+  .refine(
+    (payload) => {
+      // If one password field is provided, the other must be too
+      if (
+        (payload.currentPassword && !payload.newPassword) ||
+        (!payload.currentPassword && payload.newPassword)
+      ) {
+        return false;
+      }
+      return Object.keys(payload).length > 0;
+    },
+    {
+      message: 'Invalid payload or missing password fields',
+    },
+  );
 
 const registerPayloadSchema = registerSchema.omit({ appId: true });
 
@@ -75,16 +89,6 @@ function setAuthCookies(response: NextResponse, appId: AppId, token: string) {
     maxAge: 7 * 24 * 60 * 60,
     path: '/',
   });
-
-  if (appId === 'admin_panel') {
-    response.cookies.set('admin-token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60,
-      path: '/',
-    });
-  }
 }
 
 function clearAuthCookies(response: NextResponse, appId: AppId) {
@@ -97,16 +101,6 @@ function clearAuthCookies(response: NextResponse, appId: AppId) {
     maxAge: 0,
     path: '/',
   });
-
-  if (appId === 'admin_panel') {
-    response.cookies.set('admin-token', '', {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-      maxAge: 0,
-      path: '/',
-    });
-  }
 }
 
 export async function loginForApp(request: NextRequest, app: RouteApp) {
@@ -120,7 +114,7 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
     const { email, password } = parsed.data;
 
     const rateLimitKey = `login:${appId}:${email.toLowerCase()}`;
-    const rateLimit = checkRateLimit(rateLimitKey, {
+    const rateLimit = await checkRateLimit(rateLimitKey, {
       maxAttempts: 5,
       windowSeconds: 15 * 60,
     });
@@ -268,7 +262,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
   }
 }
 
-export async function getSessionForApp(app: RouteApp) {
+export async function getProfileForApp(app: RouteApp) {
   try {
     await connectDB();
 
@@ -311,7 +305,12 @@ export async function getSessionForApp(app: RouteApp) {
   }
 }
 
-export async function updateSessionForApp(request: NextRequest, app: RouteApp) {
+export async function getSessionForApp(app: RouteApp) {
+  // Keeping this for auth check uses (e.g. Header), but returning same structure
+  return getProfileForApp(app);
+}
+
+export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
   try {
     await connectDB();
 
@@ -361,21 +360,42 @@ export async function updateSessionForApp(request: NextRequest, app: RouteApp) {
       }
     }
 
-    const updatedUser = await UserModel.findByIdAndUpdate(
-      authUser.userId,
-      updatePayload,
-      {
-        new: true,
-        runValidators: true,
-      },
-    );
-
-    if (!updatedUser) {
+    const userDoc = await UserModel.findById(authUser.userId);
+    if (!userDoc) {
       return NextResponse.json(
         { success: false, error: 'User not found' },
         { status: 404 },
       );
     }
+
+    if (parsed.data.currentPassword && parsed.data.newPassword) {
+      if (!userDoc.comparePassword) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Password update not supported for this user',
+          },
+          { status: 400 },
+        );
+      }
+      const isMatch = await userDoc.comparePassword(
+        parsed.data.currentPassword,
+      );
+      if (!isMatch) {
+        return NextResponse.json(
+          { success: false, error: 'Incorrect current password' },
+          { status: 400 },
+        );
+      }
+      userDoc.password = parsed.data.newPassword;
+    }
+
+    if (updatePayload.name) userDoc.name = updatePayload.name;
+    if (updatePayload.email) userDoc.email = updatePayload.email;
+    if (updatePayload.phone) userDoc.phone = updatePayload.phone;
+    if (updatePayload.country) userDoc.country = updatePayload.country;
+
+    const updatedUser = await userDoc.save();
 
     return NextResponse.json({
       success: true,
@@ -416,3 +436,5 @@ export async function logoutForApp(app: RouteApp) {
     );
   }
 }
+
+export const updateSessionForApp = updateProfileForApp;

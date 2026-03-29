@@ -6,7 +6,7 @@ export interface IPaymentLink {
   status: 'unused' | 'opened' | 'used';
   publicToken: string;
   tokenHash: string;
-  orderId?: string;
+  orderId?: mongoose.Types.ObjectId | string;
   orderNumber?: string;
   source: 'manasik' | 'ghadaq';
   amountRequested: number;
@@ -49,7 +49,11 @@ const PaymentLinkSchema = new mongoose.Schema<IPaymentLink>(
     },
     publicToken: { type: String, required: true, unique: true, index: true },
     tokenHash: { type: String, required: true, unique: true, index: true },
-    orderId: { type: String, index: true },
+    orderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Order',
+      index: true,
+    },
     orderNumber: { type: String, index: true },
     source: {
       type: String,

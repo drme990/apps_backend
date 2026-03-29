@@ -11,7 +11,8 @@ export async function GET(request: NextRequest) {
 
     const page = parseInt(request.nextUrl.searchParams.get('page') || '1');
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '50');
-    const skip = (page - 1) * limit;
+    const maxLimit = limit > 200 ? 200 : limit;
+    const skip = (page - 1) * maxLimit;
 
     const logs = await ActivityLog.find({
       $or: [
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
     })
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit)
+      .limit(maxLimit)
       .lean();
 
     return NextResponse.json({ success: true, data: { logs } });

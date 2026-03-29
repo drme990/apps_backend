@@ -23,7 +23,10 @@ type OrderLite = {
   status: string;
   remainingAmount?: number;
   currency: string;
-  items?: Array<{ productSlug?: string; productId?: string }>;
+  items?: Array<{
+    productSlug?: string;
+    productId?: string | { toString(): string };
+  }>;
 };
 
 type AdminUser = {
@@ -46,7 +49,10 @@ async function resolveProductSlug(order: OrderLite): Promise<string> {
 
   if (primaryItem.productSlug) return primaryItem.productSlug;
 
-  if (!primaryItem.productId || !OBJECT_ID_REGEX.test(primaryItem.productId)) {
+  if (
+    !primaryItem.productId ||
+    !OBJECT_ID_REGEX.test(String(primaryItem.productId))
+  ) {
     throw new PaymentLinkError(
       'Unable to resolve product slug for this order.',
       400,

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 
 const EASYKASH_BASE_URL = 'https://back.easykash.net/api';
+const DEFAULT_CASH_EXPIRY_HOURS = 3;
 
 export type EasykashPaymentOptionId = 2 | 3 | 4 | 5 | 6;
 
@@ -48,6 +49,31 @@ export interface EasykashInquiryResponse {
   easykashRef: string;
 }
 
+export function getEasykashCashExpiryHours(): number {
+  const raw = Number.parseInt(
+    process.env.EASYKASH_CASH_EXPIRY_HOURS || `${DEFAULT_CASH_EXPIRY_HOURS}`,
+    10,
+  );
+
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_CASH_EXPIRY_HOURS;
+  }
+
+  return raw;
+}
+
+function normalizeEasykashRedirectUrl(url: string): string {
+  if (!url) return url;
+
+  try {
+    const parsed = new URL(url);
+    parsed.pathname = parsed.pathname.replace(/\/+/g, '/');
+    return parsed.toString();
+  } catch {
+    return url.replace('://easykash.net//', '://easykash.net/');
+  }
+}
+
 export type SyncedOrderStatus =
   | 'pending'
   | 'processing'
@@ -88,7 +114,7 @@ export async function createPayment(
     amount: params.amount,
     currency: params.currency.toUpperCase(),
     paymentOptions: params.paymentOptions ?? [1, 2, 4, 5, 6, 31],
-    cashExpiry: params.cashExpiry ?? 3,
+    cashExpiry: params.cashExpiry ?? getEasykashCashExpiryHours(),
     name: params.name,
     email: params.email,
     mobile: params.mobile,
@@ -119,7 +145,10 @@ export async function createPayment(
     throw new Error(`EasyKash: ${json.error}`);
   }
 
-  return json;
+  return {
+    ...json,
+    redirectUrl: normalizeEasykashRedirectUrl(json.redirectUrl),
+  };
 }
 
 export function verifyCallbackSignature(

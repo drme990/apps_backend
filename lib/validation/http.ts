@@ -1,6 +1,39 @@
 import { NextResponse } from 'next/server';
 import { ZodError, ZodSchema } from 'zod';
 
+export class ApiError extends Error {
+  code: string;
+  status: number;
+  details?: unknown;
+
+  constructor(
+    code: string,
+    message: string,
+    status: number = 400,
+    details?: unknown,
+  ) {
+    super(message);
+    this.code = code;
+    this.status = status;
+    this.details = details;
+    this.name = 'ApiError';
+  }
+
+  toResponse() {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: this.code,
+          message: this.message,
+          details: this.details,
+        },
+      },
+      { status: this.status },
+    );
+  }
+}
+
 interface ValidationSuccess<T> {
   success: true;
   data: T;
@@ -33,10 +66,10 @@ export async function parseJsonBody<T>(
   } catch {
     return {
       success: false,
-      response: NextResponse.json(
-        { success: false, error: 'Invalid JSON request body' },
-        { status: 400 },
-      ),
+      response: new ApiError(
+        'ERR_INVALID_JSON',
+        'Invalid JSON request body',
+      ).toResponse(),
     };
   }
 
@@ -44,14 +77,12 @@ export async function parseJsonBody<T>(
   if (!parsed.success) {
     return {
       success: false,
-      response: NextResponse.json(
-        {
-          success: false,
-          error: 'Request validation failed',
-          details: formatZodError(parsed.error),
-        },
-        { status: 400 },
-      ),
+      response: new ApiError(
+        'ERR_VALIDATION_FAILED',
+        'Request validation failed',
+        400,
+        formatZodError(parsed.error),
+      ).toResponse(),
     };
   }
 
@@ -66,14 +97,12 @@ export function validateInput<T>(
   if (!parsed.success) {
     return {
       success: false,
-      response: NextResponse.json(
-        {
-          success: false,
-          error: 'Request validation failed',
-          details: formatZodError(parsed.error),
-        },
-        { status: 400 },
-      ),
+      response: new ApiError(
+        'ERR_VALIDATION_FAILED',
+        'Request validation failed',
+        400,
+        formatZodError(parsed.error),
+      ).toResponse(),
     };
   }
 

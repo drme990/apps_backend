@@ -39,6 +39,12 @@ function mapPaymentMethod(
   return 'other';
 }
 
+function hasPaidPayments(
+  payments: Array<{ status?: string; amount?: number }> | undefined,
+): boolean {
+  return (payments || []).some((payment) => payment.status === 'paid');
+}
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -91,20 +97,60 @@ export async function GET(request: NextRequest) {
 
       if (matchesCustomerReference) {
         const mappedStatus = mapEasykashStatusToOrderStatus(gatewayStatus);
-        const shouldUpdateStatus =
-          order.status !== mappedStatus &&
-          !(order.status === 'paid' && mappedStatus !== 'paid');
+        let shouldSave = false;
 
-        if (shouldUpdateStatus) {
-          order.status = mappedStatus;
+        if (mappedStatus === 'paid') {
+          const matchedPayment = (order.payments || []).find(
+            (payment) => payment.easykashOrderId === customerReference,
+          );
+
+          if (matchedPayment && matchedPayment.status !== 'paid') {
+            matchedPayment.status = 'paid';
+            matchedPayment.paidAt = new Date();
+            shouldSave = true;
+          }
+
+          const fullAmount = order.fullAmount ?? order.totalAmount ?? 0;
+          const totalPaid = (order.payments || []).reduce((sum, payment) => {
+            if (payment.status === 'paid') {
+              return sum + Number(payment.amount || 0);
+            }
+            return sum;
+          }, 0);
+          const remainingAmount = Math.max(0, fullAmount - totalPaid);
+
+          if (hasPaidPayments(order.payments)) {
+            order.paidAmount = totalPaid;
+            order.remainingAmount = remainingAmount;
+
+            const targetStatus =
+              remainingAmount <= 0 ? 'paid' : 'partially-paid';
+
+            if (order.status !== targetStatus) {
+              order.status = targetStatus;
+              shouldSave = true;
+            }
+          }
+        } else {
+          const shouldUpdateStatus =
+            order.status !== mappedStatus &&
+            order.status !== 'paid' &&
+            order.status !== 'partially-paid';
+
+          if (shouldUpdateStatus) {
+            order.status = mappedStatus;
+            shouldSave = true;
+          }
         }
 
         if (providerRefNum) {
           order.easykashRef = providerRefNum;
+          shouldSave = true;
         }
 
         if (paymentMethod) {
           order.paymentMethod = mapPaymentMethod(paymentMethod);
+          shouldSave = true;
         }
 
         order.easykashResponse = {
@@ -115,8 +161,9 @@ export async function GET(request: NextRequest) {
           customerReference: customerReference || undefined,
           source: 'redirect',
         };
+        shouldSave = true;
 
-        if (shouldUpdateStatus || providerRefNum || paymentMethod) {
+        if (shouldSave) {
           await order.save();
         }
       }
@@ -149,7 +196,7 @@ export async function GET(request: NextRequest) {
 
     if (missingSlugIds.length > 0) {
       const products = await Product.find(
-        { _id: { $in: missingSlugIds } },
+        { _id: { $in: missingSlugIds as unknown as string[] } },
         { _id: 1, slug: 1 },
       ).lean();
 
@@ -159,7 +206,7 @@ export async function GET(request: NextRequest) {
 
       for (const item of items) {
         if (!item.productSlug && item.productId) {
-          item.productSlug = slugById.get(item.productId) || undefined;
+          item.productSlug = slugById.get(String(item.productId)) || undefined;
         }
       }
     }

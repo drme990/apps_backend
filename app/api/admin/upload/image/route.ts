@@ -8,6 +8,7 @@ import {
   extractPublicId,
 } from '@/lib/services/cloudinary';
 import { logActivity } from '@/lib/services/logger';
+import { captureException } from '@/lib/services/error-monitor';
 import { validateInput } from '@/lib/validation/http';
 import {
   uploadImageDeleteSchema,
@@ -86,7 +87,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    console.error('Error uploading image:', error);
+    captureException(error, {
+      service: 'CloudinaryRoute',
+      operation: 'POST_Upload',
+      severity: 'medium',
+    });
     return NextResponse.json(
       { success: false, error: 'Failed to upload image' },
       { status: 500 },
@@ -140,7 +145,11 @@ export async function DELETE(request: NextRequest) {
       message: 'Image deleted successfully',
     });
   } catch (error) {
-    console.error('Error deleting image:', error);
+    captureException(error, {
+      service: 'CloudinaryRoute',
+      operation: 'DELETE_Image',
+      severity: 'medium',
+    });
     return NextResponse.json(
       { success: false, error: 'Failed to delete image' },
       { status: 500 },

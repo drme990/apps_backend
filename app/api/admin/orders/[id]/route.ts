@@ -10,6 +10,7 @@ import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
 const ALLOWED_ORDER_STATUSES = new Set([
   'pending',
   'processing',
+  'partially-paid',
   'paid',
   'completed',
   'failed',

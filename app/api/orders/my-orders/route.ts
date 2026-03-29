@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getAuthUser } from '@/lib/auth';
 import Order from '@/lib/models/Order';
+import { getEasykashCashExpiryHours } from '@/lib/services/easykash';
 
 export async function GET() {
   try {
@@ -34,48 +35,113 @@ export async function GET() {
       .limit(100)
       .lean();
 
-    const normalized = orders.map((order) => {
-      const firstItem = order.items?.[0];
-      const productName =
-        firstItem?.productName?.en || firstItem?.productName?.ar || 'N/A';
+    const now = Date.now();
+    const cashExpiryWindowMs = getEasykashCashExpiryHours() * 60 * 60 * 1000;
 
-      // Determine payment status
-      let paymentStatus = 'Pending Payment';
-      if (order.status === 'paid') {
-        paymentStatus = 'Paid';
-      } else if (
-        order.remainingAmount &&
-        order.remainingAmount > 0 &&
-        order.paidAmount &&
-        order.paidAmount > 0
-      ) {
-        paymentStatus = 'Partially Paid';
-      } else if (order.status === 'failed') {
-        paymentStatus = 'Failed';
-      }
+    const normalized = orders
+      .map((order) => {
+        const firstItem = order.items?.[0];
+        const productName =
+          firstItem?.productName?.en || firstItem?.productName?.ar || 'N/A';
 
-      return {
-        _id: String(order._id),
-        orderNumber: order.orderNumber,
-        product: {
-          name: productName,
-          slug: firstItem?.productSlug,
-        },
-        quantity: firstItem?.quantity || 1,
-        fullAmount: order.fullAmount || order.totalAmount,
-        paidAmount: order.paidAmount || 0,
-        remainingAmount: order.remainingAmount || 0,
-        currency: order.currency,
-        totalPrice: order.totalAmount,
-        status: order.status,
-        paymentStatus,
-        isPartialPayment: order.isPartialPayment,
-        createdAt: order.createdAt,
-        items: order.items,
-        reservationData: order.reservationData,
-        billingData: order.billingData,
-      };
-    });
+        const fullAmount = order.fullAmount || order.totalAmount || 0;
+        const hasPaymentRecords =
+          Array.isArray(order.payments) && order.payments.length > 0;
+        const paidFromPayments = (order.payments || []).reduce(
+          (sum, payment) => {
+            if (payment.status === 'paid') {
+              return sum + (payment.amount || 0);
+            }
+            return sum;
+          },
+          0,
+        );
+
+        const paidAmount = hasPaymentRecords
+          ? paidFromPayments
+          : order.paidAmount || 0;
+        const remainingAmount = Math.max(
+          0,
+          hasPaymentRecords
+            ? fullAmount - paidAmount
+            : order.remainingAmount || 0,
+        );
+
+        const hasActivePendingPayment = (order.payments || []).some(
+          (payment) =>
+            payment.status === 'pending' &&
+            !!payment.redirectUrl &&
+            !!payment.expiresAt &&
+            new Date(payment.expiresAt).getTime() > now &&
+            (!payment.createdAt ||
+              new Date(payment.createdAt).getTime() + cashExpiryWindowMs > now),
+        );
+
+        const canCompleteOrder =
+          order.status === 'processing' &&
+          hasActivePendingPayment &&
+          paidAmount <= 0;
+
+        const canPayRemainingAmount =
+          remainingAmount > 0 &&
+          paidAmount > 0 &&
+          order.status !== 'cancelled' &&
+          order.status !== 'refunded';
+
+        // Determine payment status
+        let paymentStatus = 'Pending Payment';
+        if (order.status === 'paid') {
+          paymentStatus = 'Paid';
+        } else if (order.status === 'partially-paid') {
+          paymentStatus = 'Partially Paid';
+        } else if (remainingAmount > 0 && paidAmount > 0) {
+          paymentStatus = 'Partially Paid';
+        } else if (order.status === 'failed') {
+          paymentStatus = 'Failed';
+        }
+
+        return {
+          _id: String(order._id),
+          orderNumber: order.orderNumber,
+          product: {
+            name: productName,
+            slug: firstItem?.productSlug,
+          },
+          quantity: firstItem?.quantity || 1,
+          fullAmount,
+          paidAmount,
+          remainingAmount,
+          currency: order.currency,
+          totalPrice: order.totalAmount,
+          status: order.status,
+          paymentStatus,
+          isPartialPayment: order.isPartialPayment,
+          hasActivePendingPayment,
+          canCompleteOrder,
+          canPayRemainingAmount,
+          createdAt: order.createdAt,
+          items: order.items,
+          reservationData: order.reservationData,
+          billingData: order.billingData,
+        };
+      })
+      .filter((order) => {
+        if (
+          order.status === 'partially-paid' ||
+          order.status === 'paid' ||
+          order.status === 'completed' ||
+          order.status === 'refunded' ||
+          order.status === 'cancelled'
+        ) {
+          return true;
+        }
+
+        if (order.status === 'processing') {
+          return order.hasActivePendingPayment;
+        }
+
+        return false;
+      });
 
     return NextResponse.json({ success: true, data: normalized });
   } catch (error) {
