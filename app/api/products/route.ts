@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     await connectDB();
 
     const { searchParams } = request.nextUrl;
-    const limit = parseInt(searchParams.get('limit') || '10');
+    const limit = parseInt(searchParams.get('limit') || '50');
     const page = parseInt(searchParams.get('page') || '1');
     const inStock = searchParams.get('inStock');
     const sacrifice = searchParams.get('sacrifice');
