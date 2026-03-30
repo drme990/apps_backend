@@ -32,6 +32,8 @@ export interface IBaseAppUser {
   phone?: string;
   country?: string;
   isBanned?: boolean;
+  resetPasswordToken?: string;
+  resetPasswordExpires?: Date;
   appId: Exclude<AppId, 'admin_panel'>;
   createdAt?: Date;
   updatedAt?: Date;
@@ -57,6 +59,8 @@ function buildBaseAppUserModel(
       phone: { type: String, trim: true, default: '' },
       country: { type: String, trim: true, default: '' },
       isBanned: { type: Boolean, default: false, index: true },
+      resetPasswordToken: { type: String, select: false },
+      resetPasswordExpires: { type: Date, select: false },
       appId: { type: String, enum: [appId], default: appId },
     },
     { timestamps: true, collection },

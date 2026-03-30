@@ -26,7 +26,7 @@ const BRANDS = {
     primaryColor: '#ffc001',
     headerTextColor: '#000f2f',
     footerBg: '#134d37',
-    fromEmail: process.env.GHADAQ_FROM_EMAIL || 'orders@ghadqplus.com',
+    fromEmail: process.env.GHADAQ_FROM_EMAIL || 'orders@ghadaqplus.com',
     siteUrl: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
   },
 };

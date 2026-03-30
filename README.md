@@ -1,48 +1,96 @@
 # apps_backend
 
-Canonical backend/API for the Ghadaq + Manasik ecosystem.
+Canonical API and business-logic service for the full platform.
 
-## Last Updated
+## What This App Does
 
-- 2026-03-27
+- Serves all public storefront APIs for ghadaq and manasik-v2.
+- Serves all admin APIs for admin_panel.
+- Handles authentication, authorization, validation, and rate-limited operations.
+- Owns all data persistence through MongoDB models.
+- Integrates external services (EasyKash, email, Cloudinary, Cloudflare R2, Facebook CAPI).
 
-## Release Notes
+## Architecture Role
 
-- 2026-03-27: Added auth route support for admin_panel, ghadaq, and manasik apps.
-- 2026-03-19: Added payment-link currency conversion and stronger currency validation.
-- 2026-03-18: Improved custom pay-link processing and error handling.
-- 2026-03-17: Added soft-delete support for products and payment links.
-- 2026-03-16: Improved payment status fallback synchronization for delayed webhook scenarios.
-- 2026-03-14: Added centralized Zod request validation.
-- 2026-03-13: Added structured logging and rate limiting for checkout/coupon endpoints.
-
-## Role in the System
-
-- Owns business logic, DB access, payment flows, auth checks, and admin APIs.
-- All app UIs should call this backend (directly or via rewrites/proxy routes).
+- Single source of truth for domain logic.
+- Frontend apps should stay thin and call this backend instead of duplicating logic.
+- API families:
+- /api/admin/\* for back-office operations.
+- /api/auth/\* for app-level auth flows.
+- /api/payment/\* for checkout, links, status, and webhooks.
+- /api/\* public endpoints for products/countries/coupons/appearance/referral.
 
 Request flow:
 
-- storefront/admin -> /api/\* -> apps_backend -> MongoDB + external services
+- admin_panel/ghadaq/manasik-v2 -> apps_backend -> MongoDB + integrations
 
-## Stack
+## Feature Inventory
 
-- Next.js 16.1.6 (App Router)
-- TypeScript
-- MongoDB + Mongoose
-- EasyKash
-- Zod
-- Resend
-- Cloudinary
+### Authentication and Authorization
 
-## Main Domains
+- Admin login/logout/session endpoints.
+- Multi-app auth namespaces:
+- /api/auth/admin/\*
+- /api/auth/ghadaq/\*
+- /api/auth/manasik/\*
+- Role and permission guards for admin routes.
+- App auth guards for user profile and private customer operations.
 
-- Authentication and admin authorization.
-- Products, countries, coupons, referrals.
-- Orders lifecycle and reservation metadata.
-- Payments lifecycle (checkout, status, pay links, webhook).
-- Analytics and admin stats.
-- Activity logging (admin activity only).
+### Product and Catalog Engine
+
+- Product CRUD, reorder, and auto-pricing support.
+- Bilingual content and SEO slug handling.
+- Multi-currency pricing and minimum payment structures.
+- Reservation-field schema validation and storage.
+- Upgrade product logic and metadata handling.
+- Best-seller and active/inactive visibility controls.
+
+### Media and Asset Handling
+
+- Image upload/delete through Cloudinary.
+- Video upload/delete through Cloudflare R2.
+- Product media URLs returned in backend response contract.
+
+### Orders and Checkout
+
+- Checkout order creation pipeline.
+- Coupon validation and application.
+- Referral attribution.
+- Reservation payload persistence.
+- Partial-payment support.
+- Order lifecycle management and admin-side updates.
+
+### Payments
+
+- EasyKash checkout integration.
+- Payment-link creation and tokenized pay-link handling.
+- Payment status resolution endpoint.
+- Webhook processing and state synchronization.
+- Payment-link lifecycle states (unused, opened, used).
+
+### Platform Operations
+
+- Countries CRUD and ordering.
+- Exchange-rate endpoints and recalculation trigger.
+- Booking blocked-date management.
+- Appearance configuration per project.
+- Referral CRUD.
+- Activity logs and operational audit trails.
+- Cron route for price update automation.
+
+## Data Models
+
+Core models include:
+
+- Product
+- Order
+- User
+- Coupon
+- Country
+- Referral
+- ActivityLog
+- Appearance
+- CronLog
 
 ## Admin Permission Keys
 
@@ -60,32 +108,41 @@ Request flow:
 - exchange
 - payments
 
-## Route Inventory
+## Integrations
 
-- Verified route list and usage notes are documented in [docs/ROUTES_INVENTORY.md](../docs/ROUTES_INVENTORY.md).
+- MongoDB (Mongoose)
+- EasyKash
+- Resend
+- Cloudinary
+- Cloudflare R2
+- Facebook Conversions API
 
-## Payment Link Lifecycle
+## Environment Variables
 
-- Status values: unused -> opened -> used.
-- Tokenized public link handling for order/custom links.
-- Webhook finalizes successful payment status.
-
-## Environment
-
-Create apps_backend/.env.local with required values:
+Create apps_backend/.env.local:
 
 ```env
 DATA_BASE_URL=
 JWT_SECRET=
+
 EASYKASH_API_KEY=
 EASYKASH_HMAC_SECRET=
+
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
+
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
+R2_PUBLIC_URL=
+
 MANASIK_RESEND_API_KEY=
 GHADAQ_RESEND_API_KEY=
 MANASIK_FROM_EMAIL=
 GHADAQ_FROM_EMAIL=
+
 MANASIK_URL=
 GHADAQ_URL=
 ALLOWED_ORIGINS=
@@ -99,7 +156,7 @@ CRON_SECRET=
 - npm start
 - npm run lint
 
-## Run Locally
+## Local Development
 
 ```bash
 cd apps_backend
@@ -111,7 +168,6 @@ Default local URL:
 
 - http://localhost:3000
 
-## Notes
+## API Directory Guide
 
-- This is the canonical API layer; avoid duplicating DB/business logic in UI apps.
-- Keep admin auth/permission checks backend-enforced for every admin route.
+See app/api/README.md for grouped route details and behavior by domain.

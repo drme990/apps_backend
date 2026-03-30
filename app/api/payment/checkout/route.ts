@@ -153,8 +153,9 @@ export async function POST(request: NextRequest) {
           return NextResponse.json(
             {
               success: false,
-              error:
-                'This email is already registered. Please enter the correct password.',
+              error: 'This email is already registered. Please login first.',
+              code: 'REGISTERED_EMAIL_LOGIN_REQUIRED',
+              redirectTo: `/auth/login?email=${encodeURIComponent(normalizedEmail)}&from=checkout`,
             },
             { status: 401 },
           );

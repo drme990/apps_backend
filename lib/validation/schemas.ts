@@ -38,6 +38,20 @@ export const registerSchema = z
   })
   .strict();
 
+export const forgotPasswordSchema = z
+  .object({
+    email: z.string().email(),
+  })
+  .strict();
+
+export const resetPasswordSchema = z
+  .object({
+    email: z.string().email(),
+    token: z.string().min(10),
+    password: z.string().min(6),
+  })
+  .strict();
+
 export const couponValidationSchema = z
   .object({
     code: z.string().trim().min(1),

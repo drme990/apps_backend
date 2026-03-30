@@ -7,8 +7,20 @@ import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
 import { logActivity } from '@/lib/services/logger';
 import { checkRateLimit } from '@/lib/services/rate-limit';
+import {
+  consumeResetThrottle,
+  createPasswordResetToken,
+  markPasswordResetTokenUsed,
+  sendPasswordResetEmail,
+  verifyPasswordResetToken,
+} from '@/lib/services/password-reset';
 import { parseJsonBody } from '@/lib/validation/http';
-import { loginSchema, registerSchema } from '@/lib/validation/schemas';
+import {
+  forgotPasswordSchema,
+  loginSchema,
+  registerSchema,
+  resetPasswordSchema,
+} from '@/lib/validation/schemas';
 
 type RouteApp = 'admin_panel' | 'ghadaq' | 'manasik';
 
@@ -432,6 +444,115 @@ export async function logoutForApp(app: RouteApp) {
     console.error('Error during logout:', error);
     return NextResponse.json(
       { success: false, error: 'Logout failed' },
+      { status: 500 },
+    );
+  }
+}
+
+export async function forgotPasswordForApp(
+  request: NextRequest,
+  app: Exclude<RouteApp, 'admin_panel'>,
+) {
+  try {
+    await connectDB();
+
+    const parsed = await parseJsonBody(request, forgotPasswordSchema);
+    if (!parsed.success) return parsed.response;
+
+    const appId = mapRouteAppToAppId(app);
+    const normalizedEmail = parsed.data.email.trim().toLowerCase();
+
+    const throttle = await consumeResetThrottle(app, normalizedEmail);
+    if (!throttle.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: throttle.message,
+          code:
+            throttle.reason === 'banned'
+              ? 'PASSWORD_RESET_BANNED'
+              : 'PASSWORD_RESET_COOLDOWN',
+          retryAfterSeconds: throttle.retryAfterSeconds,
+        },
+        { status: 429 },
+      );
+    }
+
+    const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
+    const user = await UserModel.findOne({ email: normalizedEmail });
+
+    // Never reveal if email exists.
+    if (user) {
+      const token = await createPasswordResetToken(app, normalizedEmail);
+      await sendPasswordResetEmail(app, normalizedEmail, token);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'If this email exists, a reset link was sent',
+      nextRetrySeconds: throttle.nextRetrySeconds,
+      attempt: throttle.attempt,
+    });
+  } catch (error) {
+    console.error('Error during forgot password:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to process request' },
+      { status: 500 },
+    );
+  }
+}
+
+export async function resetPasswordForApp(
+  request: NextRequest,
+  app: Exclude<RouteApp, 'admin_panel'>,
+) {
+  try {
+    await connectDB();
+
+    const parsed = await parseJsonBody(request, resetPasswordSchema);
+    if (!parsed.success) return parsed.response;
+
+    const appId = mapRouteAppToAppId(app);
+    const normalizedEmail = parsed.data.email.trim().toLowerCase();
+
+    const tokenDoc = await verifyPasswordResetToken(
+      app,
+      normalizedEmail,
+      parsed.data.token,
+    );
+
+    if (!tokenDoc) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid or expired token' },
+        { status: 400 },
+      );
+    }
+
+    const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
+    const user = await UserModel.findOne({ email: normalizedEmail }).select(
+      '+password',
+    );
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'User not found' },
+        { status: 404 },
+      );
+    }
+
+    user.password = parsed.data.password;
+    await user.save();
+
+    await markPasswordResetTokenUsed(tokenDoc._id.toString());
+
+    return NextResponse.json({
+      success: true,
+      message: 'Password reset successfully',
+    });
+  } catch (error) {
+    console.error('Error during reset password:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to reset password' },
       { status: 500 },
     );
   }
