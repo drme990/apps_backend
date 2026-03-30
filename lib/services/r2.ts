@@ -15,6 +15,7 @@ const publicUrl = process.env.R2_PUBLIC_URL || '';
 export const s3Client = new S3Client({
   region: 'auto',
   endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+  forcePathStyle: true,
   credentials: {
     accessKeyId: accessKeyId || '',
     secretAccessKey: secretAccessKey || '',
@@ -25,22 +26,80 @@ export const s3Client = new S3Client({
   }),
 });
 
+async function readAwsErrorBodySnippet(body: unknown): Promise<string> {
+  if (!body) return '';
+
+  try {
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'transformToString' in body &&
+      typeof (body as { transformToString?: unknown }).transformToString ===
+        'function'
+    ) {
+      const text = await (
+        body as { transformToString: () => Promise<string> }
+      ).transformToString();
+      return text.slice(0, 500);
+    }
+
+    if (body instanceof Readable) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        if (chunks.reduce((acc, item) => acc + item.length, 0) > 1024) break;
+      }
+      return Buffer.concat(chunks).toString('utf8').slice(0, 500);
+    }
+  } catch {
+    return '';
+  }
+
+  return '';
+}
+
 export const uploadVideoToR2 = async (
   file: File,
   folder: string = 'products/videos',
 ): Promise<{ url: string; key: string }> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
   const key = `${folder}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '')}`;
-  const bodyStream = Readable.fromWeb(file.stream() as never);
+  const bodyBuffer = Buffer.from(await file.arrayBuffer());
 
   const command = new PutObjectCommand({
     Bucket: bucketName,
     Key: key,
-    Body: bodyStream,
-    ContentLength: file.size,
+    Body: bodyBuffer,
+    ContentLength: bodyBuffer.length,
     ContentType: file.type,
   });
 
-  await s3Client.send(command);
+  try {
+    await s3Client.send(command);
+  } catch (error) {
+    const awsError = error as {
+      name?: string;
+      message?: string;
+      $metadata?: { httpStatusCode?: number };
+      $response?: { body?: unknown };
+    };
+
+    const rawBodySnippet = await readAwsErrorBodySnippet(
+      awsError.$response?.body,
+    );
+
+    console.error('R2 upload failed', {
+      name: awsError.name,
+      message: awsError.message,
+      httpStatusCode: awsError.$metadata?.httpStatusCode,
+      responseSnippet: rawBodySnippet,
+    });
+
+    throw error;
+  }
 
   return {
     url: `${publicUrl}/${key}`,
