@@ -17,6 +17,12 @@ import {
   createPayment,
   getEasykashCashExpiryHours,
 } from '@/lib/services/easykash';
+import {
+  acquirePartialPaymentCreationLock,
+  buildPartialPaymentIdentity,
+  canUserCreatePartialPayment,
+  type PartialPaymentCreationLock,
+} from '@/lib/services/partial-payment-guard';
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
@@ -56,7 +62,21 @@ function setAuthCookie(
   });
 }
 
+async function releasePartialPaymentLock(
+  lock: PartialPaymentCreationLock | null,
+): Promise<void> {
+  if (!lock) return;
+
+  try {
+    await lock.release();
+  } catch {
+    // Ignore lock release failures to avoid masking checkout errors.
+  }
+}
+
 export async function POST(request: NextRequest) {
+  let partialPaymentLock: PartialPaymentCreationLock | null = null;
+
   try {
     // Rate limit: 5 checkout attempts per IP per minute
     const ip = getClientIp(request);
@@ -90,12 +110,15 @@ export async function POST(request: NextRequest) {
       termsAgreed,
       reservationData,
       source,
+      deviceFingerprint,
       createAccount,
       accountPassword,
     } = body;
 
-    const checkoutAppId: Exclude<AppId, 'admin_panel'> =
+    const orderSource: 'manasik' | 'ghadaq' =
       source === 'ghadaq' ? 'ghadaq' : 'manasik';
+    const checkoutAppId: Exclude<AppId, 'admin_panel'> =
+      orderSource === 'ghadaq' ? 'ghadaq' : 'manasik';
 
     const sessionUser = await getAuthUser(checkoutAppId);
     const isAuthenticated = !!sessionUser;
@@ -105,6 +128,7 @@ export async function POST(request: NextRequest) {
       Boolean(createAccount) || requiresAccountForPayment;
 
     let tokenToSet: string | null = null;
+    let effectiveUserId: string | null = sessionUser?.userId || null;
 
     if (!isAuthenticated && shouldCreateOrLoginFromCheckout) {
       const normalizedPassword =
@@ -167,6 +191,7 @@ export async function POST(request: NextRequest) {
           name: existingUser.name,
           email: existingUser.email,
         });
+        effectiveUserId = existingUser._id.toString();
       } else {
         const newUser = await UserModel.create({
           name: billingData.fullName.trim(),
@@ -183,6 +208,7 @@ export async function POST(request: NextRequest) {
           name: newUser.name,
           email: newUser.email,
         });
+        effectiveUserId = newUser._id.toString();
       }
     }
 
@@ -461,9 +487,11 @@ export async function POST(request: NextRequest) {
 
     let payAmount = amountAfterDiscount;
     let isPartialPayment = false;
+    let paymentType: 'full' | 'half' | 'partial' = 'full';
 
     if (paymentOption === 'half') {
       isPartialPayment = true;
+      paymentType = 'half';
       payAmount = Math.ceil(amountAfterDiscount / 2);
     } else if (paymentOption === 'custom' && customPaymentAmount) {
       if (!product.partialPayment?.isAllowed) {
@@ -515,7 +543,65 @@ export async function POST(request: NextRequest) {
       }
 
       isPartialPayment = customPaymentAmount < amountAfterDiscount;
+      paymentType = isPartialPayment ? 'partial' : 'full';
       payAmount = customPaymentAmount;
+    }
+
+    const partialPaymentIdentity = buildPartialPaymentIdentity({
+      source: orderSource,
+      userId: effectiveUserId,
+      email: billingData.email,
+      phone: billingData.phone,
+      ip,
+      fingerprint: deviceFingerprint,
+    });
+
+    if (paymentType === 'partial') {
+      partialPaymentLock = await acquirePartialPaymentCreationLock({
+        source: orderSource,
+        userId: effectiveUserId,
+        email: billingData.email,
+        phone: billingData.phone,
+        ip,
+        fingerprint: deviceFingerprint,
+      });
+
+      if (!partialPaymentLock.acquired) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: 'PARTIAL_PAYMENT_LOCKED',
+            error:
+              'A partial payment request is already being processed. Please try again in a few seconds.',
+          },
+          { status: 409 },
+        );
+      }
+
+      const guardDecision = await canUserCreatePartialPayment({
+        source: orderSource,
+        userId: effectiveUserId,
+        email: billingData.email,
+        phone: billingData.phone,
+        ip,
+        fingerprint: deviceFingerprint,
+      });
+
+      if (!guardDecision.allowed) {
+        await releasePartialPaymentLock(partialPaymentLock);
+        partialPaymentLock = null;
+
+        return NextResponse.json(
+          {
+            success: false,
+            code: guardDecision.reasonCode || 'ACTIVE_PARTIAL_ORDER',
+            error:
+              guardDecision.message ||
+              'You already have an active partial payment order. Complete it before creating a new one.',
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const order = await Order.create({
@@ -529,19 +615,20 @@ export async function POST(request: NextRequest) {
           quantity,
         },
       ],
-      userId: sessionUser?.userId ? sessionUser.userId.toString() : undefined,
-      isGuest: !isAuthenticated && !tokenToSet,
+      userId: effectiveUserId || undefined,
+      isGuest: !effectiveUserId,
       totalAmount: payAmount,
       fullAmount: amountAfterDiscount,
       paidAmount: 0,
       remainingAmount: amountAfterDiscount,
       isPartialPayment,
+      paymentType,
       sizeIndex: activeSizeIndex,
       currency: currencyUpper,
       status: 'pending',
       billingData: {
         fullName: billingData.fullName,
-        email: billingData.email,
+        email: partialPaymentIdentity.normalizedEmail || billingData.email,
         phone: billingData.phone,
         country: billingData.country || 'N/A',
       },
@@ -551,15 +638,23 @@ export async function POST(request: NextRequest) {
       couponDiscount,
       termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
-      source: source === 'ghadaq' ? 'ghadaq' : 'manasik',
+      source: orderSource,
+      normalizedEmail: partialPaymentIdentity.normalizedEmail,
+      normalizedPhone: partialPaymentIdentity.normalizedPhone,
+      latestClientIp: partialPaymentIdentity.normalizedIp,
+      deviceFingerprint: partialPaymentIdentity.normalizedFingerprint,
       countryCode: billingData.country || '',
       locale,
       payments: [],
       paymentAttempts: [],
     });
 
+    await releasePartialPaymentLock(partialPaymentLock);
+    partialPaymentLock = null;
+
     // FB CAPI: InitiateCheckout (fire-and-forget)
     const reqIp =
+      partialPaymentIdentity.normalizedIp ||
       request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
       request.headers.get('x-real-ip') ||
       '';
@@ -704,7 +799,7 @@ export async function POST(request: NextRequest) {
       {
         createdAt: new Date(),
         ip: ip || undefined,
-        userId: sessionUser?.userId ? sessionUser.userId.toString() : undefined,
+        userId: effectiveUserId || undefined,
       },
     ];
     order.status = 'processing';
@@ -736,6 +831,8 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
+    await releasePartialPaymentLock(partialPaymentLock);
+
     captureException(error, {
       service: 'Checkout',
       operation: 'POST',

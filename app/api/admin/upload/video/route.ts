@@ -25,7 +25,8 @@ const uploadVideoFormSchema = z.object({
   oldUrl: z.string().optional(),
 });
 
-export const maxDuration = 120;
+// Video uploads can include larger files and slower links.
+export const maxDuration = 600;
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,12 +65,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (parsed.data.oldUrl && isR2Url(parsed.data.oldUrl)) {
-      const key = extractR2Key(parsed.data.oldUrl);
-      if (key) await deleteVideoFromR2(key);
-    }
+    const oldKey =
+      parsed.data.oldUrl && isR2Url(parsed.data.oldUrl)
+        ? extractR2Key(parsed.data.oldUrl)
+        : null;
 
     const result = await uploadVideoToR2(uploadedFile);
+
+    // Delete old media only after the replacement upload succeeds.
+    if (oldKey && oldKey !== result.key) {
+      await deleteVideoFromR2(oldKey);
+    }
 
     return NextResponse.json({
       success: true,
@@ -77,9 +83,21 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Video upload error:', error);
+
+    const isTimeoutError =
+      typeof error === 'object' &&
+      error !== null &&
+      'name' in error &&
+      String((error as { name?: string }).name).includes('TimeoutError');
+
     return NextResponse.json(
-      { success: false, error: 'Failed to upload video' },
-      { status: 500 },
+      {
+        success: false,
+        error: isTimeoutError
+          ? 'Upload timed out while transferring video to storage. Please retry.'
+          : 'Failed to upload video',
+      },
+      { status: isTimeoutError ? 504 : 500 },
     );
   }
 }

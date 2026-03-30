@@ -80,6 +80,7 @@ export const checkoutSchema = z
     sizeIndex: z.coerce.number().int().nonnegative().optional(),
     paymentOption: z.enum(['full', 'half', 'custom']).optional(),
     customPaymentAmount: z.coerce.number().positive().optional(),
+    deviceFingerprint: z.string().trim().optional(),
     createAccount: z.boolean().optional(),
     accountPassword: z.string().optional(),
     termsAgreed: z.boolean(),

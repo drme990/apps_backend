@@ -9,6 +9,7 @@ export type OrderStatus =
   | 'failed'
   | 'refunded'
   | 'cancelled';
+
 export type PaymentMethod =
   | 'card'
   | 'wallet'
@@ -17,6 +18,8 @@ export type PaymentMethod =
   | 'meeza'
   | 'valu'
   | 'other';
+
+export type PaymentType = 'full' | 'half' | 'partial';
 
 export interface IOrderItem {
   productId: mongoose.Types.ObjectId | string;
@@ -100,6 +103,7 @@ export interface IOrder {
   paidAmount?: number;
   remainingAmount?: number;
   isPartialPayment?: boolean;
+  paymentType?: PaymentType;
   sizeIndex?: number;
   referralId?: string;
   termsAgreedAt?: Date;
@@ -107,6 +111,10 @@ export interface IOrder {
   payments?: IPayment[];
   paymentAttempts?: IPaymentAttempt[];
   source?: 'manasik' | 'ghadaq';
+  normalizedEmail?: string;
+  normalizedPhone?: string;
+  latestClientIp?: string;
+  deviceFingerprint?: string;
   countryCode?: string;
   locale?: string;
   createdAt?: Date;
@@ -225,6 +233,65 @@ const PaymentAttemptSchema = new mongoose.Schema<IPaymentAttempt>(
   { _id: false },
 );
 
+function normalizeEmail(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizePhone(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+
+  let normalized = value.trim();
+  if (!normalized) return undefined;
+
+  normalized = normalized.replace(/[\s().-]/g, '');
+  if (normalized.startsWith('00')) {
+    normalized = `+${normalized.slice(2)}`;
+  }
+
+  if (normalized.startsWith('+')) {
+    const digits = normalized.slice(1).replace(/\D/g, '');
+    return digits ? `+${digits}` : undefined;
+  }
+
+  const digitsOnly = normalized.replace(/\D/g, '');
+  return digitsOnly || undefined;
+}
+
+function normalizeIp(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  let normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === 'unknown') return undefined;
+  if (normalized === '::1') return '127.0.0.1';
+  if (normalized.startsWith('::ffff:')) {
+    normalized = normalized.slice('::ffff:'.length);
+  }
+  return normalized || undefined;
+}
+
+function inferPaymentType(order: {
+  paymentType?: PaymentType;
+  isPartialPayment?: boolean;
+  totalAmount?: number;
+  fullAmount?: number;
+}): PaymentType {
+  if (order.paymentType) return order.paymentType;
+  if (!order.isPartialPayment) return 'full';
+
+  const fullAmount = Number(order.fullAmount ?? 0);
+  const paidNowAmount = Number(order.totalAmount ?? 0);
+
+  if (fullAmount > 0) {
+    const halfAmount = Math.ceil(fullAmount / 2);
+    if (Math.abs(paidNowAmount - halfAmount) <= 1) {
+      return 'half';
+    }
+  }
+
+  return 'partial';
+}
+
 const OrderSchema = new mongoose.Schema<IOrder>(
   {
     orderNumber: { type: String, required: true, unique: true, index: true },
@@ -280,6 +347,12 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     paidAmount: { type: Number, min: 0 },
     remainingAmount: { type: Number, min: 0 },
     isPartialPayment: { type: Boolean, default: false },
+    paymentType: {
+      type: String,
+      enum: ['full', 'half', 'partial'],
+      default: 'full',
+      index: true,
+    },
     sizeIndex: { type: Number, min: 0, default: 0 },
     referralId: { type: String, trim: true, index: true },
     termsAgreedAt: { type: Date },
@@ -290,6 +363,15 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       type: String,
       enum: ['manasik', 'ghadaq'],
       default: 'manasik',
+      index: true,
+    },
+    normalizedEmail: { type: String, trim: true, lowercase: true, index: true },
+    normalizedPhone: { type: String, trim: true, index: true },
+    latestClientIp: { type: String, trim: true, index: true },
+    deviceFingerprint: {
+      type: String,
+      trim: true,
+      lowercase: true,
       index: true,
     },
     countryCode: { type: String, trim: true },
@@ -311,10 +393,61 @@ OrderSchema.pre('validate', async function () {
   }
 });
 
+OrderSchema.pre('save', function () {
+  this.paymentType = inferPaymentType(this);
+  this.isPartialPayment = this.paymentType !== 'full';
+
+  const normalizedEmail =
+    normalizeEmail(this.normalizedEmail || this.billingData?.email) ||
+    undefined;
+  const normalizedPhone =
+    normalizePhone(this.normalizedPhone || this.billingData?.phone) ||
+    undefined;
+  const normalizedIp =
+    normalizeIp(this.latestClientIp || this.paymentAttempts?.[0]?.ip) ||
+    undefined;
+  const normalizedFingerprint = normalizeEmail(this.deviceFingerprint);
+
+  if (normalizedEmail) this.normalizedEmail = normalizedEmail;
+  if (normalizedPhone) this.normalizedPhone = normalizedPhone;
+  if (normalizedIp) this.latestClientIp = normalizedIp;
+  if (normalizedFingerprint) this.deviceFingerprint = normalizedFingerprint;
+});
+
 OrderSchema.index({ createdAt: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ source: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ 'billingData.email': 1, source: 1 });
+OrderSchema.index({ source: 1, status: 1, paymentType: 1, createdAt: -1 });
+OrderSchema.index({
+  source: 1,
+  status: 1,
+  paymentType: 1,
+  normalizedEmail: 1,
+  createdAt: -1,
+});
+OrderSchema.index({
+  source: 1,
+  status: 1,
+  paymentType: 1,
+  normalizedPhone: 1,
+  createdAt: -1,
+});
+OrderSchema.index({
+  source: 1,
+  status: 1,
+  paymentType: 1,
+  latestClientIp: 1,
+  createdAt: -1,
+});
+OrderSchema.index({
+  source: 1,
+  status: 1,
+  paymentType: 1,
+  deviceFingerprint: 1,
+  createdAt: -1,
+});
+OrderSchema.index({ source: 1, status: 1, isPartialPayment: 1, createdAt: -1 });
 
 if (process.env.NODE_ENV !== 'production' && mongoose.models.Order) {
   mongoose.deleteModel('Order');
