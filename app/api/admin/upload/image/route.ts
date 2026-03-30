@@ -7,7 +7,6 @@ import {
   isCloudinaryUrl,
   extractPublicId,
 } from '@/lib/services/cloudinary';
-import { logActivity } from '@/lib/services/logger';
 import { captureException } from '@/lib/services/error-monitor';
 import { validateInput } from '@/lib/validation/http';
 import {
@@ -75,16 +74,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await logActivity({
-      userId: auth.user.userId,
-      userName: auth.user.name,
-      userEmail: auth.user.email,
-      action: 'create',
-      resource: 'upload',
-      resourceId: result.publicId || '',
-      details: `Uploaded image: ${file.name}`,
-    });
-
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     captureException(error, {
@@ -129,16 +118,6 @@ export async function DELETE(request: NextRequest) {
     }
 
     await deleteImage(publicId);
-
-    await logActivity({
-      userId: auth.user.userId,
-      userName: auth.user.name,
-      userEmail: auth.user.email,
-      action: 'delete',
-      resource: 'upload',
-      resourceId: publicId,
-      details: `Deleted image: ${publicId}`,
-    });
 
     return NextResponse.json({
       success: true,
