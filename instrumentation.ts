@@ -19,6 +19,11 @@ const REQUIRED_ENV_VARS: string[] = [
   'EASYKASH_API_KEY',
   'EASYKASH_HMAC_SECRET',
   'ALLOWED_ORIGINS',
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_BUCKET_NAME',
+  'R2_PUBLIC_URL',
 ];
 
 export async function register(): Promise<void> {
