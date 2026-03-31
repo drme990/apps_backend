@@ -13,9 +13,9 @@ const bucketName = process.env.R2_BUCKET_NAME || 'media';
 const publicUrl = process.env.R2_PUBLIC_URL || '';
 
 // Keep these values conservative and high enough for larger video uploads.
-const R2_CONNECTION_TIMEOUT_MS = 30_000;
-const R2_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
-const R2_SOCKET_TIMEOUT_MS = 15 * 60 * 1000;
+const R2_CONNECTION_TIMEOUT_MS = 50_000;
+const R2_REQUEST_TIMEOUT_MS = 40 * 60 * 1000;
+const R2_SOCKET_TIMEOUT_MS = 40 * 60 * 1000;
 const R2_MAX_ATTEMPTS = 3;
 
 export const s3Client = new S3Client({
