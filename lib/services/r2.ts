@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { Readable } from 'node:stream';
 
@@ -32,6 +33,9 @@ export const s3Client = new S3Client({
     requestTimeout: R2_REQUEST_TIMEOUT_MS,
     socketTimeout: R2_SOCKET_TIMEOUT_MS,
   }),
+  // Request checksum calculation should only happen when required by the service,
+  // not in flexible mode which adds extra checksum headers that can cause signature mismatches
+  requestChecksumCalculation: 'WHEN_REQUIRED',
 });
 
 async function readAwsErrorBodySnippet(body: unknown): Promise<string> {
@@ -138,4 +142,45 @@ export const extractR2Key = (url: string): string | null => {
   if (!publicUrl) return null;
   if (!url.startsWith(publicUrl)) return null;
   return url.replace(`${publicUrl}/`, '');
+};
+
+/**
+ * Generate a presigned URL for direct client-side upload to R2
+ * Clients upload directly to R2 using this URL (PUT request)
+ * This enables real progress tracking in the browser
+ */
+export const generatePresignedUploadUrl = async (
+  fileName: string,
+  contentType: string,
+  folder: string = 'products/videos',
+  expiresIn: number = 900, // URL expires in 15 minutes by default
+): Promise<{ uploadUrl: string; key: string; publicUrl: string }> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
+  const key = `${folder}/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9.-]/g, '')}`;
+
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ContentType: contentType,
+    // Disable flexible checksums to avoid signature mismatch with R2
+    ChecksumAlgorithm: undefined,
+  });
+
+  try {
+    const uploadUrl = await getSignedUrl(s3Client, command, {
+      expiresIn,
+    });
+
+    return {
+      uploadUrl,
+      key,
+      publicUrl: `${publicUrl}/${key}`,
+    };
+  } catch (error) {
+    console.error('Error generating presigned URL:', error);
+    throw error;
+  }
 };
