@@ -123,8 +123,7 @@ export async function GET(request: NextRequest) {
             order.paidAmount = totalPaid;
             order.remainingAmount = remainingAmount;
 
-            const targetStatus =
-              remainingAmount <= 0 ? 'paid' : 'partially-paid';
+            const targetStatus = remainingAmount <= 0 ? 'paid' : 'processing';
 
             if (order.status !== targetStatus) {
               order.status = targetStatus;
@@ -135,7 +134,7 @@ export async function GET(request: NextRequest) {
           const shouldUpdateStatus =
             order.status !== mappedStatus &&
             order.status !== 'paid' &&
-            order.status !== 'partially-paid';
+            order.status !== 'processing';
 
           if (shouldUpdateStatus) {
             order.status = mappedStatus;

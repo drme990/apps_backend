@@ -92,7 +92,11 @@ export async function GET() {
         let paymentStatus = 'Pending Payment';
         if (order.status === 'paid') {
           paymentStatus = 'Paid';
-        } else if (order.status === 'partially-paid') {
+        } else if (
+          order.status === 'processing' &&
+          remainingAmount > 0 &&
+          paidAmount > 0
+        ) {
           paymentStatus = 'Partially Paid';
         } else if (remainingAmount > 0 && paidAmount > 0) {
           paymentStatus = 'Partially Paid';
@@ -127,7 +131,6 @@ export async function GET() {
       })
       .filter((order) => {
         if (
-          order.status === 'partially-paid' ||
           order.status === 'paid' ||
           order.status === 'completed' ||
           order.status === 'refunded' ||
@@ -137,7 +140,9 @@ export async function GET() {
         }
 
         if (order.status === 'processing') {
-          return order.hasActivePendingPayment;
+          return (
+            order.hasActivePendingPayment || (order.remainingAmount || 0) > 0
+          );
         }
 
         return false;

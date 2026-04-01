@@ -159,7 +159,7 @@ export async function GET(
       await Order.updateOne(
         {
           _id: order._id,
-          status: { $nin: ['partially-paid', 'paid', 'completed'] },
+          status: { $nin: ['processing', 'paid', 'completed'] },
         },
         { $set: { status: 'processing' } },
       );

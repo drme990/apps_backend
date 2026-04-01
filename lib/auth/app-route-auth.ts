@@ -101,6 +101,14 @@ function setAuthCookies(response: NextResponse, appId: AppId, token: string) {
     maxAge: 7 * 24 * 60 * 60,
     path: '/',
   });
+
+  response.cookies.set(`${appId}-auth`, '1', {
+    httpOnly: false,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 7 * 24 * 60 * 60,
+    path: '/',
+  });
 }
 
 function clearAuthCookies(response: NextResponse, appId: AppId) {
@@ -108,6 +116,14 @@ function clearAuthCookies(response: NextResponse, appId: AppId) {
 
   response.cookies.set(`${appId}-token`, '', {
     httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 0,
+    path: '/',
+  });
+
+  response.cookies.set(`${appId}-auth`, '', {
+    httpOnly: false,
     secure: isProduction,
     sameSite: isProduction ? 'none' : 'lax',
     maxAge: 0,

@@ -26,9 +26,50 @@ const REQUIRED_ENV_VARS: string[] = [
   'R2_PUBLIC_URL',
 ];
 
+declare global {
+  var __backendConsolePatched: boolean | undefined;
+}
+
+async function installConsoleCapture(): Promise<void> {
+  if (globalThis.__backendConsolePatched) return;
+
+  const { captureTerminalLog } = await import('./lib/services/live-logs');
+
+  const originalConsole = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    info: console.info.bind(console),
+  };
+
+  console.log = (...args: unknown[]) => {
+    captureTerminalLog('info', args);
+    originalConsole.log(...args);
+  };
+
+  console.info = (...args: unknown[]) => {
+    captureTerminalLog('info', args);
+    originalConsole.info(...args);
+  };
+
+  console.warn = (...args: unknown[]) => {
+    captureTerminalLog('warn', args);
+    originalConsole.warn(...args);
+  };
+
+  console.error = (...args: unknown[]) => {
+    captureTerminalLog('error', args);
+    originalConsole.error(...args);
+  };
+
+  globalThis.__backendConsolePatched = true;
+}
+
 export async function register(): Promise<void> {
   // Only run env validation in the Node.js runtime (not Edge).
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+
+  await installConsoleCapture();
 
   const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 

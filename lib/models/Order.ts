@@ -3,7 +3,6 @@ import mongoose from 'mongoose';
 export type OrderStatus =
   | 'pending'
   | 'processing'
-  | 'partially-paid'
   | 'paid'
   | 'completed'
   | 'failed'
@@ -313,7 +312,6 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       enum: [
         'pending',
         'processing',
-        'partially-paid',
         'paid',
         'completed',
         'failed',

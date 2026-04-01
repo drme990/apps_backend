@@ -326,8 +326,8 @@ export async function POST(request: NextRequest) {
     if (remainingAmount <= 0) {
       order.status = 'paid';
     } else if (totalPaid > 0) {
-      order.status = 'partially-paid';
-    } else {
+      order.status = 'processing';
+    } else if (order.status !== 'paid') {
       order.status = 'processing';
     }
 
