@@ -8,7 +8,6 @@ import Order, {
 } from '@/lib/models/Order';
 import {
   verifyCallbackSignature,
-  type EasykashCallbackPayload,
   mapEasykashStatusToOrderStatus,
 } from '@/lib/services/easykash';
 import { trackPurchase } from '@/lib/services/fb-capi';
@@ -19,7 +18,6 @@ import PaymentLink from '@/lib/models/PaymentLink';
 import { webhookSchema } from '@/lib/validation/schemas';
 import TerminalLog from '@/lib/models/TerminalLog';
 
-const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 const ORDER_REF_REGEX = /^ord_([a-f\d]{24})_[a-f\d]{24}_\d+$/i;
 const ORDER_LINK_REF_REGEX = /^ord_([a-f\d]{24})_([a-f\d]{24})_\d+$/i;
@@ -76,6 +74,28 @@ function getPaymentLinkIdFromReference(
   return null;
 }
 
+function parseWebhookTimestampSeconds(
+  value: string | undefined,
+): number | null {
+  if (!value) return null;
+
+  const normalized = value.trim();
+  if (!normalized) return null;
+
+  if (/^\d+$/.test(normalized)) {
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric)) return null;
+
+    // EasyKash may send epoch in seconds or milliseconds.
+    return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+  }
+
+  const parsedMs = Date.parse(normalized);
+  if (Number.isNaN(parsedMs)) return null;
+
+  return Math.floor(parsedMs / 1000);
+}
+
 export async function POST(request: NextRequest) {
   const rawBody = await request.clone().text();
   const requestHeaders = Object.fromEntries(request.headers.entries());
@@ -116,7 +136,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = parsed.data as EasykashCallbackPayload;
+    const body = parsed.data;
     auditPayload.parsedBody = body;
 
     // Signature verification is mandatory in production environments.
@@ -156,18 +176,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
     }
 
-    // -----------------------------
-    // 2️⃣ Timestamp replay protection
-    // -----------------------------
-    const now = Math.floor(Date.now() / 1000);
-    const timestamp = Number(body.Timestamp);
-
-    if (!timestamp || now - timestamp > MAX_WEBHOOK_AGE) {
-      auditPayload.validationStage = 'expired';
-      auditPayload.result = 'rejected';
-      auditPayload.responseStatus = 400;
-      console.error('EasyKash webhook: timestamp expired');
-      return NextResponse.json({ error: 'Expired webhook' }, { status: 400 });
+    const parsedTimestamp = parseWebhookTimestampSeconds(body.Timestamp);
+    if (parsedTimestamp === null) {
+      auditPayload.timestampWarning = body.Timestamp
+        ? 'unparseable_timestamp'
+        : 'missing_timestamp';
+    } else {
+      const now = Math.floor(Date.now() / 1000);
+      auditPayload.callbackTimestamp = parsedTimestamp;
+      auditPayload.callbackAgeSeconds = now - parsedTimestamp;
     }
 
     const {
@@ -211,19 +228,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Idempotency key guarantees we process each callback event once.
-    const eventKey = `${easykashRef}:${status}:${body.Timestamp}`;
+    // Use signed/transaction fields only for idempotency; Timestamp is not signed.
+    const eventKey = `${easykashRef}:${customerReference}:${status}`;
     try {
       await WebhookEvent.create({
         provider: 'easykash',
         eventKey,
         orderReference: customerReference,
       });
-    } catch {
-      console.log('Webhook duplicate ignored:', eventKey);
-      auditPayload.result = 'duplicate';
-      auditPayload.responseStatus = 200;
-      return NextResponse.json({ success: true, duplicate: true });
+    } catch (eventError) {
+      const isDuplicateKeyError =
+        typeof eventError === 'object' &&
+        eventError !== null &&
+        'code' in eventError &&
+        (eventError as { code?: number }).code === 11000;
+
+      if (isDuplicateKeyError) {
+        console.log('Webhook duplicate ignored:', eventKey);
+        auditPayload.result = 'duplicate';
+        auditPayload.responseStatus = 200;
+        return NextResponse.json({ success: true, duplicate: true });
+      }
+
+      throw eventError;
     }
 
     // Find order: Strict lookup by the exact recorded payment reference
@@ -337,7 +364,8 @@ export async function POST(request: NextRequest) {
 
     // Amount verification
     const webhookAmount = Number(Amount);
-    if (webhookAmount !== payment.amount) {
+    const amountDelta = Math.abs(webhookAmount - Number(payment.amount));
+    if (!Number.isFinite(webhookAmount) || amountDelta > 0.01) {
       console.error(
         `Amount mismatch: webhook=${webhookAmount} payment=${payment.amount}`,
       );
@@ -364,7 +392,13 @@ export async function POST(request: NextRequest) {
     };
 
     const easykashStatus = mapEasykashStatusToOrderStatus(status);
-    payment.status = easykashStatus === 'paid' ? 'paid' : 'failed';
+    if (easykashStatus === 'paid') {
+      payment.status = 'paid';
+    } else if (easykashStatus === 'failed' || easykashStatus === 'refunded') {
+      payment.status = 'failed';
+    } else {
+      payment.status = 'pending';
+    }
 
     if (payment.status === 'paid') {
       payment.paidAt = new Date();
@@ -384,9 +418,15 @@ export async function POST(request: NextRequest) {
     order.paidAmount = totalPaid;
     order.remainingAmount = remainingAmount;
 
-    // Update order status based on total paid progression.
-    if (remainingAmount <= 0) {
+    // EasyKash PAID callback should immediately mark order as paid.
+    if (easykashStatus === 'paid') {
       order.status = 'paid';
+      order.paidAmount = fullAmount > 0 ? fullAmount : totalPaid;
+      order.remainingAmount = 0;
+    } else if (remainingAmount <= 0) {
+      order.status = 'paid';
+    } else if (easykashStatus === 'failed' || easykashStatus === 'refunded') {
+      order.status = 'failed';
     } else if (totalPaid > 0) {
       order.status = 'processing';
     } else if (order.status !== 'paid') {

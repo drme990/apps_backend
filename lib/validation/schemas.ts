@@ -89,22 +89,35 @@ export const checkoutSchema = z
   })
   .strict();
 
+const requiredWebhookText = z
+  .union([z.string(), z.number(), z.boolean()])
+  .transform((value) => String(value).trim())
+  .refine((value) => value.length > 0, {
+    message: 'Required',
+  });
+
+const optionalWebhookText = z
+  .union([z.string(), z.number(), z.boolean(), z.null(), z.undefined()])
+  .transform((value) =>
+    value === null || value === undefined ? '' : String(value).trim(),
+  );
+
 export const webhookSchema = z
   .object({
-    ProductCode: z.string().trim().min(1),
-    PaymentMethod: z.string().trim().min(1),
-    ProductType: z.string().trim().min(1),
-    Amount: z.string().trim().min(1),
-    BuyerEmail: z.string().trim().optional().default(''),
-    BuyerMobile: z.string().trim().optional().default(''),
-    BuyerName: z.string().trim().optional().default(''),
-    Timestamp: z.string().trim().min(1),
-    status: z.string().trim().min(1),
-    voucher: z.string().trim().optional().default(''),
-    easykashRef: z.string().trim().min(1),
-    VoucherData: z.string().trim().optional().default(''),
-    customerReference: z.string().trim().min(1),
-    signatureHash: z.string().trim().min(1),
+    ProductCode: requiredWebhookText,
+    PaymentMethod: requiredWebhookText,
+    ProductType: requiredWebhookText,
+    Amount: requiredWebhookText,
+    BuyerEmail: optionalWebhookText,
+    BuyerMobile: optionalWebhookText,
+    BuyerName: optionalWebhookText,
+    Timestamp: optionalWebhookText,
+    status: requiredWebhookText,
+    voucher: optionalWebhookText,
+    easykashRef: requiredWebhookText,
+    VoucherData: optionalWebhookText,
+    customerReference: requiredWebhookText,
+    signatureHash: requiredWebhookText,
   })
   .passthrough(); // webhook should passthrough in case easykash adds fields
 

@@ -25,16 +25,16 @@ export interface EasykashCallbackPayload {
   ProductCode: string;
   PaymentMethod: string;
   ProductType: string;
-  Amount: string;
+  Amount: string | number;
   BuyerEmail: string;
   BuyerMobile: string;
   BuyerName: string;
-  Timestamp: string;
+  Timestamp?: string;
   status: string;
   voucher: string;
   easykashRef: string;
   VoucherData: string;
-  customerReference: string;
+  customerReference: string | number;
   signatureHash: string;
 }
 
@@ -169,14 +169,21 @@ export function verifyCallbackSignature(
     payload.status,
     payload.easykashRef,
     payload.customerReference,
-  ].join('');
+  ]
+    .map((value) => String(value ?? '').trim())
+    .join('');
 
   const calculatedHash = crypto
     .createHmac('sha512', hmacSecret)
     .update(dataToSign)
     .digest('hex');
 
-  return calculatedHash === payload.signatureHash;
+  return (
+    calculatedHash ===
+    String(payload.signatureHash || '')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 export async function inquirePayment(
