@@ -6,7 +6,6 @@ import {
   deleteVideoFromR2,
   isR2Url,
   extractR2Key,
-  generatePresignedUploadUrl,
 } from '@/lib/services/r2';
 import { validateInput } from '@/lib/validation/http';
 import { z } from 'zod';
@@ -27,7 +26,7 @@ const uploadVideoFormSchema = z.object({
 });
 
 // Video uploads can include larger files and slower links.
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
