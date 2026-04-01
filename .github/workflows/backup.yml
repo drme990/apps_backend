@@ -1,0 +1,50 @@
+name: MongoDB Backup
+
+on:
+  schedule:
+    - cron: '0 0 */2 * *' # Every 2 days
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install MongoDB tools
+        run: |
+          wget -qO - https://pgp.mongodb.com/server-6.0.asc | sudo apt-key add -
+          echo "deb [ arch=amd64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-database-tools
+
+      - name: Create backup
+        run: |
+          TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+          BACKUP_DIR="backup_$TIMESTAMP"
+          mongodump --uri="${{ secrets.DATA_BASE_URL }}" --out=$BACKUP_DIR
+          tar -czf $BACKUP_DIR.tar.gz $BACKUP_DIR
+          echo "FILE_NAME=$BACKUP_DIR.tar.gz" >> $GITHUB_ENV
+
+      - name: Install AWS CLI (for Cloudflare R2)
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+
+      - name: Upload backup to Cloudflare R2
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws configure set default.region auto
+
+          aws s3 cp $FILE_NAME s3://${{ secrets.R2_BUCKET_NAME }}/backups/$FILE_NAME \
+            --endpoint-url https://${{ secrets.R2_PUBLIC_URL }}
+
+      - name: Keep only last 4 backups
+        run: |
+          aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/backups/ \
+            --endpoint-url https://${{ secrets.R2_PUBLIC_URL }} \
+            | sort | head -n -4 | awk '{print $4}' | while read file; do
+              aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/backups/$file \
+                --endpoint-url https://${{ secrets.R2_PUBLIC_URL }}
+            done

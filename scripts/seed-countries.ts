@@ -982,7 +982,7 @@ async function seed() {
   await mongoose.connect(MONGODB_URI!);
 
   // Import model after connection
-  const { default: Country } = await import('../models/Country');
+  const { default: Country } = await import('../lib/models/Country');
 
   console.log('🌱 Seeding countries...');
 
