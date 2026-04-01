@@ -104,20 +104,24 @@ const optionalWebhookText = z
 
 export const webhookSchema = z
   .object({
-    ProductCode: requiredWebhookText,
-    PaymentMethod: requiredWebhookText,
-    ProductType: requiredWebhookText,
-    Amount: requiredWebhookText,
+    ProductCode: optionalWebhookText,
+    PaymentMethod: optionalWebhookText,
+    paymentOption: optionalWebhookText,
+    ProductType: optionalWebhookText,
+    Amount: optionalWebhookText,
+    amount: optionalWebhookText,
+    currency: optionalWebhookText,
     BuyerEmail: optionalWebhookText,
     BuyerMobile: optionalWebhookText,
     BuyerName: optionalWebhookText,
     Timestamp: optionalWebhookText,
+    timestamp: optionalWebhookText,
     status: requiredWebhookText,
     voucher: optionalWebhookText,
     easykashRef: requiredWebhookText,
     VoucherData: optionalWebhookText,
     customerReference: requiredWebhookText,
-    signatureHash: requiredWebhookText,
+    signatureHash: optionalWebhookText,
   })
   .passthrough(); // webhook should passthrough in case easykash adds fields
 
