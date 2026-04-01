@@ -15,45 +15,93 @@ function getTodayDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
+function getRelativeDateString(daysAgo: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+async function fetchExchangeRatesForDate(
+  baseCurrency: string,
+  releaseDate: string,
+): Promise<Record<string, number>> {
+  const response = await fetch(
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${releaseDate}/v1/currencies/${baseCurrency}.json`,
+  );
+
+  if (!response.ok) {
+    const message = `Exchange rate API returned ${response.status}`;
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as ExchangeRateResponse;
+  const rates = data[baseCurrency] as Record<string, number>;
+
+  if (!rates || typeof rates !== 'object') {
+    throw new Error(`Invalid exchange rate data format for ${baseCurrency}`);
+  }
+
+  const normalizedRates: Record<string, number> = {};
+  for (const [currency, rate] of Object.entries(rates)) {
+    normalizedRates[currency.toUpperCase()] = rate;
+  }
+
+  return normalizedRates;
+}
+
 export async function getExchangeRates(
   baseCurrency: string,
 ): Promise<Record<string, number>> {
   const currencyKey = baseCurrency.toLowerCase();
   const today = getTodayDateString();
-  const cacheKey = `${currencyKey}:${today}`;
-  const cached = cache.get(cacheKey);
+  const yesterday = getRelativeDateString(1);
+  const candidates = [today, yesterday];
 
-  if (cached && cached.expiry > Date.now()) return cached.data;
+  for (const releaseDate of candidates) {
+    const cacheKey = `${currencyKey}:${releaseDate}`;
+    const cached = cache.get(cacheKey);
 
-  try {
-    const res = await fetch(
-      `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${today}/v1/currencies/${currencyKey}.json`,
-    );
-
-    if (!res.ok) throw new Error(`Exchange rate API returned ${res.status}`);
-
-    const data = (await res.json()) as ExchangeRateResponse;
-    const rates = data[currencyKey] as Record<string, number>;
-
-    if (!rates || typeof rates !== 'object') {
-      throw new Error(`Invalid exchange rate data format for ${currencyKey}`);
+    if (cached && cached.expiry > Date.now()) {
+      return cached.data;
     }
 
-    const normalizedRates: Record<string, number> = {};
-    for (const [currency, rate] of Object.entries(rates)) {
-      normalizedRates[currency.toUpperCase()] = rate;
-    }
+    try {
+      const rates = await fetchExchangeRatesForDate(currencyKey, releaseDate);
 
-    cache.set(cacheKey, {
-      data: normalizedRates,
-      expiry: Date.now() + CACHE_TTL_MS,
-    });
-    return normalizedRates;
-  } catch (error) {
-    console.error('Error fetching exchange rates:', error);
-    if (cached) return cached.data;
-    throw error;
+      cache.set(cacheKey, {
+        data: rates,
+        expiry: Date.now() + CACHE_TTL_MS,
+      });
+      return rates;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        releaseDate === today &&
+        message.includes("Couldn't find the requested release version")
+      ) {
+        console.warn(
+          `Exchange rate release ${today} unavailable for ${currencyKey}; retrying ${yesterday}`,
+        );
+        continue;
+      }
+
+      console.error('Error fetching exchange rates:', error);
+      if (cached) return cached.data;
+
+      if (releaseDate === today) {
+        continue;
+      }
+
+      throw error;
+    }
   }
+
+  throw new Error(
+    `Unable to fetch exchange rates for ${currencyKey} on ${today} or ${yesterday}`,
+  );
 }
 
 export async function convertCurrency(

@@ -16,8 +16,8 @@ import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import { captureException } from '@/lib/services/error-monitor';
 import WebhookEvent from '@/lib/models/WebhookEvent';
 import PaymentLink from '@/lib/models/PaymentLink';
-import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
+import TerminalLog from '@/lib/models/TerminalLog';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -77,15 +77,53 @@ function getPaymentLinkIdFromReference(
 }
 
 export async function POST(request: NextRequest) {
+  const rawBody = await request.clone().text();
+  const requestHeaders = Object.fromEntries(request.headers.entries());
+  const auditPayload: Record<string, unknown> = {
+    route: '/api/payment/webhook',
+    method: request.method,
+    url: request.nextUrl.pathname,
+    search: request.nextUrl.search,
+    headers: requestHeaders,
+    rawBody,
+    parsedBody: null,
+    validationStage: 'received',
+  };
+
   try {
     await connectDB();
 
-    const parsed = await parseJsonBody(request, webhookSchema);
-    if (!parsed.success) return parsed.response;
+    let parsedBody: unknown;
+    try {
+      parsedBody = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      auditPayload.validationStage = 'invalid_json';
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 400;
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    const parsed = webhookSchema.safeParse(parsedBody);
+    if (!parsed.success) {
+      auditPayload.validationStage = 'schema_validation_failed';
+      auditPayload.validationErrors = parsed.error.flatten();
+      auditPayload.parsedBody = parsedBody;
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 400;
+      return NextResponse.json(
+        { error: 'Invalid webhook payload' },
+        { status: 400 },
+      );
+    }
+
     const body = parsed.data as EasykashCallbackPayload;
+    auditPayload.parsedBody = body;
 
     // Signature verification is mandatory in production environments.
     if (!process.env.EASYKASH_HMAC_SECRET) {
+      auditPayload.validationStage = 'missing_hmac_secret';
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 503;
       console.error(
         'EasyKash webhook rejected: EASYKASH_HMAC_SECRET is not configured',
       );
@@ -96,6 +134,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (!body.signatureHash) {
+      auditPayload.validationStage = 'missing_signature';
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 400;
       return NextResponse.json(
         { error: 'Missing signatureHash' },
         { status: 400 },
@@ -108,6 +149,9 @@ export async function POST(request: NextRequest) {
     const isValid = verifyCallbackSignature(body);
 
     if (!isValid) {
+      auditPayload.validationStage = 'invalid_signature';
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 403;
       console.error('EasyKash webhook: invalid signature');
       return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
     }
@@ -119,6 +163,9 @@ export async function POST(request: NextRequest) {
     const timestamp = Number(body.Timestamp);
 
     if (!timestamp || now - timestamp > MAX_WEBHOOK_AGE) {
+      auditPayload.validationStage = 'expired';
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 400;
       console.error('EasyKash webhook: timestamp expired');
       return NextResponse.json({ error: 'Expired webhook' }, { status: 400 });
     }
@@ -132,6 +179,17 @@ export async function POST(request: NextRequest) {
       PaymentMethod,
       Amount,
     } = body;
+
+    auditPayload.validationStage = 'accepted';
+    auditPayload.result = 'processed';
+    auditPayload.customerReference = customerReference;
+    auditPayload.status = status;
+    auditPayload.easykashRef = easykashRef;
+    auditPayload.paymentMethod = PaymentMethod;
+    auditPayload.amount = Amount;
+    auditPayload.productCode = ProductCode;
+    auditPayload.voucher = voucher;
+    auditPayload.signaturePresent = Boolean(body.signatureHash);
 
     const normalizedStatus = (status || '').toUpperCase();
     const isSuccessfulPayment =
@@ -163,6 +221,8 @@ export async function POST(request: NextRequest) {
       });
     } catch {
       console.log('Webhook duplicate ignored:', eventKey);
+      auditPayload.result = 'duplicate';
+      auditPayload.responseStatus = 200;
       return NextResponse.json({ success: true, duplicate: true });
     }
 
@@ -189,6 +249,8 @@ export async function POST(request: NextRequest) {
     if (!order) {
       if (CUSTOM_LINK_REF_REGEX.test(customerReference || '')) {
         // Custom payment links are not attached to orders.
+        auditPayload.result = 'custom_link';
+        auditPayload.responseStatus = 200;
         return NextResponse.json({ success: true, customLink: true });
       }
 
@@ -390,9 +452,27 @@ export async function POST(request: NextRequest) {
       severity: 'critical',
     });
 
+    auditPayload.result = 'error';
+    auditPayload.errorMessage =
+      error instanceof Error ? error.message : String(error);
+    auditPayload.responseStatus = 500;
+
     return NextResponse.json(
       { success: false, error: 'Webhook processing failed' },
       { status: 500 },
     );
+  } finally {
+    try {
+      await TerminalLog.create({
+        ts: new Date().toISOString(),
+        level: 'info',
+        event: 'webhook.call',
+        source: 'request',
+        message: 'EasyKash webhook request audit',
+        payload: auditPayload,
+      });
+    } catch {
+      // Best-effort audit persistence only.
+    }
   }
 }
