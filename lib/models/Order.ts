@@ -57,21 +57,24 @@ async function allocateOrderNumber(
     const maxExisting = await getMaxExistingSequence(prefix);
 
     try {
+      // Keep sequence aligned with existing orders (migration/backfill safety).
+      await OrderSequence.updateOne(
+        { _id: prefix, seq: { $lt: maxExisting } },
+        { $set: { seq: maxExisting } },
+      ).exec();
+
+      // Ensure sequence document exists for this month prefix.
+      await OrderSequence.updateOne(
+        { _id: prefix },
+        { $setOnInsert: { seq: maxExisting } },
+        { upsert: true },
+      ).exec();
+
+      // Atomically allocate the next sequence number.
       const counter = await OrderSequence.findOneAndUpdate(
         { _id: prefix },
-        [
-          {
-            $set: {
-              seq: {
-                $add: [{ $max: [{ $ifNull: ['$seq', 0] }, maxExisting] }, 1],
-              },
-            },
-          },
-        ],
-        {
-          new: true,
-          upsert: true,
-        },
+        { $inc: { seq: 1 } },
+        { new: true },
       ).lean();
 
       const nextSeq = Number(counter?.seq || 0);
