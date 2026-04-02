@@ -53,6 +53,13 @@ function isCustomerReferenceAlreadyUsedError(error: unknown): boolean {
   );
 }
 
+function isDuplicateOrderNumberError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const maybeError = error as Error & { code?: number };
+  return maybeError.code === 11000 && error.message.includes('orderNumber_1');
+}
+
 function getPaymentAttemptNumber(order: { payments?: unknown[] }): number {
   return (order.payments?.length ?? 0) + 1;
 }
@@ -614,7 +621,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const order = await Order.create({
+    const orderPayload = {
       items: [
         {
           productId: product._id.toString(),
@@ -657,7 +664,36 @@ export async function POST(request: NextRequest) {
       locale,
       payments: [],
       paymentAttempts: [],
-    });
+    };
+
+    let order: Awaited<ReturnType<typeof Order.create>> | null = null;
+    const maxOrderCreateRetries = 3;
+
+    for (let attempt = 1; attempt <= maxOrderCreateRetries; attempt += 1) {
+      try {
+        order = await Order.create(orderPayload);
+        break;
+      } catch (orderCreateError) {
+        if (
+          isDuplicateOrderNumberError(orderCreateError) &&
+          attempt < maxOrderCreateRetries
+        ) {
+          log('warn', 'checkout.order_number_collision_retry', {
+            ip,
+            traceId,
+            source: orderSource,
+            attempt,
+          });
+          continue;
+        }
+
+        throw orderCreateError;
+      }
+    }
+
+    if (!order) {
+      throw new Error('Failed to create order after retrying order number');
+    }
 
     await releasePartialPaymentLock(partialPaymentLock);
     partialPaymentLock = null;

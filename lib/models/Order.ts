@@ -1,4 +1,95 @@
 import mongoose from 'mongoose';
+import OrderSequence from '@/lib/models/OrderSequence';
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getOrderPrefix(source: 'manasik' | 'ghadaq' | undefined): string {
+  const now = new Date();
+  const tag = source === 'ghadaq' ? 'GHD' : 'MNK';
+  return `${tag}-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function getMaxExistingSequence(prefix: string): Promise<number> {
+  const OrderModel = mongoose.models.Order as
+    | mongoose.Model<IOrder>
+    | undefined;
+  if (!OrderModel) return 0;
+
+  const escapedPrefix = escapeRegex(prefix);
+  const [result] = await OrderModel.aggregate<{ maxSeq?: number }>([
+    {
+      $match: {
+        orderNumber: {
+          $regex: `^${escapedPrefix}-\\d+$`,
+          $options: 'i',
+        },
+      },
+    },
+    {
+      $project: {
+        seq: {
+          $toInt: {
+            $arrayElemAt: [{ $split: ['$orderNumber', '-'] }, 2],
+          },
+        },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        maxSeq: { $max: '$seq' },
+      },
+    },
+  ]).exec();
+
+  return Number(result?.maxSeq || 0);
+}
+
+async function allocateOrderNumber(
+  source: 'manasik' | 'ghadaq' | undefined,
+): Promise<string> {
+  const prefix = getOrderPrefix(source);
+  const maxRetries = 5;
+
+  for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+    const maxExisting = await getMaxExistingSequence(prefix);
+
+    try {
+      const counter = await OrderSequence.findOneAndUpdate(
+        { _id: prefix },
+        [
+          {
+            $set: {
+              seq: {
+                $add: [{ $max: [{ $ifNull: ['$seq', 0] }, maxExisting] }, 1],
+              },
+            },
+          },
+        ],
+        {
+          new: true,
+          upsert: true,
+        },
+      ).lean();
+
+      const nextSeq = Number(counter?.seq || 0);
+      if (nextSeq > 0) {
+        return `${prefix}-${String(nextSeq).padStart(5, '0')}`;
+      }
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code;
+      if (code === 11000 && attempt < maxRetries - 1) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(`Failed to allocate order number for prefix ${prefix}`);
+}
 
 export type OrderStatus =
   | 'pending'
@@ -381,13 +472,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
 // Generate order number before validation
 OrderSchema.pre('validate', async function () {
   if (!this.orderNumber) {
-    const date = new Date();
-    const tag = this.source === 'ghadaq' ? 'GHD' : 'MNK';
-    const prefix = `${tag}-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const count = await mongoose.models.Order.countDocuments({
-      orderNumber: { $regex: `^${prefix}` },
-    });
-    this.orderNumber = `${prefix}-${String(count + 1).padStart(5, '0')}`;
+    this.orderNumber = await allocateOrderNumber(this.source);
   }
 });
 
