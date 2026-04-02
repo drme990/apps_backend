@@ -299,6 +299,18 @@ export async function POST(request: NextRequest) {
     } else if (statusUpper === 'REFUNDED') {
       if (paymentRecord) paymentRecord.status = 'expired';
       order.status = 'refunded';
+    } else if (statusUpper === 'PENDING' || statusUpper === 'NEW') {
+      if (paymentRecord && paymentRecord.status !== 'paid') {
+        paymentRecord.status = 'pending';
+      }
+
+      const hasPaidPayment = (order.payments || []).some(
+        (payment) => payment.status === 'paid',
+      );
+
+      if (order.status !== 'paid' && order.status !== 'completed') {
+        order.status = hasPaidPayment ? 'processing' : 'pending';
+      }
     }
 
     await order.save();
