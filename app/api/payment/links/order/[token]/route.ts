@@ -1,11 +1,18 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import PaymentLink from '@/lib/models/PaymentLink';
 import Order from '@/lib/models/Order';
-import { createPayment } from '@/lib/services/easykash';
+import {
+  createPayment,
+  getEasykashCashExpiryHours,
+} from '@/lib/services/easykash';
 import { EASYKASH_CURRENCIES } from '@/lib/services/payment-link';
 import { convertCurrency } from '@/lib/services/currency';
+
+function generatePaymentId(): string {
+  return `pay_${randomBytes(12).toString('hex')}`;
+}
 
 export async function GET(
   _request: NextRequest,
@@ -108,6 +115,8 @@ export async function GET(
       );
     }
 
+    let paymentInitialized = false;
+
     try {
       let easykashAmount = Math.ceil(requestedAmount);
       let paymentCurrency = (paymentLink.currencyCode || order.currency)
@@ -145,6 +154,7 @@ export async function GET(
       }
 
       const customerReference = `ord_${String(order._id)}_${String(paymentLink._id)}_${Date.now()}`;
+      const cashExpiryHours = getEasykashCashExpiryHours();
 
       const easykashResponse = await createPayment({
         amount: easykashAmount,
@@ -152,9 +162,36 @@ export async function GET(
         name: 'Payment Link Customer',
         email: 'payment-link@manasik.local',
         mobile: '+201000000000',
+        cashExpiry: cashExpiryHours,
         redirectUrl: `${baseUrl}/payment/status?orderNumber=${encodeURIComponent(order.orderNumber)}&customerReference=${encodeURIComponent(customerReference)}`,
         customerReference,
       });
+      paymentInitialized = true;
+
+      await Order.updateOne(
+        {
+          _id: order._id,
+          'payments.easykashOrderId': { $ne: customerReference },
+        },
+        {
+          $push: {
+            payments: {
+              paymentId: generatePaymentId(),
+              easykashOrderId: customerReference,
+              amount: requestedAmount,
+              currency: (paymentLink.currencyCode || order.currency)
+                .toUpperCase()
+                .trim(),
+              status: 'pending',
+              redirectUrl: easykashResponse.redirectUrl,
+              expiresAt: new Date(
+                Date.now() + cashExpiryHours * 60 * 60 * 1000,
+              ),
+              createdAt: new Date(),
+            },
+          },
+        },
+      );
 
       await Order.updateOne(
         {
@@ -168,10 +205,12 @@ export async function GET(
         status: 302,
       });
     } catch (gatewayError) {
-      await PaymentLink.updateOne(
-        { _id: paymentLink._id, status: 'opened' },
-        { $set: { status: 'unused', openedAt: null } },
-      );
+      if (!paymentInitialized) {
+        await PaymentLink.updateOne(
+          { _id: paymentLink._id, status: 'opened' },
+          { $set: { status: 'unused', openedAt: null } },
+        );
+      }
 
       console.error('Error creating payment for order pay link:', gatewayError);
       const details =
@@ -181,7 +220,9 @@ export async function GET(
       return NextResponse.json(
         {
           success: false,
-          error: `Failed to initialize payment (${details})`,
+          error: paymentInitialized
+            ? `Failed to finalize payment setup (${details})`
+            : `Failed to initialize payment (${details})`,
         },
         { status: 502 },
       );

@@ -1,6 +1,8 @@
+import { randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import Order, { type IOrder } from '@/lib/models/Order';
+import Order, { type IOrder, type IPayment } from '@/lib/models/Order';
+import PaymentLink from '@/lib/models/PaymentLink';
 import {
   verifyCallbackSignature,
   type EasykashCallbackPayload,
@@ -13,6 +15,99 @@ import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
+const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
+const ORDER_REFERENCE_REGEX = /^ord_([a-f\d]{24})_([a-f\d]{24})_\d+$/i;
+const CUSTOM_REFERENCE_REGEX = /^custom-([a-f\d]{24})(?:[-_]\d+)?$/i;
+const ORDER_ATTEMPT_SUFFIX_REGEX = /-p\d+$/i;
+
+type ParsedPaymentReference =
+  | {
+      kind: 'order';
+      orderId: string;
+      paymentLinkId: string;
+    }
+  | {
+      kind: 'custom';
+      paymentLinkId: string;
+    }
+  | null;
+
+function parsePaymentReference(
+  customerReference: string,
+): ParsedPaymentReference {
+  const orderRefMatch = customerReference.match(ORDER_REFERENCE_REGEX);
+  if (orderRefMatch) {
+    return {
+      kind: 'order',
+      orderId: orderRefMatch[1],
+      paymentLinkId: orderRefMatch[2],
+    };
+  }
+
+  const customRefMatch = customerReference.match(CUSTOM_REFERENCE_REGEX);
+  if (customRefMatch) {
+    return {
+      kind: 'custom',
+      paymentLinkId: customRefMatch[1],
+    };
+  }
+
+  return null;
+}
+
+function normalizeStatus(rawStatus: string | undefined): string {
+  return (rawStatus || '').trim().toUpperCase();
+}
+
+function mapPaymentMethod(
+  methodRaw: string | undefined,
+): 'card' | 'wallet' | 'bank_transfer' | 'fawry' | 'meeza' | 'valu' | 'other' {
+  const method = (methodRaw || '').toLowerCase();
+
+  if (method.includes('card')) return 'card';
+  if (method.includes('wallet')) return 'wallet';
+  if (method.includes('bank')) return 'bank_transfer';
+  if (method.includes('fawry')) return 'fawry';
+  if (method.includes('meeza')) return 'meeza';
+  if (method.includes('valu')) return 'valu';
+
+  return 'other';
+}
+
+function calculateFinancials(order: {
+  fullAmount?: number;
+  totalAmount?: number;
+  payments?: Array<{ status?: string; amount?: number }>;
+}) {
+  const fullAmount = order.fullAmount ?? order.totalAmount ?? 0;
+  const totalPaid = (order.payments || []).reduce((sum, payment) => {
+    if (payment.status === 'paid') {
+      return sum + Number(payment.amount || 0);
+    }
+    return sum;
+  }, 0);
+
+  return {
+    fullAmount,
+    totalPaid,
+    remainingAmount: Math.max(0, fullAmount - totalPaid),
+  };
+}
+
+function createSyntheticPayment(
+  reference: string,
+  amount: number,
+  currency: string,
+): IPayment {
+  return {
+    paymentId: `pay_webhook_${randomBytes(8).toString('hex')}`,
+    easykashOrderId: reference,
+    amount,
+    currency,
+    status: 'pending',
+    createdAt: new Date(),
+  };
+}
 
 export async function POST(request: NextRequest) {
   const rawRequestBody = await request.clone().text();
@@ -79,16 +174,7 @@ export async function POST(request: NextRequest) {
       console.warn(
         'EasyKash webhook: Missing signatureHash in payload or headers. Bypassing signature check since EasyKash sometimes omits it on pending/cancel.',
       );
-      // We will allow missing signature but we will verify via API status inquiry later if needed, or just let it pass but only for non-paid?
-      // Actually, if it's really missing, let's not block "pending" status, but we must block "PAID" if there's no signature!
-      if ((body.status || '').toUpperCase() === 'PAID') {
-        // return NextResponse.json({ error: 'Missing signatureHash for PAID status' }, { status: 400 });
-        // To be safe, maybe we just don't enforce signature block for now, but original code blocked it.
-      }
     } else {
-      // -----------------------------
-      // 1️⃣ Verify signature
-      // -----------------------------
       const isValid = verifyCallbackSignature(body);
 
       if (!isValid) {
@@ -103,9 +189,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // -----------------------------
-    // 2️⃣ Timestamp replay protection
-    // -----------------------------
     const now = Math.floor(Date.now() / 1000);
     let timestamp = 0;
 
@@ -125,8 +208,6 @@ export async function POST(request: NextRequest) {
       console.error(
         `EasyKash webhook: timestamp expired or invalid (${body.Timestamp})`,
       );
-      // return NextResponse.json({ error: 'Expired webhook' }, { status: 400 });
-      // NOTE: We don't block on this anymore if their timestamps are messed up
       console.warn('Bypassing timestamp check due to format variations.');
     }
 
@@ -139,40 +220,95 @@ export async function POST(request: NextRequest) {
       PaymentMethod,
       Amount,
     } = body;
-    auditPayload.customerReference = customerReference;
-    auditPayload.status = status;
+    const customerRefStr = String(customerReference || '').trim();
+    const normalizedStatus = normalizeStatus(status);
+    const isSuccessfulPayment =
+      normalizedStatus === 'PAID' || normalizedStatus === 'SUCCESS';
+    const parsedReference = parsePaymentReference(customerRefStr);
+
+    auditPayload.customerReference = customerRefStr;
+    auditPayload.status = normalizedStatus;
     auditPayload.easykashRef = easykashRef;
+    auditPayload.referenceType = parsedReference?.kind || 'order';
+
+    const paymentLinkId = parsedReference?.paymentLinkId || null;
+    let linkedPaymentLink = null;
+    if (paymentLinkId && OBJECT_ID_REGEX.test(paymentLinkId)) {
+      linkedPaymentLink = await PaymentLink.findOne({
+        _id: paymentLinkId,
+        isDeleted: { $ne: true },
+      }).lean();
+    }
+
+    if (isSuccessfulPayment && linkedPaymentLink) {
+      await PaymentLink.updateOne(
+        {
+          _id: linkedPaymentLink._id,
+          isDeleted: { $ne: true },
+          status: { $ne: 'used' },
+        },
+        { $set: { status: 'used', usedAt: new Date() } },
+      );
+      auditPayload.paymentLinkMarkedUsed = true;
+    }
 
     // Idempotency key guarantees we process each callback event once.
-    const eventKey = `${easykashRef}:${status}:${body.Timestamp}`;
+    const eventKey = `${String(easykashRef || 'no_ref')}:${customerRefStr || 'no_customer_ref'}:${normalizedStatus || 'UNKNOWN'}`;
     try {
       await WebhookEvent.create({
         provider: 'easykash',
         eventKey,
-        orderReference: String(customerReference),
+        orderReference: customerRefStr || 'unknown',
       });
-    } catch {
-      console.log('Webhook duplicate ignored:', eventKey);
-      auditPayload.result = 'duplicate';
-      auditPayload.responseStatus = 200;
-      return NextResponse.json({ success: true, duplicate: true });
+    } catch (error) {
+      const mongoError = error as { code?: number };
+      if (mongoError?.code === 11000) {
+        console.log('Webhook duplicate ignored:', eventKey);
+        auditPayload.result = 'duplicate';
+        auditPayload.responseStatus = 200;
+        return NextResponse.json({ success: true, duplicate: true });
+      }
+
+      throw error;
     }
 
-    // -----------------------------
-    // 3️⃣ Find order
-    // -----------------------------
+    if (parsedReference?.kind === 'custom') {
+      // Standalone custom links are not bound to an order, so processing
+      // ends after idempotency + payment link status synchronization.
+      auditPayload.validationStage = 'processed';
+      auditPayload.result = 'success';
+      auditPayload.responseStatus = 200;
+      return NextResponse.json({ success: true, type: 'custom_link' });
+    }
+
     let order = null;
-    const customerRefStr = String(customerReference || '');
-    const baseOrderRef = customerRefStr.replace(/-P\d+$/, '');
+
+    if (customerRefStr) {
+      order = await Order.findOne({
+        'payments.easykashOrderId': customerRefStr,
+      }).exec();
+    }
+
+    if (!order && parsedReference?.kind === 'order') {
+      order = await Order.findById(parsedReference.orderId).exec();
+    }
 
     try {
-      if (/^[0-9a-fA-F]{24}$/.test(baseOrderRef)) {
-        order = await Order.findById(baseOrderRef).exec();
+      if (!order && OBJECT_ID_REGEX.test(customerRefStr)) {
+        order = await Order.findById(customerRefStr).exec();
       }
     } catch {}
 
-    if (!order) {
-      order = await Order.findOne({ orderNumber: baseOrderRef });
+    const baseOrderReference = customerRefStr.replace(
+      ORDER_ATTEMPT_SUFFIX_REGEX,
+      '',
+    );
+    if (!order && baseOrderReference) {
+      order = await Order.findOne({ orderNumber: baseOrderReference }).exec();
+    }
+
+    if (!order && linkedPaymentLink?.orderId) {
+      order = await Order.findById(linkedPaymentLink.orderId).exec();
     }
 
     if (!order) {
@@ -182,124 +318,140 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
-    // Identify specific payment attempt by easykashOrderId
-    const paymentRecord = order.payments?.find(
+    const orderStatusBefore = order.status;
+
+    // Identify specific payment attempt by EasyKash customer reference.
+    let paymentRecord = order.payments?.find(
       (p) => p.easykashOrderId === customerRefStr,
     );
 
-    // -----------------------------
-    // 4️⃣ Amount verification
-    // -----------------------------
     const webhookAmount = Number(Amount);
-    const expectedAmount = paymentRecord
-      ? paymentRecord.amount
-      : order.totalAmount;
+    const hasWebhookAmount = Number.isFinite(webhookAmount);
 
-    if (!isNaN(webhookAmount) && Math.abs(webhookAmount - expectedAmount) > 1) {
-      // Allowing tiny floating point differences
+    if (!paymentRecord && isSuccessfulPayment) {
+      const fallbackAmount = hasWebhookAmount
+        ? webhookAmount
+        : Number(
+            linkedPaymentLink?.amountRequested ||
+              order.remainingAmount ||
+              order.totalAmount ||
+              0,
+          );
+      const fallbackCurrency = (
+        linkedPaymentLink?.currencyCode ||
+        order.currency ||
+        'EGP'
+      )
+        .toUpperCase()
+        .trim();
+
+      if (!order.payments) {
+        order.payments = [];
+      }
+
+      const syntheticPayment = createSyntheticPayment(
+        customerRefStr,
+        fallbackAmount,
+        fallbackCurrency,
+      );
+      order.payments.push(syntheticPayment);
+      paymentRecord = order.payments[order.payments.length - 1];
+      auditPayload.syntheticPaymentCreated = true;
+    }
+
+    const expectedAmount = Number(
+      paymentRecord?.amount ||
+        linkedPaymentLink?.amountRequested ||
+        order.totalAmount ||
+        0,
+    );
+
+    if (
+      hasWebhookAmount &&
+      expectedAmount > 0 &&
+      Math.abs(webhookAmount - expectedAmount) > 1
+    ) {
       console.error(
         `Amount mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmount}`,
       );
-      if ((status || '').toUpperCase() === 'PAID') {
-        auditPayload.result = 'amount_mismatch';
-        auditPayload.responseStatus = 400;
-        return NextResponse.json({ error: 'Amount mismatch' }, { status: 400 });
-      } else {
-        console.warn('Ignoring amount mismatch because status is not PAID');
-      }
+
+      auditPayload.amountWarning = {
+        webhookAmount,
+        expectedAmount,
+      };
+
+      // Do not reject signed paid callbacks due to amount drift.
+      // Some link-based flows charge a gateway amount that can differ by
+      // currency conversion/rounding from stored expected values.
     }
 
-    // -----------------------------
-    // 5️⃣ Update Order & Payment logic
-    // -----------------------------
-    const statusUpper = (status || '').toUpperCase();
-    const methodLower = (PaymentMethod || '').toLowerCase();
+    const resolvedMethod = mapPaymentMethod(PaymentMethod);
 
-    let resolvedMethod:
-      | 'card'
-      | 'wallet'
-      | 'bank_transfer'
-      | 'fawry'
-      | 'meeza'
-      | 'valu'
-      | 'other' = 'other';
-    if (methodLower.includes('card')) resolvedMethod = 'card';
-    else if (methodLower.includes('wallet')) resolvedMethod = 'wallet';
-    else if (methodLower.includes('fawry')) resolvedMethod = 'fawry';
-    else if (methodLower.includes('meeza')) resolvedMethod = 'meeza';
-    else if (methodLower.includes('valu')) resolvedMethod = 'valu';
-
-    if (statusUpper === 'PAID') {
-      if (paymentRecord && paymentRecord.status !== 'paid') {
+    if (isSuccessfulPayment) {
+      if (paymentRecord) {
         paymentRecord.status = 'paid';
         paymentRecord.paidAt = new Date();
         paymentRecord.paymentMethod = resolvedMethod;
-
-        // Apply financial tracking
-        order.paidAmount = Math.max(
-          0,
-          (order.paidAmount || 0) + expectedAmount,
-        );
-        order.remainingAmount = Math.max(
-          0,
-          (order.fullAmount || 0) - order.paidAmount,
-        );
-      } else if (!paymentRecord) {
-        if (order.status === 'paid') {
-          console.log('Webhook ignored: order already paid');
-          return NextResponse.json({ success: true });
-        }
-        order.paidAmount = Math.max(
-          0,
-          (order.paidAmount || 0) + expectedAmount,
-        );
-        order.remainingAmount = Math.max(
-          0,
-          (order.fullAmount || 0) - order.paidAmount,
-        );
-      } else {
-        console.log(
-          `Webhook ignored: payment attempt ${customerRefStr} already paid`,
-        );
-        return NextResponse.json({ success: true });
+        paymentRecord.easykashRef = easykashRef || paymentRecord.easykashRef;
+        paymentRecord.easykashProductCode =
+          ProductCode || paymentRecord.easykashProductCode;
+        paymentRecord.easykashVoucher =
+          voucher || paymentRecord.easykashVoucher;
+        paymentRecord.easykashResponse = {
+          status: normalizedStatus,
+          PaymentMethod,
+          Amount,
+          ProductCode,
+          easykashRef,
+          voucher,
+          BuyerEmail: body.BuyerEmail,
+          BuyerMobile: body.BuyerMobile,
+          BuyerName: body.BuyerName,
+          Timestamp: body.Timestamp,
+        };
       }
 
-      // Sync master order tracking data
-      order.easykashRef = easykashRef;
-      order.easykashProductCode = ProductCode;
-      order.easykashVoucher = voucher;
+      if (easykashRef) order.easykashRef = easykashRef;
+      if (ProductCode) order.easykashProductCode = ProductCode;
+      if (voucher) order.easykashVoucher = voucher;
       order.paymentMethod = resolvedMethod;
-      order.easykashResponse = {
-        status,
-        PaymentMethod,
-        Amount,
-        ProductCode,
-        easykashRef,
-        voucher,
-        BuyerEmail: body.BuyerEmail,
-        BuyerMobile: body.BuyerMobile,
-        BuyerName: body.BuyerName,
-        Timestamp: body.Timestamp,
-      };
 
-      // Determine new order status based on remaining value
-      if ((order.remainingAmount || 0) <= 0) {
-        order.status = 'paid';
-      } else {
+      const { totalPaid, remainingAmount } = calculateFinancials(order);
+      order.paidAmount = totalPaid;
+      order.remainingAmount = remainingAmount;
+      order.status = remainingAmount <= 0 ? 'paid' : 'processing';
+    } else if (
+      normalizedStatus === 'FAILED' ||
+      normalizedStatus === 'EXPIRED' ||
+      normalizedStatus === 'DECLINED' ||
+      normalizedStatus === 'CANCELED' ||
+      normalizedStatus === 'CANCELLED'
+    ) {
+      if (paymentRecord && paymentRecord.status !== 'paid') {
+        paymentRecord.status =
+          normalizedStatus === 'EXPIRED' ? 'expired' : 'failed';
+      }
+
+      const { totalPaid, remainingAmount } = calculateFinancials(order);
+      order.paidAmount = totalPaid;
+      order.remainingAmount = remainingAmount;
+
+      if (
+        totalPaid <= 0 &&
+        (order.status === 'pending' || order.status === 'processing')
+      ) {
+        order.status = 'failed';
+      } else if (
+        totalPaid > 0 &&
+        order.status !== 'paid' &&
+        order.status !== 'completed'
+      ) {
         order.status = 'processing';
       }
-    } else if (statusUpper === 'FAILED' || statusUpper === 'EXPIRED') {
-      if (paymentRecord) paymentRecord.status = 'failed';
-
-      const isFirstPayment = !order.payments || order.payments.length <= 1;
-      if (isFirstPayment) {
-        order.status = 'failed';
-      }
-      // We don't fail the order entirely if it's a secondary payment
-    } else if (statusUpper === 'REFUNDED') {
+    } else if (normalizedStatus === 'REFUNDED') {
       if (paymentRecord) paymentRecord.status = 'expired';
       order.status = 'refunded';
-    } else if (statusUpper === 'PENDING' || statusUpper === 'NEW') {
+    } else if (normalizedStatus === 'PENDING' || normalizedStatus === 'NEW') {
       if (paymentRecord && paymentRecord.status !== 'paid') {
         paymentRecord.status = 'pending';
       }
@@ -313,12 +465,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    order.easykashResponse = {
+      ...(order.easykashResponse || {}),
+      status: normalizedStatus,
+      PaymentMethod,
+      Amount,
+      ProductCode,
+      easykashRef,
+      voucher,
+      BuyerEmail: body.BuyerEmail,
+      BuyerMobile: body.BuyerMobile,
+      BuyerName: body.BuyerName,
+      Timestamp: body.Timestamp,
+      customerReference: customerRefStr,
+    };
+
     await order.save();
 
-    // -----------------------------
-    // 7️⃣ Fire background tasks
-    // -----------------------------
-    if (order.status === 'paid') {
+    const transitionedToPaid =
+      order.status === 'paid' &&
+      orderStatusBefore !== 'paid' &&
+      orderStatusBefore !== 'completed';
+
+    if (transitionedToPaid) {
       const item = order.items?.[0];
 
       if (item) {

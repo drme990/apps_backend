@@ -2,7 +2,10 @@ import { createHash } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import PaymentLink from '@/lib/models/PaymentLink';
-import { createPayment } from '@/lib/services/easykash';
+import {
+  createPayment,
+  getEasykashCashExpiryHours,
+} from '@/lib/services/easykash';
 import { convertCurrency } from '@/lib/services/currency';
 import { EASYKASH_CURRENCIES } from '@/lib/services/payment-link';
 
@@ -117,14 +120,18 @@ export async function GET(
         );
       }
 
+      const customerReference = `custom-${paymentLink._id}-${Date.now()}`;
+      const cashExpiryHours = getEasykashCashExpiryHours();
+
       const easykashResponse = await createPayment({
         amount: easykashAmount,
         currency: paymentCurrency,
         name: 'Payment Link Customer',
         email: 'payment-link@manasik.local',
         mobile: '+201000000000',
+        cashExpiry: cashExpiryHours,
         redirectUrl: `${baseUrl}/payment/status?status=pending&customPayment=1&amount=${encodeURIComponent(String(paymentLink.amountRequested))}&currency=${encodeURIComponent(paymentLink.currencyCode)}&gatewayAmount=${encodeURIComponent(String(easykashAmount))}&gatewayCurrency=${encodeURIComponent(paymentCurrency)}`,
-        customerReference: `custom-${paymentLink._id}`,
+        customerReference,
       });
 
       return NextResponse.redirect(easykashResponse.redirectUrl, {

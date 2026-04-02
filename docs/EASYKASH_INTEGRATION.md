@@ -1,369 +1,305 @@
-# EasyKash Direct Payment Integration (v1)
+# Pay API
 
-This document explains how **EasyKash Direct Payment API v1** is integrated into the **Ghadaq** platform, including payment flow, API endpoints, webhook verification, and order data handling.
+## Create direct pay link
 
----
+<mark style="color:green;">`POST`</mark> `https://back.easykash.net/api/directpayv1/pay`
 
-# 1. Overview
-
-EasyKash is the payment processor used by Ghadaq. The platform does **not** process card data directly. Instead:
-
-1. Customer creates an order on Ghadaq.
-2. Ghadaq requests a payment session from EasyKash.
-3. Customer is redirected to EasyKash hosted payment page.
-4. Customer completes payment.
-5. EasyKash sends a **server-to-server webhook** to confirm payment.
-6. Ghadaq updates the order status.
-7. Customer is redirected back to the payment status page.
-
----
-
-# 2. Environment Variables
-
-Add the following environment variables to your project:
-
-```env
-EASYKASH_API_KEY=your-easykash-api-key
-EASYKASH_HMAC_SECRET=your-easykash-hmac-secret
-EASYKASH_CASH_EXPIRY_HOURS=3
-EASYKASH_BASE_URL=https://back.easykash.net
-NEXT_PUBLIC_BASE_URL=https://www.ghadaqplus.com
-```
-
----
-
-# 3. Payment Flow
-
-```
-Customer fills checkout form
-        ↓
-POST /api/payment/checkout
-        ↓
-Create Order in MongoDB (status: pending)
-        ↓
-Call EasyKash /directpayv1/pay
-        ↓
-Receive redirectUrl
-        ↓
-Redirect customer to EasyKash hosted page
-        ↓
-Customer pays
-        ↓
-EasyKash redirects user to:
- /payment/status?orderNumber=XXX
-        ↓
-Frontend polls:
-/api/payment/status
-        ↓
-EasyKash sends webhook:
-/api/payment/webhook
-        ↓
-Verify HMAC signature
-        ↓
-Update order status to paid or partially-paid
-        ↓
-Store payment details
-        ↓
-Fire Facebook Conversions API Purchase event
-```
-
----
-
-# 4. EasyKash External APIs
-
-| Endpoint              | Method | Purpose                |
-| --------------------- | ------ | ---------------------- |
-| /api/directpayv1/pay  | POST   | Create payment session |
-| /api/cash-api/inquire | POST   | Check payment status   |
-
-Base URL:
-
-```
-https://back.easykash.net
-```
-
----
-
-# 5. Create Payment Request
-
-## Endpoint
-
-```
-POST https://back.easykash.net/api/directpayv1/pay
-```
+To get your api key, open your [Integration Settings](https://www.easykash.net/seller/cash-api) page
 
 ### Headers
 
-```http
-api-key: EASYKASH_API_KEY
-Content-Type: application/json
+| Name                                            | Type   | Description |
+| ----------------------------------------------- | ------ | ----------- |
+| authorization<mark style="color:red;">\*</mark> | String | API key     |
+
+#### Request Body
+
+| Name                                                | Type             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| amount<mark style="color:red;">\*</mark>            | number           | <p><strong>Base</strong> amount. Amount must be in the currency being sent and NOT in EGP.<br><br>Note: The end user will be charged in EGP (<strong>Total</strong> amount in currency sent \* Exchange Rate at the time of payment).<br><br><em>Deprecated process: </em><del><em>Amount MUST be in EGP and EasyKash will convert it to the provided currency</em></del></p>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| currency<mark style="color:red;">\*</mark>          | string           | <p>Available currency list: <br>EGP<br>USD<br>SAR<br>EUR<br>GBP<br>QAR<br>AED</p>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| paymentOptions                                      | array of numbers | <p>Note: the below payment options will ONLY appear if they are enabled to your business account.<br>Must be an array of numbers represents the payment option</p><p>Options: </p><p>1 (for Cash through AMAN)<br>2 (for Credit & Debit Card)<br>3 (for Qassatly)<br>4 (for Mobile Wallet)<br>5 (for Cash Through Fawry)<br>6 (for Meeza)<br>8 (for 6 Months - NBE installments)<br>9 (for 12 Months - NBE installments)<br>10 (for 18 Months - NBE installments)<br>17 (for ValU)<br>18 (for 6 months - Banque Misr installments)<br>19 (for 12 months - Banque Misr installments)<br>20 (for 18 months - Banque Misr installments)<br>21 (for Aman installments)<br>22 (for Souhoula)<br>23 (for Contact)<br>24 (for Mogo/MidTakseet)<br>25 (for Blnk)<br>26 (for 6 months installments - Multiple Banks)<br>27 (for 12 months installments - Multiple Banks)<br>28 (for 18 months installments - Multiple Banks)<br>29 (for Halan)<br>31 (for Apple Pay)<br>32 (for TRU)<br>33 (for Klivvr)<br>34 (for Forsa)</p> |
+| cashExpiry                                          | number           | <p>Must be a number (reflects time in hours i.e: 12 means 12 hours) </p><p>If not given, a default value of 3 will be taken</p>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| name<mark style="color:red;">\*</mark>              | string           | Buyer's name                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| email<mark style="color:red;">\*</mark>             | string           | Buyer's email                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| mobile<mark style="color:red;">\*</mark>            | string           | Buyer’s mobile number as string                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| redirectUrl<mark style="color:red;">\*</mark>       | string           | The link to redirect back to your website                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| customerReference<mark style="color:red;">\*</mark> | number           | Product's reference number of the Direct Pay customer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+
+#### **Request Body Example:**
+
+```
+{
+    "amount": 10,
+    "currency": "EGP",
+    "paymentOptions": [
+        2,
+        3,
+        4,
+        5,
+        6
+    ],
+    "cashExpiry": 3,
+    "name": "John Doe",
+    "email": "JohnDoe@example.com",
+    "mobile": "01010101010",
+    "redirectUrl": "https://www.yourshop.com/",
+    "customerReference": 123
+}
+
 ```
 
-### Request Body
+{% tabs %}
+{% tab title="200 Direct Pay link created successfully. User must be redirected to that link to be able to proceed with payment" %}
+
+```javascript
+{
+    "redirectUrl"="https://www.easykash.net/DirectPayV1/{productCode}"
+}
+```
+
+{% endtab %}
+{% endtabs %}
+
+**_The user must be redirected to the link received in the previous response to be able to proceed with payment._**
+
+#### Direct Payment Screen:
+
+![Direct Payment product payment options](https://598016363-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F6PoB6b79Xd7zFLs2dbxe%2Fuploads%2FtYXxj7JLNhgfsoFT1kzk%2Fdirect-pay-screenshot.png?alt=media&token=f1f45033-f7cd-48be-9611-f50c9f9295ff)
+
+After the buyer completes the payment on the Direct Payment screen above, EasyKash redirects them back to your website using the redirectUrl you initially sent in the first request.
+
+The redirect link will have additional parameters embedded to it representing the basic results of the payment. You can rely on them to display custom messages on your website. (For example, if the status returned in 'success', show a customized success page/message)
+
+For detailed payment information, use either the [Callback Service](https://easykash.gitbook.io/easykash-apis-documentation/callback-service) for automated callbacks from Easykash to your system, or the [Payment Inquiry](https://easykash.gitbook.io/easykash-apis-documentation/direct-payment-hosted/inquire-a-payment) service by inquirying about a payment.
+
+#### **Redirect Link example:**
+
+[https://www.yourshop.com/?status=NEW\&providerRefNum=2206290593680\&customerReference=721227](https://www.google.com/?status=NEW&providerRefNum=2206290593680&customerReference=721227)
+
+|                       |                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| **status**            | Status of the payment (‘success’, ‘pending’, or ‘failed’)                                   |
+| **providerRefNum**    | Payment Method provider reference number                                                    |
+| **customerReference** | The Provided customer Reference                                                             |
+| **voucher**           | Incase of Aman or Fawry payment option, Returning a Voucher Number for the customer to pay. |
+
+# Callback Service
+
+If you still haven't configured your Callback URL, head to your [Integration Settings](https://www.easykash.net/seller/cash-api) page and configure it ahead of this step.
+
+- Callback URL is the URL you’ll receive the details of transactions on such as status, reference number, etc. Make sure it’s a working URL on your end that will receive and process the payload once received.
+
+Request from Easykash (example)
 
 ```json
 {
-  "amount": 1500,
-  "currency": "EGP",
-  "paymentOptions": [2, 3, 4, 5, 6],
-  "cashExpiry": 24,
-  "name": "Customer Name",
-  "email": "customer@example.com",
-  "mobile": "+201234567890",
-  "redirectUrl": "https://www.ghadaqplus.com/payment/status?orderNumber=GHD-xxx",
-  "customerReference": "GHD-xxx"
+    "ProductCode": "CHQ4668",
+    "PaymentMethod": "Cash Through Fawry/Cash Through Aman/Credit & Debit Card/Mobile Wallet/Meeza/Qassatly/Cash Api",
+    "ProductType": "Physical Product/Invoice/Event/Quick Payment/Quick Cash/Subscription/Custom Payment/Quick Qassatly/Fawry Payout/Booking",
+    "Amount": "50.5",
+    "BuyerEmail": "johndoe@domain.com",
+    "BuyerMobile": "01010101010",
+    "BuyerName": "John Doe",
+    "Timestamp": "1626166791",
+    "status": "PAID",
+    "voucher": "32423432",
+    "easykashRef": "3242143421",
+    "VoucherData": "test",
+    "customerReference":"1232",
+    "signatureHash":"0bd9ce502950ffa358314c170dace42e7ba3e0c776f5a32eb15c3d496bc9c294835036dd90d4f287233b800c9bde2f6591b6b8a1f675b6bfe64fd799da29d1d0"
 }
 ```
 
-### Response
+|                       |                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ProductCode**       | Code of the product. It’s the last part of the URL of the product. E.g. "CHQ4668"                                                                                                                                                                                               |
+| **PaymentMethod**     | <p>Method of payment. </p><p>All possible outcomes: </p><ul><li>Cash Through Fawry</li><li>Cash Through Aman</li><li>Credit & Debit Card</li><li>Mobile Wallet</li><li>Meeza</li><li>Qassatly</li><li>Cash Api</li></ul>                                                        |
+| **ProductType**       | <p>Type of product being confirmed. </p><p>All possible outcomes:</p><ul><li>Physical Product</li><li>Invoice, Event</li><li>Quick Payment</li><li>Quick Cash</li><li>Subscription</li><li>Custom Payment</li><li>Quick Qassatly</li><li>Fawry Payout</li><li>Booking</li></ul> |
+| **Amount**            | Amount paid                                                                                                                                                                                                                                                                     |
+| **BuyerEmail**        | Email of the buyer                                                                                                                                                                                                                                                              |
+| **BuyerMobile**       | Number of the buyer                                                                                                                                                                                                                                                             |
+| **BuyerName**         | Name of the buyer                                                                                                                                                                                                                                                               |
+| **Timestamp**         | Timestamp of the callback sent. e.g."1626166791"                                                                                                                                                                                                                                |
+| **status**            | Status of the payment, always returns “PAID"                                                                                                                                                                                                                                    |
+| **voucher**           | Payment number that the buyer uses to pay (sent only if the payment method is Cash)                                                                                                                                                                                             |
+| **easykashRef**       | Reference number of the payment                                                                                                                                                                                                                                                 |
+| **VoucherData**       | Title of the payment                                                                                                                                                                                                                                                            |
+| **customerReference** | Your provided customer reference if provided                                                                                                                                                                                                                                    |
+| **signatureHash**     | The signature can be used to validate the response, making sure it's coming from Easykash side.                                                                                                                                                                                 |
+
+# Callback response verification
+
+## Prerequisites&#x20;
+
+HMAC secret key is needed for response verification, you can find it in your [Integration Settings](https://www.easykash.net/seller/cash-api) page
+
+### HMAC calculation&#x20;
+
+Whenever you receive a callback from Easykash, you will receive a value of the HMAC related to the data, HMAC value is **signatureHash** in response body .
+
+In order to calculate an HMAC similar to the one you received, prepare your endpoint to perform the following:
+
+1. Sort the data received by the following order .&#x20;
+
+```
+      ProductCode,
+      Amount,
+      ProductType,
+      PaymentMethod,
+      status,
+      easykashRef,
+      customerReference,
+
+```
+
+&#x20; 2\. Concatenate the **values of the keys/params** in one string&#x20;
+
+3. Calculate the hash of the concatenated string using **SHA512** and your **HMAC secret key , HEX** digest&#x20;
+4. Now compare both HMAC values, the one you received with the sent request and the one you calculated out of this request if both are equal you can safely use this data in your system.
+
+### Example :&#x20;
+
+payload example :&#x20;
+
+```
+{"ProductCode":"EDV4471","Amount":"11.00","ProductType":"Direct Pay","PaymentMethod":"Cash Through Fawry","BuyerName":"mee","BuyerEmail":"test@mail.com","BuyerMobile":"0123456789","status":"PAID","voucher":"","easykashRef":"2911105009","VoucherData":"Direct Pay","customerReference":"TEST11111","signatureHash":"0bd9ce502950ffa358314c170dace42e7ba3e0c776f5a32eb15c3d496bc9c294835036dd90d4f287233b800c9bde2f6591b6b8a1f675b6bfe64fd799da29d1d0"}
+```
+
+secret key example : da9fe30575517d987762a859842b5631&#x20;
+
+Concatenated data = `EDV447111.00Direct PayCash Through FawryPAID2911105009TEST11111`
+
+### Sample code :
+
+{% tabs %}
+{% tab title="Javascript" %}
+
+```javascript
+function verifyCallback(payload, secretKey) {
+  // Extract data from the payload
+  const {
+    ProductCode,
+    Amount,
+    ProductType,
+    PaymentMethod,
+    status,
+    easykashRef,
+    customerReference,
+    signatureHash,
+  } = payload;
+
+  // Prepare data for verification
+  const dataToSocure = [
+    ProductCode,
+    Amount,
+    ProductType,
+    PaymentMethod,
+    status,
+    easykashRef,
+    customerReference,
+  ];
+  const dataStr = dataToSocure.join('');
+
+  // Generate HMAC SHA-512 hash for verification
+  const calculatedSignature = crypto
+    .createHmac('sha512', secretKey)
+    .update(dataStr)
+    .digest('hex');
+
+  // Check if the calculated hash matches the received signatureHash
+  return calculatedSignature === signatureHash;
+}
+```
+
+{% endtab %}
+
+{% tab title="PHP" %}
+
+```php
+function verifyCallback($payload, $secretKey ) {
+    // Extract data from the payload
+    $productCode = $payload->ProductCode;
+    $amount = $payload->Amount;
+    $productType = $payload->ProductType;
+    $paymentMethod = $payload->PaymentMethod;
+    $status = $payload->status;
+    $easykashRef = $payload->easykashRef;
+    $customerReference = $payload->customerReference;
+    $signatureHash = $payload->signatureHash;
+
+    // Prepare data for verification
+    $dataToSecure = [
+        $productCode,
+        $amount,
+        $productType,
+        $paymentMethod,
+        $status,
+        $easykashRef,
+        $customerReference,
+    ];
+    $dataStr = implode('', $dataToSecure);
+
+    // Generate HMAC SHA-512 hash for verification
+    $calculatedSignature = hash_hmac('sha512', $dataStr,  $secretKey);
+    // Check if the calculated hash matches the received signatureHash
+    return $calculatedSignature === $signatureHash;
+}
+```
+
+{% endtab %}
+{% endtabs %}
+
+# Payment Inquiry
+
+## Inquire about specific transaction on Easykash&#x20;
+
+<mark style="color:green;">`POST`</mark> `https://back.easykash.net/api/cash-api/inquire`
+
+### Headers
+
+| Name                                            | Type   | Description |
+| ----------------------------------------------- | ------ | ----------- |
+| authorization<mark style="color:red;">\*</mark> | String | API key     |
+
+#### Request Body
+
+| Name                                                | Type   | Description                                           |
+| --------------------------------------------------- | ------ | ----------------------------------------------------- |
+| customerReference<mark style="color:red;">\*</mark> | String | Product's reference number of the Direct Pay customer |
+
+#### Request Example
 
 ```json
 {
-  "redirectUrl": "https://www.easykash.net/DirectPayV1/{productCode}"
+    "customerReference": "111"
 }
 ```
 
-You must **redirect the user** to this URL.
+#### Response
 
----
+|                   |                                                                                                                                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **PaymentMethod** | <p>Method of payment. </p><p>All possible outcomes: </p><ul><li>Cash Through Fawry</li><li>Cash Through Aman</li><li>Credit & Debit Card</li><li>Mobile Wallet</li><li>Meeza</li><li>Qassatly</li><li>Cash Api</li></ul> |
+| **Amount**        | Amount paid                                                                                                                                                                                                              |
+| **BuyerEmail**    | Email of the buyer                                                                                                                                                                                                       |
+| **BuyerMobile**   | Number of the buyer                                                                                                                                                                                                      |
+| **BuyerName**     | Name of the buyer                                                                                                                                                                                                        |
+| **status**        | <p>Status of the payment.</p><ul><li>DELIVERED</li><li>EXPIRED</li><li>FAILED</li><li>NEW</li><li>PAID</li><li>REFUNDED</li><li>CANCELED</li></ul>                                                                       |
+| **voucher**       | Payment number that the buyer uses to pay (sent only if the payment method is Cash)                                                                                                                                      |
+| **easykashRef**   | Reference number of the payment                                                                                                                                                                                          |
 
-# 6. Webhook Callback
-
-EasyKash sends a **POST** request to:
-
-```
-POST /api/payment/webhook
-```
-
-## Webhook Payload
+#### Response Example: <a href="#response-example" id="response-example"></a>
 
 ```json
 {
-  "ProductCode": "abc123",
-  "PaymentMethod": "Card",
-  "ProductType": "...",
-  "Amount": "1500",
-  "BuyerEmail": "customer@example.com",
-  "BuyerMobile": "+201234567890",
-  "BuyerName": "Customer Name",
-  "Timestamp": "2025-01-01T00:00:00Z",
-  "status": "PAID",
-  "voucher": "...",
-  "easykashRef": "ref123",
-  "VoucherData": "...",
-  "customerReference": "GHD-xxx",
-  "signatureHash": "abc123..."
+    "PaymentMethod": "Cash Through Fawry",
+    "Amount": "10.05",
+    "BuyerName": "John Doe",
+    "BuyerEmail": "JohnDoe@example.com",
+    "BuyerMobile": "01010101010",
+    "status": "PAID",
+    "voucher": "32423432",
+    "easykashRef": "1206102054"
 }
 ```
-
----
-
-# 7. HMAC Signature Verification (IMPORTANT)
-
-To verify that the request is from EasyKash:
-
-## Step 1 — Concatenate fields in this exact order:
-
-```
-ProductCode + Amount + ProductType + PaymentMethod + status + easykashRef + customerReference
-```
-
-### Step 2 — Generate HMAC SHA-512 using:
-
-```
-EASYKASH_HMAC_SECRET
-```
-
-### Step 3 — Compare result with:
-
-```
-signatureHash
-```
-
-If the signature **does not match**, reject the webhook.
-
----
-
-# 8. Payment Status Values
-
-| EasyKash Status | Meaning             | Action                                                         |
-| --------------- | ------------------- | -------------------------------------------------------------- |
-| PAID            | Payment successful  | Mark order as paid or partially-paid based on remaining amount |
-| PENDING         | Waiting for payment | Keep pending                                                   |
-| EXPIRED         | Cash expired        | Mark failed                                                    |
-| FAILED          | Payment failed      | Mark failed                                                    |
-
----
-
-# 9. Payment Method Mapping
-
-| EasyKash Value | Stored Value |
-| -------------- | ------------ |
-| Card           | card         |
-| Wallet         | wallet       |
-| Fawry          | fawry        |
-| Meeza          | meeza        |
-| Valu           | valu         |
-| Other          | other        |
-
-Example implementation:
-
-```ts
-function mapPaymentMethod(method: string) {
-  const m = method.toLowerCase();
-  if (m.includes("card")) return "card";
-  if (m.includes("wallet")) return "wallet";
-  if (m.includes("fawry")) return "fawry";
-  if (m.includes("meeza")) return "meeza";
-  if (m.includes("valu")) return "valu";
-  return "other";
-}
-```
-
----
-
-# 10. Order Fields Stored (EasyKash)
-
-These fields should be stored in the order document:
-
-| Field               | Description                 |
-| ------------------- | --------------------------- |
-| easykashRef         | EasyKash reference          |
-| easykashProductCode | Product code                |
-| easykashVoucher     | Voucher                     |
-| easykashResponse    | Full webhook payload        |
-| paymentMethod       | card / wallet / fawry / etc |
-| paidAt              | Payment timestamp           |
-
----
-
-# 11. App API Routes
-
-| Route                      | Method | Description            |
-| -------------------------- | ------ | ---------------------- |
-| /api/payment/checkout      | POST   | Create order + payment |
-| /api/payment/webhook       | POST   | EasyKash webhook       |
-| /api/payment/status        | GET    | Get order status       |
-| /api/payment/referral-info | GET    | Referral info          |
-
----
-
-# 12. Payment Status Polling
-
-After redirect:
-
-```
-/payment/status?orderNumber=GHD-xxx
-```
-
-Frontend should poll every **5–10 seconds**:
-
-```
-GET /api/payment/status?orderNumber=GHD-xxx
-```
-
-Response:
-
-```json
-{
-  "status": "pending | completed | failed",
-  "paymentMethod": "card",
-  "amount": 1500
-}
-```
-
-Stop polling when status != pending.
-
----
-
-# 13. Inquiry API (Fail-Safe)
-
-If webhook fails, use inquiry API:
-
-## Request
-
-```
-POST https://back.easykash.net/api/cash-api/inquire
-```
-
-```json
-{
-  "customerReference": "GHD-xxx"
-}
-```
-
-Use this in:
-
-- Cron job
-- Manual admin check
-- Payment reconciliation script
-
----
-
-# 14. Security Best Practices
-
-- Always verify **HMAC signature**
-- Never trust redirect alone — trust **webhook**
-- Webhook must be **idempotent**
-- Do not mark order as paid without webhook
-- Log full webhook response
-- Use HTTPS only
-- Restrict webhook route to POST only
-
----
-
-# 15. Failure Handling
-
-| Scenario                 | Action                   |
-| ------------------------ | ------------------------ |
-| User closes payment page | Order remains pending    |
-| Webhook delayed          | Status polling continues |
-| Webhook fails            | Use Inquiry API          |
-| Payment expired          | Mark failed              |
-| Duplicate webhook        | Ignore (idempotent)      |
-
-Notes:
-
-- Keep local payment-link expiry aligned with `cashExpiry` sent to EasyKash.
-- For partial checkout orders, first successful payment sets order to `partially-paid`; remaining payment success sets order to `paid`.
-
----
-
-# 16. Key Files
-
-| File                              | Description         |
-| --------------------------------- | ------------------- |
-| lib/easykash.ts                   | EasyKash API client |
-| app/api/payment/checkout/route.ts | Checkout endpoint   |
-| app/api/payment/webhook/route.ts  | Webhook handler     |
-| app/api/payment/status/route.ts   | Status lookup       |
-| app/payment/status/page.tsx       | Payment status UI   |
-
----
-
-# 17. Summary Flow Diagram
-
-```
-User → Ghadaq → EasyKash → User
-                ↓
-             Webhook
-                ↓
-              Ghadaq
-                ↓
-            Update Order
-```
-
----
-
-# 18. Testing Checklist
-
-- [ ] Payment created successfully
-- [ ] Redirect works
-- [ ] Webhook received
-- [ ] HMAC verified
-- [ ] Order marked completed
-- [ ] Payment method saved
-- [ ] FB Purchase event fired
-- [ ] Status page updates
-- [ ] Inquiry API works
-- [ ] Duplicate webhook handled

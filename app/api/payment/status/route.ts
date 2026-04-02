@@ -7,6 +7,8 @@ import { mapEasykashStatusToOrderStatus } from '@/lib/services/easykash';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 const ORDER_REF_REGEX = /^ord_([a-f\d]{24})_[a-f\d]{24}_\d+$/i;
+const ORDER_NUMBER_REGEX = /^[a-z]{3}-\d{6}-\d{5}$/i;
+const ORDER_NUMBER_ATTEMPT_REGEX = /^([a-z]{3}-\d{6}-\d{5})-[p]\d+$/i;
 
 function getOrderIdFromReference(
   customerReference: string | null,
@@ -20,6 +22,24 @@ function getOrderIdFromReference(
   const prefixedMatch = customerReference.match(ORDER_REF_REGEX);
   if (prefixedMatch) {
     return prefixedMatch[1];
+  }
+
+  return null;
+}
+
+function normalizeOrderNumber(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (ORDER_NUMBER_REGEX.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
+
+  const attemptMatch = trimmed.match(ORDER_NUMBER_ATTEMPT_REGEX);
+  if (attemptMatch) {
+    return attemptMatch[1].toUpperCase();
   }
 
   return null;
@@ -48,7 +68,8 @@ function hasPaidPayments(
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const orderNumber = request.nextUrl.searchParams.get('orderNumber');
+    const orderNumberParam = request.nextUrl.searchParams.get('orderNumber');
+    const orderNumber = normalizeOrderNumber(orderNumberParam);
     const customerReference =
       request.nextUrl.searchParams.get('customerReference');
     const gatewayStatus = request.nextUrl.searchParams.get('status');
@@ -65,7 +86,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let order = orderNumber ? await Order.findOne({ orderNumber }) : null;
+    let order = orderNumber
+      ? await Order.findOne({ orderNumber }).sort({ createdAt: -1 })
+      : null;
 
     if (!order && customerReference) {
       const resolvedOrderId = getOrderIdFromReference(customerReference);
@@ -74,7 +97,19 @@ export async function GET(request: NextRequest) {
       }
 
       if (!order) {
-        order = await Order.findOne({ orderNumber: customerReference });
+        const orderNumberFromReference =
+          normalizeOrderNumber(customerReference);
+        if (orderNumberFromReference) {
+          order = await Order.findOne({ orderNumber: orderNumberFromReference })
+            .sort({ createdAt: -1 })
+            .exec();
+        }
+      }
+
+      if (!order) {
+        order = await Order.findOne({ orderNumber: customerReference })
+          .sort({ createdAt: -1 })
+          .exec();
       }
     }
 
@@ -89,10 +124,12 @@ export async function GET(request: NextRequest) {
     // This protects the user flow when webhook delivery is delayed or unavailable.
     if (gatewayStatus) {
       const resolvedOrderId = getOrderIdFromReference(customerReference);
+      const resolvedOrderNumber = normalizeOrderNumber(customerReference);
       const matchesCustomerReference =
         !customerReference ||
         customerReference === order._id?.toString() ||
         customerReference === order.orderNumber ||
+        resolvedOrderNumber === order.orderNumber ||
         resolvedOrderId === order._id?.toString();
 
       if (matchesCustomerReference) {
@@ -220,15 +257,15 @@ export async function GET(request: NextRequest) {
         items,
         billingData: orderObj.billingData,
         couponCode: orderObj.couponCode || null,
-        couponDiscount: orderObj.couponDiscount || 0,
-        isPartialPayment: orderObj.isPartialPayment || false,
-        fullAmount: orderObj.fullAmount || orderObj.totalAmount,
-        paidAmount: orderObj.paidAmount || orderObj.totalAmount,
-        remainingAmount: orderObj.remainingAmount || 0,
+        couponDiscount: orderObj.couponDiscount ?? 0,
+        isPartialPayment: orderObj.isPartialPayment ?? false,
+        fullAmount: orderObj.fullAmount ?? orderObj.totalAmount,
+        paidAmount: orderObj.paidAmount ?? 0,
+        remainingAmount: orderObj.remainingAmount ?? 0,
         reservationData: orderObj.reservationData || [],
         referralId: orderObj.referralId || null,
         sizeIndex: orderObj.sizeIndex ?? 0,
-        source: orderObj.source || 'manasik',
+        source: orderObj.source ?? 'manasik',
         referralInfo,
         createdAt: orderObj.createdAt,
       },

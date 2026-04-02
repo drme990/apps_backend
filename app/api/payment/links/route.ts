@@ -222,13 +222,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Check for existing valid pending payment
-    const now_ms = Date.now();
+    const nowMs = Date.now();
     const existingValidPayment = (order.payments ?? [])
       .filter(
         (p: { status: string; expiresAt?: Date; redirectUrl?: string }) =>
           p.status === 'pending' &&
           p.expiresAt &&
-          new Date(p.expiresAt).getTime() > now_ms,
+          new Date(p.expiresAt).getTime() > nowMs,
       )
       .sort((a, b) => {
         const aTime = new Date(a.createdAt || 0).getTime();
@@ -335,7 +335,6 @@ export async function POST(request: NextRequest) {
 
     const EASYKASH_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'];
     if (!EASYKASH_CURRENCIES.includes(order.currency)) {
-      // For currencies not supported by EasyKash, return error
       return NextResponse.json(
         {
           success: false,
@@ -417,7 +416,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Add new payment to payments array
     const newPayment = {
       paymentId,
       easykashOrderId,
@@ -434,14 +432,13 @@ export async function POST(request: NextRequest) {
     }
     order.payments.push(newPayment);
 
-    // Add attempt record
     if (!order.paymentAttempts) {
       order.paymentAttempts = [];
     }
     order.paymentAttempts.push({
       createdAt: new Date(),
       ip,
-      userId: undefined, // Could be set if user is authenticated
+      userId: undefined,
     });
 
     await order.save();
