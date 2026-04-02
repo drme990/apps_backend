@@ -43,6 +43,16 @@ function generatePaymentId(): string {
   return `pay_${randomBytes(12).toString('hex')}`;
 }
 
+function isCustomerReferenceAlreadyUsedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('customerreference') &&
+    (message.includes('already used') || message.includes('already exists'))
+  );
+}
+
 function getPaymentAttemptNumber(order: { payments?: unknown[] }): number {
   return (order.payments?.length ?? 0) + 1;
 }
@@ -750,23 +760,58 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate payment ids and easykashOrderId before calling createPayment
-    const paymentAttemptNum = getPaymentAttemptNumber(order);
-    const easykashOrderId = `${order.orderNumber}-P${paymentAttemptNum}`;
+    const initialPaymentAttemptNum = getPaymentAttemptNumber(order);
     const paymentId = generatePaymentId();
 
     const cashExpiryHours = getEasykashCashExpiryHours();
-    let easykashResponse: Awaited<ReturnType<typeof createPayment>>;
+    let easykashResponse: Awaited<ReturnType<typeof createPayment>> | null =
+      null;
+    let easykashOrderId: string | null = null;
+
+    const existingReferences = new Set(
+      (order.payments ?? []).map((payment) => payment.easykashOrderId),
+    );
+    let paymentAttemptNum = initialPaymentAttemptNum;
+    const maxReferenceRetries = 5;
+
     try {
-      easykashResponse = await createPayment({
-        amount: easykashAmount,
-        currency: paymentCurrency,
-        name: billingData.fullName,
-        email: billingData.email,
-        mobile: billingData.phone,
-        cashExpiry: cashExpiryHours,
-        redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
-        customerReference: easykashOrderId,
-      });
+      for (let attempt = 0; attempt < maxReferenceRetries; attempt += 1) {
+        let candidateReference = `${order.orderNumber}-P${paymentAttemptNum}`;
+        while (existingReferences.has(candidateReference)) {
+          paymentAttemptNum += 1;
+          candidateReference = `${order.orderNumber}-P${paymentAttemptNum}`;
+        }
+
+        try {
+          easykashResponse = await createPayment({
+            amount: easykashAmount,
+            currency: paymentCurrency,
+            name: billingData.fullName,
+            email: billingData.email,
+            mobile: billingData.phone,
+            cashExpiry: cashExpiryHours,
+            redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
+            customerReference: candidateReference,
+          });
+
+          easykashOrderId = candidateReference;
+          break;
+        } catch (gatewayError) {
+          if (isCustomerReferenceAlreadyUsedError(gatewayError)) {
+            existingReferences.add(candidateReference);
+            paymentAttemptNum += 1;
+            continue;
+          }
+
+          throw gatewayError;
+        }
+      }
+
+      if (!easykashResponse || !easykashOrderId) {
+        throw new Error(
+          'Unable to allocate a unique EasyKash customerReference',
+        );
+      }
     } catch (easykashError) {
       // Clean up the orphaned order so it doesn't block future attempts
       await Order.findByIdAndDelete(order._id);
@@ -774,7 +819,12 @@ export async function POST(request: NextRequest) {
         service: 'Checkout',
         operation: 'createPayment_EasyKash',
         severity: 'high',
-        metadata: { easykashOrderId, orderNumber: order.orderNumber },
+        metadata: {
+          easykashOrderId:
+            easykashOrderId ||
+            `${order.orderNumber}-P${initialPaymentAttemptNum}`,
+          orderNumber: order.orderNumber,
+        },
       });
       return NextResponse.json(
         { success: false, error: 'Payment gateway error. Please try again.' },
