@@ -666,34 +666,34 @@ export async function POST(request: NextRequest) {
       paymentAttempts: [],
     };
 
-    let order: Awaited<ReturnType<typeof Order.create>> | null = null;
     const maxOrderCreateRetries = 3;
 
-    for (let attempt = 1; attempt <= maxOrderCreateRetries; attempt += 1) {
-      try {
-        order = await Order.create(orderPayload);
-        break;
-      } catch (orderCreateError) {
-        if (
-          isDuplicateOrderNumberError(orderCreateError) &&
-          attempt < maxOrderCreateRetries
-        ) {
-          log('warn', 'checkout.order_number_collision_retry', {
-            ip,
-            traceId,
-            source: orderSource,
-            attempt,
-          });
-          continue;
+    const createOrderWithRetries = async () => {
+      for (let attempt = 1; attempt <= maxOrderCreateRetries; attempt += 1) {
+        try {
+          return await Order.create(orderPayload);
+        } catch (orderCreateError) {
+          if (
+            isDuplicateOrderNumberError(orderCreateError) &&
+            attempt < maxOrderCreateRetries
+          ) {
+            log('warn', 'checkout.order_number_collision_retry', {
+              ip,
+              traceId,
+              source: orderSource,
+              attempt,
+            });
+            continue;
+          }
+
+          throw orderCreateError;
         }
-
-        throw orderCreateError;
       }
-    }
 
-    if (!order) {
       throw new Error('Failed to create order after retrying order number');
-    }
+    };
+
+    const order = await createOrderWithRetries();
 
     await releasePartialPaymentLock(partialPaymentLock);
     partialPaymentLock = null;
