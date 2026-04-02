@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAdminPageAccess } from '@/lib/auth';
+import { requireAdminPageAccess, requireAuth } from '@/lib/auth';
 import Country from '@/lib/models/Country';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -9,10 +9,15 @@ import { countryCreateSchema } from '@/lib/validation/schemas';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('countries');
+    const activeOnly = request.nextUrl.searchParams.get('active') !== 'false';
+
+    // Active country list powers several dropdowns (payments/products editors).
+    // Any authenticated admin can read it, while full countries management remains permission-gated.
+    const auth = activeOnly
+      ? await requireAuth()
+      : await requireAdminPageAccess('countries');
     if ('error' in auth) return auth.error;
 
-    const activeOnly = request.nextUrl.searchParams.get('active') !== 'false';
     const query = activeOnly ? { isActive: true } : {};
     const countries = await Country.find(query)
       .sort({ sortOrder: 1, 'name.ar': 1 })
