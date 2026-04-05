@@ -7,6 +7,10 @@ import {
   verifyCallbackSignature,
   type EasykashCallbackPayload,
 } from '@/lib/services/easykash';
+import {
+  calculateOrderFinancials,
+  getPaymentOrderAmount,
+} from '@/lib/services/order-financials';
 import { trackPurchase } from '@/lib/services/fb-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import WebhookEvent from '@/lib/models/WebhookEvent';
@@ -19,6 +23,27 @@ const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 const ORDER_REFERENCE_REGEX = /^ord_([a-f\d]{24})_([a-f\d]{24})_\d+$/i;
 const CUSTOM_REFERENCE_REGEX = /^custom-([a-f\d]{24})(?:[-_]\d+)?$/i;
 const ORDER_ATTEMPT_SUFFIX_REGEX = /-p\d+$/i;
+
+function isTruthyFlag(value?: string | null): boolean {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
+function shouldBypassSignatureValidationForTesting(
+  request: NextRequest,
+): boolean {
+  if (!isTruthyFlag(process.env.EASYKASH_WEBHOOK_TEST_MODE)) {
+    return false;
+  }
+
+  // Require an explicit request-level toggle so test bypass is intentional.
+  return (
+    isTruthyFlag(request.headers.get('x-easykash-test-mode')) ||
+    isTruthyFlag(request.nextUrl.searchParams.get('testMode'))
+  );
+}
 
 type ParsedPaymentReference =
   | {
@@ -74,35 +99,20 @@ function mapPaymentMethod(
   return 'other';
 }
 
-function calculateFinancials(order: {
-  fullAmount?: number;
-  totalAmount?: number;
-  payments?: Array<{ status?: string; amount?: number }>;
-}) {
-  const fullAmount = order.fullAmount ?? order.totalAmount ?? 0;
-  const totalPaid = (order.payments || []).reduce((sum, payment) => {
-    if (payment.status === 'paid') {
-      return sum + Number(payment.amount || 0);
-    }
-    return sum;
-  }, 0);
-
-  return {
-    fullAmount,
-    totalPaid,
-    remainingAmount: Math.max(0, fullAmount - totalPaid),
-  };
-}
-
 function createSyntheticPayment(
   reference: string,
-  amount: number,
+  orderAmount: number,
   currency: string,
+  gatewayAmount?: number,
+  gatewayCurrency?: string,
 ): IPayment {
   return {
     paymentId: `pay_webhook_${randomBytes(8).toString('hex')}`,
     easykashOrderId: reference,
-    amount,
+    orderAmount,
+    gatewayAmount,
+    gatewayCurrency,
+    amount: orderAmount,
     currency,
     status: 'pending',
     createdAt: new Date(),
@@ -153,39 +163,49 @@ export async function POST(request: NextRequest) {
       body.signatureHash = providedSignature.trim();
     }
 
-    // Signature verification is mandatory in production environments.
-    if (!process.env.EASYKASH_HMAC_SECRET) {
-      auditPayload.validationStage = 'missing_hmac_secret';
-      auditPayload.result = 'rejected';
-      auditPayload.responseStatus = 503;
-      console.error(
-        'EasyKash webhook rejected: EASYKASH_HMAC_SECRET is not configured',
-      );
-      // In development, we might not have it, but for prod we should. Let's not block completely if the secret isn't there, just log.
-      // Wait, original code returns 503 here. I'll keep it.
-      return NextResponse.json(
-        { error: 'Webhook signature verification is not configured' },
-        { status: 503 },
-      );
-    }
+    const bypassSignatureValidation =
+      shouldBypassSignatureValidationForTesting(request);
+    auditPayload.signatureValidationMode = bypassSignatureValidation
+      ? 'bypassed_for_test'
+      : 'strict';
 
-    if (!body.signatureHash) {
-      auditPayload.validationStage = 'missing_signature';
+    if (bypassSignatureValidation) {
       console.warn(
-        'EasyKash webhook: Missing signatureHash in payload or headers. Bypassing signature check since EasyKash sometimes omits it on pending/cancel.',
+        'EasyKash webhook signature validation bypassed for test mode',
       );
     } else {
-      const isValid = verifyCallbackSignature(body);
-
-      if (!isValid) {
-        auditPayload.validationStage = 'invalid_signature';
+      // Signature verification is mandatory unless test bypass mode is enabled.
+      if (!process.env.EASYKASH_HMAC_SECRET) {
+        auditPayload.validationStage = 'missing_hmac_secret';
         auditPayload.result = 'rejected';
-        auditPayload.responseStatus = 403;
-        console.error('EasyKash webhook: invalid signature');
-        return NextResponse.json(
-          { error: 'Invalid signature' },
-          { status: 403 },
+        auditPayload.responseStatus = 503;
+        console.error(
+          'EasyKash webhook rejected: EASYKASH_HMAC_SECRET is not configured',
         );
+        return NextResponse.json(
+          { error: 'Webhook signature verification is not configured' },
+          { status: 503 },
+        );
+      }
+
+      if (!body.signatureHash) {
+        auditPayload.validationStage = 'missing_signature';
+        console.warn(
+          'EasyKash webhook: Missing signatureHash in payload or headers. Bypassing signature check since EasyKash sometimes omits it on pending/cancel.',
+        );
+      } else {
+        const isValid = verifyCallbackSignature(body);
+
+        if (!isValid) {
+          auditPayload.validationStage = 'invalid_signature';
+          auditPayload.result = 'rejected';
+          auditPayload.responseStatus = 403;
+          console.error('EasyKash webhook: invalid signature');
+          return NextResponse.json(
+            { error: 'Invalid signature' },
+            { status: 403 },
+          );
+        }
       }
     }
 
@@ -330,7 +350,12 @@ export async function POST(request: NextRequest) {
 
     if (!paymentRecord && isSuccessfulPayment) {
       const fallbackAmount = hasWebhookAmount
-        ? webhookAmount
+        ? Number(
+            linkedPaymentLink?.amountRequested ||
+              order.remainingAmount ||
+              order.totalAmount ||
+              0,
+          )
         : Number(
             linkedPaymentLink?.amountRequested ||
               order.remainingAmount ||
@@ -338,8 +363,8 @@ export async function POST(request: NextRequest) {
               0,
           );
       const fallbackCurrency = (
-        linkedPaymentLink?.currencyCode ||
         order.currency ||
+        linkedPaymentLink?.currencyCode ||
         'EGP'
       )
         .toUpperCase()
@@ -353,31 +378,37 @@ export async function POST(request: NextRequest) {
         customerRefStr,
         fallbackAmount,
         fallbackCurrency,
+        hasWebhookAmount ? webhookAmount : undefined,
+        hasWebhookAmount ? 'EGP' : undefined,
       );
       order.payments.push(syntheticPayment);
       paymentRecord = order.payments[order.payments.length - 1];
       auditPayload.syntheticPaymentCreated = true;
     }
 
-    const expectedAmount = Number(
-      paymentRecord?.amount ||
+    const expectedGatewayAmount = Number(paymentRecord?.gatewayAmount || 0);
+    const expectedOrderAmount = Number(
+      paymentRecord?.orderAmount ||
+        paymentRecord?.amount ||
         linkedPaymentLink?.amountRequested ||
         order.totalAmount ||
         0,
     );
+    const expectedAmountForWarning =
+      expectedGatewayAmount > 0 ? expectedGatewayAmount : expectedOrderAmount;
 
     if (
       hasWebhookAmount &&
-      expectedAmount > 0 &&
-      Math.abs(webhookAmount - expectedAmount) > 1
+      expectedAmountForWarning > 0 &&
+      Math.abs(webhookAmount - expectedAmountForWarning) > 1
     ) {
       console.error(
-        `Amount mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmount}`,
+        `Amount mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmountForWarning}`,
       );
 
       auditPayload.amountWarning = {
         webhookAmount,
-        expectedAmount,
+        expectedAmount: expectedAmountForWarning,
       };
 
       // Do not reject signed paid callbacks due to amount drift.
@@ -389,6 +420,26 @@ export async function POST(request: NextRequest) {
 
     if (isSuccessfulPayment) {
       if (paymentRecord) {
+        const normalizedOrderAmount = getPaymentOrderAmount(
+          order,
+          paymentRecord,
+        );
+        if (normalizedOrderAmount > 0) {
+          paymentRecord.orderAmount = normalizedOrderAmount;
+        }
+
+        if (hasWebhookAmount) {
+          paymentRecord.gatewayAmount = webhookAmount;
+          paymentRecord.gatewayCurrency =
+            paymentRecord.gatewayCurrency ||
+            (paymentRecord.currency &&
+            paymentRecord.currency.toUpperCase() !==
+              String(order.currency || '').toUpperCase()
+              ? paymentRecord.currency.toUpperCase()
+              : undefined) ||
+            undefined;
+        }
+
         paymentRecord.status = 'paid';
         paymentRecord.paidAt = new Date();
         paymentRecord.paymentMethod = resolvedMethod;
@@ -416,10 +467,10 @@ export async function POST(request: NextRequest) {
       if (voucher) order.easykashVoucher = voucher;
       order.paymentMethod = resolvedMethod;
 
-      const { totalPaid, remainingAmount } = calculateFinancials(order);
+      const { totalPaid, remainingAmount } = calculateOrderFinancials(order);
       order.paidAmount = totalPaid;
       order.remainingAmount = remainingAmount;
-      order.status = remainingAmount <= 0 ? 'paid' : 'processing';
+      order.status = remainingAmount <= 0 ? 'paid' : 'partial-paid';
     } else if (
       normalizedStatus === 'FAILED' ||
       normalizedStatus === 'EXPIRED' ||
@@ -432,13 +483,15 @@ export async function POST(request: NextRequest) {
           normalizedStatus === 'EXPIRED' ? 'expired' : 'failed';
       }
 
-      const { totalPaid, remainingAmount } = calculateFinancials(order);
+      const { totalPaid, remainingAmount } = calculateOrderFinancials(order);
       order.paidAmount = totalPaid;
       order.remainingAmount = remainingAmount;
 
       if (
         totalPaid <= 0 &&
-        (order.status === 'pending' || order.status === 'processing')
+        (order.status === 'pending' ||
+          order.status === 'processing' ||
+          order.status === 'partial-paid')
       ) {
         order.status = 'failed';
       } else if (
@@ -446,7 +499,7 @@ export async function POST(request: NextRequest) {
         order.status !== 'paid' &&
         order.status !== 'completed'
       ) {
-        order.status = 'processing';
+        order.status = 'partial-paid';
       }
     } else if (normalizedStatus === 'REFUNDED') {
       if (paymentRecord) paymentRecord.status = 'expired';
@@ -461,7 +514,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (order.status !== 'paid' && order.status !== 'completed') {
-        order.status = hasPaidPayment ? 'processing' : 'pending';
+        order.status = hasPaidPayment ? 'partial-paid' : 'pending';
       }
     }
 

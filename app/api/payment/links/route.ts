@@ -7,6 +7,11 @@ import {
   inquirePayment,
   mapEasykashStatusToOrderStatus,
 } from '@/lib/services/easykash';
+import { convertCurrency } from '@/lib/services/currency';
+import {
+  calculateOrderFinancials,
+  getPaymentOrderAmount,
+} from '@/lib/services/order-financials';
 import { getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -76,9 +81,12 @@ function getInitialAttemptNumber(
 }
 
 function getInitialPaymentAmount(order: {
+  currency?: string;
   totalAmount?: number;
   payments?: Array<{
     amount?: number;
+    currency?: string;
+    orderAmount?: number;
     easykashOrderId?: string;
     createdAt?: Date;
   }>;
@@ -91,9 +99,12 @@ function getInitialPaymentAmount(order: {
       return aTime - bTime;
     });
 
-  const initialAmount = initialAttempts[0]?.amount;
-  if (typeof initialAmount === 'number' && initialAmount > 0) {
-    return initialAmount;
+  const initialPayment = initialAttempts[0];
+  if (initialPayment) {
+    const initialAmount = getPaymentOrderAmount(order, initialPayment);
+    if (initialAmount > 0) {
+      return initialAmount;
+    }
   }
 
   return order.totalAmount ?? 0;
@@ -101,26 +112,6 @@ function getInitialPaymentAmount(order: {
 
 function normalizeStoredRedirectUrl(url: string): string {
   return url.replace('://easykash.net//', '://easykash.net/');
-}
-
-function calculateOrderFinancials(order: {
-  fullAmount?: number;
-  totalAmount?: number;
-  payments?: Array<{ status?: string; amount?: number }>;
-}) {
-  const fullAmount = order.fullAmount ?? order.totalAmount ?? 0;
-  const totalPaid = (order.payments ?? []).reduce((sum, payment) => {
-    if (payment.status === 'paid') {
-      return sum + (payment.amount ?? 0);
-    }
-    return sum;
-  }, 0);
-
-  return {
-    fullAmount,
-    totalPaid,
-    remainingAmount: Math.max(0, fullAmount - totalPaid),
-  };
 }
 
 export async function POST(request: NextRequest) {
@@ -147,14 +138,30 @@ export async function POST(request: NextRequest) {
 
     let { totalPaid, remainingAmount } = calculateOrderFinancials(order);
     const hasPaidPayment = totalPaid > 0;
+    const targetStatusForBalance =
+      remainingAmount > 0 && hasPaidPayment
+        ? 'partial-paid'
+        : remainingAmount <= 0
+          ? 'paid'
+          : null;
+    const shouldSyncStatus =
+      targetStatusForBalance !== null &&
+      order.status !== 'completed' &&
+      order.status !== targetStatusForBalance;
 
     // Keep stored financial fields in sync with actual paid payment records.
     if (
       (order.paidAmount ?? 0) !== totalPaid ||
-      (order.remainingAmount ?? 0) !== remainingAmount
+      (order.remainingAmount ?? 0) !== remainingAmount ||
+      shouldSyncStatus
     ) {
       order.paidAmount = totalPaid;
       order.remainingAmount = remainingAmount;
+
+      if (shouldSyncStatus && targetStatusForBalance) {
+        order.status = targetStatusForBalance;
+      }
+
       await order.save();
     }
 
@@ -280,7 +287,7 @@ export async function POST(request: NextRequest) {
         if (remainingAmount <= 0) {
           order.status = 'paid';
         } else if (totalPaid > 0) {
-          order.status = 'processing';
+          order.status = 'partial-paid';
         }
         await order.save();
 
@@ -328,20 +335,22 @@ export async function POST(request: NextRequest) {
     const baseUrl =
       sourceBaseUrls[order.source || 'manasik'] || sourceBaseUrls.manasik;
 
-    const easykashAmount = hasPaidPayment
+    const orderPaymentAmount = hasPaidPayment
       ? remainingAmount
       : getInitialPaymentAmount(order);
-    const paymentCurrency = order.currency;
+
+    let easykashAmount = Math.ceil(orderPaymentAmount);
+    let paymentCurrency = (order.currency || 'EGP').toUpperCase().trim();
 
     const EASYKASH_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'];
-    if (!EASYKASH_CURRENCIES.includes(order.currency)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Remaining balance currency (${order.currency}) is not supported for payment links`,
-        },
-        { status: 400 },
+    if (!EASYKASH_CURRENCIES.includes(paymentCurrency)) {
+      const convertedAmount = await convertCurrency(
+        orderPaymentAmount,
+        paymentCurrency,
+        'EGP',
       );
+      easykashAmount = Math.ceil(convertedAmount);
+      paymentCurrency = 'EGP';
     }
 
     if (easykashAmount <= 1) {
@@ -419,8 +428,11 @@ export async function POST(request: NextRequest) {
     const newPayment = {
       paymentId,
       easykashOrderId,
-      amount: easykashAmount,
-      currency: paymentCurrency,
+      orderAmount: orderPaymentAmount,
+      gatewayAmount: easykashAmount,
+      gatewayCurrency: paymentCurrency,
+      amount: orderPaymentAmount,
+      currency: (order.currency || 'EGP').toUpperCase().trim(),
       status: 'pending' as const,
       redirectUrl: easykashResponse.redirectUrl,
       expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),

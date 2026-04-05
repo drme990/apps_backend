@@ -279,6 +279,7 @@ export async function GET(request: Request) {
     const statusOrder = [
       'pending',
       'processing',
+      'partial-paid',
       'paid',
       'completed',
       'failed',

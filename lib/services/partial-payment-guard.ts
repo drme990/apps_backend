@@ -10,6 +10,7 @@ const DEFAULT_LOCK_TTL_MS = 20_000;
 export const BLOCKING_PARTIAL_PAYMENT_STATUSES: ReadonlyArray<OrderStatus> = [
   'pending',
   'processing',
+  'partial-paid',
 ];
 
 export const ALLOWED_PARTIAL_PAYMENT_STATUSES: ReadonlyArray<OrderStatus> = [

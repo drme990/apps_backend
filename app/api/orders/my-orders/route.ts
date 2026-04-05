@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/db';
 import { getAuthUser } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import { getEasykashCashExpiryHours } from '@/lib/services/easykash';
+import { calculateOrderFinancials } from '@/lib/services/order-financials';
 
 export async function GET() {
   try {
@@ -44,28 +45,17 @@ export async function GET() {
         const productName =
           firstItem?.productName?.en || firstItem?.productName?.ar || 'N/A';
 
-        const fullAmount = order.fullAmount || order.totalAmount || 0;
+        const { fullAmount, totalPaid, remainingAmount } =
+          calculateOrderFinancials(order);
         const hasPaymentRecords =
           Array.isArray(order.payments) && order.payments.length > 0;
-        const paidFromPayments = (order.payments || []).reduce(
-          (sum, payment) => {
-            if (payment.status === 'paid') {
-              return sum + (payment.amount || 0);
-            }
-            return sum;
-          },
-          0,
-        );
 
         const paidAmount = hasPaymentRecords
-          ? paidFromPayments
+          ? totalPaid
           : order.paidAmount || 0;
-        const remainingAmount = Math.max(
-          0,
-          hasPaymentRecords
-            ? fullAmount - paidAmount
-            : order.remainingAmount || 0,
-        );
+        const resolvedRemainingAmount = hasPaymentRecords
+          ? remainingAmount
+          : Math.max(0, order.remainingAmount || 0);
 
         const hasActivePendingPayment = (order.payments || []).some(
           (payment) =>
@@ -83,7 +73,7 @@ export async function GET() {
           paidAmount <= 0;
 
         const canPayRemainingAmount =
-          remainingAmount > 0 &&
+          resolvedRemainingAmount > 0 &&
           paidAmount > 0 &&
           order.status !== 'cancelled' &&
           order.status !== 'refunded';
@@ -93,12 +83,12 @@ export async function GET() {
         if (order.status === 'paid') {
           paymentStatus = 'Paid';
         } else if (
-          order.status === 'processing' &&
-          remainingAmount > 0 &&
+          (order.status === 'processing' || order.status === 'partial-paid') &&
+          resolvedRemainingAmount > 0 &&
           paidAmount > 0
         ) {
           paymentStatus = 'Partially Paid';
-        } else if (remainingAmount > 0 && paidAmount > 0) {
+        } else if (resolvedRemainingAmount > 0 && paidAmount > 0) {
           paymentStatus = 'Partially Paid';
         } else if (order.status === 'failed') {
           paymentStatus = 'Failed';
@@ -114,7 +104,7 @@ export async function GET() {
           quantity: firstItem?.quantity || 1,
           fullAmount,
           paidAmount,
-          remainingAmount,
+          remainingAmount: resolvedRemainingAmount,
           currency: order.currency,
           totalPrice: order.totalAmount,
           status: order.status,
@@ -143,6 +133,10 @@ export async function GET() {
           return (
             order.hasActivePendingPayment || (order.remainingAmount || 0) > 0
           );
+        }
+
+        if (order.status === 'partial-paid') {
+          return (order.remainingAmount || 0) > 0;
         }
 
         return false;

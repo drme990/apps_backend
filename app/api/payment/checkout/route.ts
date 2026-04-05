@@ -873,8 +873,11 @@ export async function POST(request: NextRequest) {
       {
         paymentId,
         easykashOrderId,
-        amount: easykashAmount,
-        currency: paymentCurrency,
+        orderAmount: payAmount,
+        gatewayAmount: easykashAmount,
+        gatewayCurrency: paymentCurrency,
+        amount: payAmount,
+        currency: currencyUpper,
         status: 'pending',
         redirectUrl: easykashResponse.redirectUrl,
         expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),

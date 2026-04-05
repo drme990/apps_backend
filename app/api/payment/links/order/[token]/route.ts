@@ -83,6 +83,13 @@ export async function GET(
       );
     }
 
+    const hasPreviouslyPaidAmount =
+      Number(order.paidAmount || 0) > 0 ||
+      (order.payments || []).some((payment) => payment.status === 'paid');
+    const nextOrderStatus = hasPreviouslyPaidAmount
+      ? 'partial-paid'
+      : 'processing';
+
     if (!process.env.EASYKASH_API_KEY) {
       return NextResponse.json(
         { success: false, error: 'Payment gateway is not configured' },
@@ -178,6 +185,9 @@ export async function GET(
             payments: {
               paymentId: generatePaymentId(),
               easykashOrderId: customerReference,
+              orderAmount: requestedAmount,
+              gatewayAmount: easykashAmount,
+              gatewayCurrency: paymentCurrency,
               amount: requestedAmount,
               currency: (paymentLink.currencyCode || order.currency)
                 .toUpperCase()
@@ -196,9 +206,9 @@ export async function GET(
       await Order.updateOne(
         {
           _id: order._id,
-          status: { $nin: ['processing', 'paid', 'completed'] },
+          status: { $nin: ['processing', 'partial-paid', 'paid', 'completed'] },
         },
-        { $set: { status: 'processing' } },
+        { $set: { status: nextOrderStatus } },
       );
 
       return NextResponse.redirect(easykashResponse.redirectUrl, {

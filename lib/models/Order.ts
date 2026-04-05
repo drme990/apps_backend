@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import OrderSequence from '@/lib/models/OrderSequence';
+import { calculateOrderFinancials } from '@/lib/services/order-financials';
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -97,6 +98,7 @@ async function allocateOrderNumber(
 export type OrderStatus =
   | 'pending'
   | 'processing'
+  | 'partial-paid'
   | 'paid'
   | 'completed'
   | 'failed'
@@ -154,6 +156,11 @@ export interface IReservationAnswer {
 export interface IPayment {
   paymentId: string;
   easykashOrderId: string;
+  // Amount recorded in order currency for accounting and remaining balance math.
+  orderAmount?: number;
+  // Raw amount sent/received at the payment gateway.
+  gatewayAmount?: number;
+  gatewayCurrency?: string;
   amount: number;
   currency: string;
   status: 'pending' | 'paid' | 'failed' | 'expired';
@@ -284,6 +291,9 @@ const PaymentSchema = new mongoose.Schema<IPayment>(
   {
     paymentId: { type: String, required: true, index: true },
     easykashOrderId: { type: String, required: true, index: true },
+    orderAmount: { type: Number, min: 0 },
+    gatewayAmount: { type: Number, min: 0 },
+    gatewayCurrency: { type: String, uppercase: true, trim: true },
     amount: { type: Number, required: true, min: 0 },
     currency: { type: String, required: true, uppercase: true },
     status: {
@@ -406,6 +416,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       enum: [
         'pending',
         'processing',
+        'partial-paid',
         'paid',
         'completed',
         'failed',
@@ -482,6 +493,10 @@ OrderSchema.pre('validate', async function () {
 OrderSchema.pre('save', function () {
   this.paymentType = inferPaymentType(this);
   this.isPartialPayment = this.paymentType !== 'full';
+
+  const { totalPaid, remainingAmount } = calculateOrderFinancials(this);
+  this.paidAmount = totalPaid;
+  this.remainingAmount = remainingAmount;
 
   const normalizedEmail =
     normalizeEmail(this.normalizedEmail || this.billingData?.email) ||

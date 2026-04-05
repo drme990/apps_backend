@@ -4,6 +4,10 @@ import Order from '@/lib/models/Order';
 import Referral from '@/lib/models/Referral';
 import Product from '@/lib/models/Product';
 import { mapEasykashStatusToOrderStatus } from '@/lib/services/easykash';
+import {
+  calculateOrderFinancials,
+  getPaymentOrderAmount,
+} from '@/lib/services/order-financials';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 const ORDER_REF_REGEX = /^ord_([a-f\d]{24})_[a-f\d]{24}_\d+$/i;
@@ -142,25 +146,27 @@ export async function GET(request: NextRequest) {
           );
 
           if (matchedPayment && matchedPayment.status !== 'paid') {
+            const normalizedOrderAmount = getPaymentOrderAmount(
+              order,
+              matchedPayment,
+            );
+            if (normalizedOrderAmount > 0) {
+              matchedPayment.orderAmount = normalizedOrderAmount;
+            }
+
             matchedPayment.status = 'paid';
             matchedPayment.paidAt = new Date();
             shouldSave = true;
           }
 
-          const fullAmount = order.fullAmount ?? order.totalAmount ?? 0;
-          const totalPaid = (order.payments || []).reduce((sum, payment) => {
-            if (payment.status === 'paid') {
-              return sum + Number(payment.amount || 0);
-            }
-            return sum;
-          }, 0);
-          const remainingAmount = Math.max(0, fullAmount - totalPaid);
+          const { totalPaid, remainingAmount } =
+            calculateOrderFinancials(order);
 
           if (hasPaidPayments(order.payments)) {
             order.paidAmount = totalPaid;
             order.remainingAmount = remainingAmount;
 
-            const targetStatus = remainingAmount <= 0 ? 'paid' : 'processing';
+            const targetStatus = remainingAmount <= 0 ? 'paid' : 'partial-paid';
 
             if (order.status !== targetStatus) {
               order.status = targetStatus;
@@ -171,7 +177,8 @@ export async function GET(request: NextRequest) {
           const shouldUpdateStatus =
             order.status !== mappedStatus &&
             order.status !== 'paid' &&
-            order.status !== 'processing';
+            order.status !== 'processing' &&
+            order.status !== 'partial-paid';
 
           if (shouldUpdateStatus) {
             order.status = mappedStatus;
