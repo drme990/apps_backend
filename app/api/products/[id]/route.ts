@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
+import {
+  filterProductMediaForPlatform,
+  normalizeProductMedia,
+  parseProductPlatform,
+} from '@/lib/product-media';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     await connectDB();
+    const platform = parseProductPlatform(
+      request.nextUrl.searchParams.get('platform'),
+    );
     const { id } = await params;
     const normalizedSlug = id.trim().toLowerCase();
     const isObjectId = OBJECT_ID_REGEX.test(id.trim());
@@ -28,7 +36,23 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ success: true, data: product });
+    const normalizedMedia = normalizeProductMedia(product.media);
+    const filteredMedia = filterProductMediaForPlatform(
+      normalizedMedia,
+      platform,
+    );
+    const { images: _legacyImages, ...safeProduct } = product as Partial<
+      Record<'images', unknown>
+    > &
+      Record<string, unknown>;
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...safeProduct,
+        media: filteredMedia,
+      },
+    });
   } catch (error) {
     console.error('Error fetching product:', error);
     return NextResponse.json(

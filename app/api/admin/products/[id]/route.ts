@@ -6,6 +6,7 @@ import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { productUpdateSchema } from '@/lib/validation/schemas';
+import { normalizeProductMedia } from '@/lib/product-media';
 
 export async function GET(
   _request: NextRequest,
@@ -27,10 +28,18 @@ export async function GET(
         { status: 404 },
       );
     }
+
+    const normalizedMedia = normalizeProductMedia(product.media);
+    const { images: _legacyImages, ...safeProduct } = product as Partial<
+      Record<'images', unknown>
+    > &
+      Record<string, unknown>;
+
     return NextResponse.json({
       success: true,
       data: {
-        ...product,
+        ...safeProduct,
+        media: normalizedMedia,
         reservationFields: normalizeReservationFields(
           product.reservationFields,
         ),
@@ -58,6 +67,7 @@ export async function PUT(
     const parsed = await parseJsonBody(request, productUpdateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
+    const normalizedMedia = normalizeProductMedia(body.media);
 
     // Use findById + set + save for reliable nested array updates (e.g. reservationFields)
     const doc = await Product.findOne({ _id: id, isDeleted: { $ne: true } });
@@ -69,9 +79,16 @@ export async function PUT(
     }
     doc.set({
       ...body,
+      media: normalizedMedia,
       reservationFields: normalizeReservationFields(body.reservationFields),
     });
     const product = await doc.save();
+
+    const productObject = product.toObject();
+    const { images: _legacyCreateImages, ...safeCreatedProduct } =
+      productObject as Partial<Record<'images', unknown>> &
+        Record<string, unknown>;
+    const responseMedia = normalizeProductMedia(productObject.media);
 
     await logActivity({
       userId: auth.user.userId,
@@ -85,7 +102,8 @@ export async function PUT(
     return NextResponse.json({
       success: true,
       data: {
-        ...product.toObject(),
+        ...safeCreatedProduct,
+        media: responseMedia,
         reservationFields: normalizeReservationFields(
           product.reservationFields,
         ),

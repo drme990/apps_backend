@@ -6,6 +6,7 @@ import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { productCreateSchema } from '@/lib/validation/schemas';
+import { normalizeProductMedia } from '@/lib/product-media';
 
 export async function GET() {
   try {
@@ -21,7 +22,13 @@ export async function GET() {
       success: true,
       data: {
         products: products.map((product) => ({
-          ...product,
+          ...(() => {
+            const { images: _legacyImages, ...safeProduct } =
+              product as Partial<Record<'images', unknown>> &
+                Record<string, unknown>;
+            return safeProduct;
+          })(),
+          media: normalizeProductMedia(product.media),
           reservationFields: normalizeReservationFields(
             product.reservationFields,
           ),
@@ -46,10 +53,15 @@ export async function POST(request: NextRequest) {
     const parsed = await parseJsonBody(request, productCreateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
+    const normalizedMedia = normalizeProductMedia(body.media);
     const product = await Product.create({
       ...body,
+      media: normalizedMedia,
       reservationFields: normalizeReservationFields(body.reservationFields),
     });
+
+    const productObject = product.toObject();
+    const responseMedia = normalizeProductMedia(productObject.media);
 
     await logActivity({
       userId: auth.user.userId,
@@ -61,7 +73,16 @@ export async function POST(request: NextRequest) {
       details: `Created product: ${product.name.en || product.name.ar}`,
     });
 
-    return NextResponse.json({ success: true, data: product }, { status: 201 });
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          ...productObject,
+          media: responseMedia,
+        },
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error('Error creating product:', error);
     return NextResponse.json(

@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
+import {
+  filterProductMediaForPlatform,
+  normalizeProductMedia,
+  parseProductPlatform,
+} from '@/lib/product-media';
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,6 +17,7 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1');
     const inStock = searchParams.get('inStock');
     const sacrifice = searchParams.get('sacrifice');
+    const platform = parseProductPlatform(searchParams.get('platform'));
 
     const query: Record<string, unknown> = {
       isActive: true,
@@ -35,7 +41,16 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         products: products.map((product) => ({
-          ...product,
+          ...(() => {
+            const { images: _legacyImages, ...safeProduct } =
+              product as Partial<Record<'images', unknown>> &
+                Record<string, unknown>;
+            return safeProduct;
+          })(),
+          media: (() => {
+            const normalized = normalizeProductMedia(product.media);
+            return filterProductMediaForPlatform(normalized, platform);
+          })(),
           reservationFields: normalizeReservationFields(
             product.reservationFields,
           ),

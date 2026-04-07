@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ProductMediaPlatform } from '@/lib/product-media';
 
 export interface ICurrencyPrice {
   currencyCode: string;
@@ -50,6 +51,11 @@ export interface IReservationField {
   supportsMulti?: boolean;
 }
 
+export interface IProductMedia {
+  url: string;
+  platform: ProductMediaPlatform;
+}
+
 export interface IProduct {
   _id?: string;
   name: { ar: string; en: string };
@@ -59,7 +65,7 @@ export interface IProduct {
   inStock: boolean;
   isBestSeller?: boolean;
   isActive: boolean;
-  images: string[];
+  media: IProductMedia[];
   sizes: IProductSize[];
   partialPayment: IPartialPayment;
   upgradeTo?: string;
@@ -101,6 +107,18 @@ const ProductSizeSchema = new mongoose.Schema({
   prices: [CurrencyPriceSchema],
   feedsUp: { type: Number, min: 0, default: 0 },
 });
+
+const ProductMediaSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true, trim: true },
+    platform: {
+      type: String,
+      enum: ['shared', 'ghadaq', 'manasik'],
+      default: 'shared',
+    },
+  },
+  { _id: false },
+);
 
 const PartialPaymentSchema = new mongoose.Schema(
   {
@@ -219,7 +237,10 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     inStock: { type: Boolean, default: true },
     isBestSeller: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
-    images: [{ type: String, trim: true }],
+    media: {
+      type: [ProductMediaSchema],
+      default: [],
+    },
     sizes: {
       type: [ProductSizeSchema],
       validate: {
