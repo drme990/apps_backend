@@ -9,6 +9,16 @@ function hasOrderUserId(userId: unknown): boolean {
   return false;
 }
 
+function parseIsoDate(value: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -24,6 +34,9 @@ export async function GET(request: NextRequest) {
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
+    const specificDate = searchParams.get('date');
+    const fromDate = searchParams.get('fromDate');
+    const toDate = searchParams.get('toDate');
     const skip = (page - 1) * maxLimit;
 
     const query: Record<string, unknown> = {};
@@ -38,6 +51,37 @@ export async function GET(request: NextRequest) {
         { 'billingData.email': { $regex: search, $options: 'i' } },
         { 'billingData.phone': { $regex: search, $options: 'i' } },
       ];
+    }
+
+    const createdAtFilter: Record<string, Date> = {};
+    const parsedSpecificDate = parseIsoDate(specificDate);
+
+    if (parsedSpecificDate) {
+      const start = new Date(parsedSpecificDate);
+      start.setHours(0, 0, 0, 0);
+
+      const endExclusive = new Date(start);
+      endExclusive.setDate(endExclusive.getDate() + 1);
+
+      createdAtFilter.$gte = start;
+      createdAtFilter.$lt = endExclusive;
+    } else {
+      const parsedFromDate = parseIsoDate(fromDate);
+      const parsedToDate = parseIsoDate(toDate);
+
+      if (parsedFromDate) {
+        parsedFromDate.setHours(0, 0, 0, 0);
+        createdAtFilter.$gte = parsedFromDate;
+      }
+
+      if (parsedToDate) {
+        parsedToDate.setHours(23, 59, 59, 999);
+        createdAtFilter.$lte = parsedToDate;
+      }
+    }
+
+    if (Object.keys(createdAtFilter).length > 0) {
+      query.createdAt = createdAtFilter;
     }
 
     const [orders, total] = await Promise.all([
