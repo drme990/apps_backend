@@ -41,10 +41,10 @@ export async function GET(
       normalizedMedia,
       platform,
     );
-    const { images: _legacyImages, ...safeProduct } = product as Partial<
-      Record<'images', unknown>
-    > &
-      Record<string, unknown>;
+    const productWithLegacy = product as typeof product & {
+      images?: unknown;
+    };
+    const { images: _legacyImages, ...safeProduct } = productWithLegacy;
 
     return NextResponse.json({
       success: true,

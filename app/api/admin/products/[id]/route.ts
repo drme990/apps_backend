@@ -30,10 +30,10 @@ export async function GET(
     }
 
     const normalizedMedia = normalizeProductMedia(product.media);
-    const { images: _legacyImages, ...safeProduct } = product as Partial<
-      Record<'images', unknown>
-    > &
-      Record<string, unknown>;
+    const productWithLegacy = product as typeof product & {
+      images?: unknown;
+    };
+    const { images: _legacyImages, ...safeProduct } = productWithLegacy;
 
     return NextResponse.json({
       success: true,
@@ -85,9 +85,11 @@ export async function PUT(
     const product = await doc.save();
 
     const productObject = product.toObject();
+    const createdWithLegacy = productObject as typeof productObject & {
+      images?: unknown;
+    };
     const { images: _legacyCreateImages, ...safeCreatedProduct } =
-      productObject as Partial<Record<'images', unknown>> &
-        Record<string, unknown>;
+      createdWithLegacy;
     const responseMedia = normalizeProductMedia(productObject.media);
 
     await logActivity({

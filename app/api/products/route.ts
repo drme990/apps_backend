@@ -42,9 +42,10 @@ export async function GET(request: NextRequest) {
       data: {
         products: products.map((product) => ({
           ...(() => {
-            const { images: _legacyImages, ...safeProduct } =
-              product as Partial<Record<'images', unknown>> &
-                Record<string, unknown>;
+            const productWithLegacy = product as typeof product & {
+              images?: unknown;
+            };
+            const { images: _legacyImages, ...safeProduct } = productWithLegacy;
             return safeProduct;
           })(),
           media: (() => {

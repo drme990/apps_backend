@@ -23,9 +23,13 @@ export async function GET() {
       data: {
         products: products.map((product) => ({
           ...(() => {
-            const { images: _legacyImages, ...safeProduct } =
-              product as Partial<Record<'images', unknown>> &
-                Record<string, unknown>;
+            const productWithLegacy = product as typeof product & {
+              images?: unknown;
+            };
+            const safeProduct = {
+              ...productWithLegacy,
+            };
+            delete safeProduct.images;
             return safeProduct;
           })(),
           media: normalizeProductMedia(product.media),
