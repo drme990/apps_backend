@@ -3,6 +3,12 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 
+function hasOrderUserId(userId: unknown): boolean {
+  if (typeof userId === 'string') return userId.trim().length > 0;
+  if (typeof userId === 'object' && userId !== null) return true;
+  return false;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -36,6 +42,33 @@ export async function GET(request: NextRequest) {
 
     const [orders, total] = await Promise.all([
       Order.find(query)
+        .select({
+          _id: 1,
+          orderNumber: 1,
+          userId: 1,
+          isGuest: 1,
+          items: 1,
+          totalAmount: 1,
+          currency: 1,
+          status: 1,
+          paymentMethod: 1,
+          billingData: 1,
+          couponCode: 1,
+          couponDiscount: 1,
+          fullAmount: 1,
+          paidAmount: 1,
+          remainingAmount: 1,
+          isPartialPayment: 1,
+          paymentType: 1,
+          referralId: 1,
+          termsAgreedAt: 1,
+          source: 1,
+          countryCode: 1,
+          locale: 1,
+          sizeIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(maxLimit)
@@ -45,8 +78,7 @@ export async function GET(request: NextRequest) {
 
     const normalizedOrders = orders.map((order) => {
       const hasIsGuest = typeof order.isGuest === 'boolean';
-      const hasUserId =
-        typeof order.userId === 'string' && order.userId.trim().length > 0;
+      const hasUserId = hasOrderUserId(order.userId);
 
       return {
         ...order,

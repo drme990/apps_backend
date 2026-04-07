@@ -138,13 +138,12 @@ export async function GET(request: NextRequest) {
 
       if (matchesCustomerReference) {
         const mappedStatus = mapEasykashStatusToOrderStatus(gatewayStatus);
+        const matchedPayment = (order.payments || []).find(
+          (payment) => payment.easykashOrderId === customerReference,
+        );
         let shouldSave = false;
 
         if (mappedStatus === 'paid') {
-          const matchedPayment = (order.payments || []).find(
-            (payment) => payment.easykashOrderId === customerReference,
-          );
-
           if (matchedPayment && matchedPayment.status !== 'paid') {
             const normalizedOrderAmount = getPaymentOrderAmount(
               order,
@@ -186,25 +185,31 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        if (providerRefNum) {
-          order.easykashRef = providerRefNum;
-          shouldSave = true;
-        }
-
         if (paymentMethod) {
           order.paymentMethod = mapPaymentMethod(paymentMethod);
           shouldSave = true;
         }
 
-        order.easykashResponse = {
-          ...(order.easykashResponse || {}),
-          status: gatewayStatus,
-          easykashRef: providerRefNum || order.easykashRef,
-          PaymentMethod: paymentMethod || order.easykashResponse?.PaymentMethod,
-          customerReference: customerReference || undefined,
-          source: 'redirect',
-        };
-        shouldSave = true;
+        if (matchedPayment) {
+          if (providerRefNum) {
+            matchedPayment.easykashRef = providerRefNum;
+          }
+
+          if (paymentMethod) {
+            matchedPayment.paymentMethod = mapPaymentMethod(paymentMethod);
+          }
+
+          matchedPayment.easykashResponse = {
+            ...(matchedPayment.easykashResponse || {}),
+            status: gatewayStatus,
+            easykashRef: providerRefNum || matchedPayment.easykashRef,
+            PaymentMethod:
+              paymentMethod || matchedPayment.easykashResponse?.PaymentMethod,
+            customerReference: customerReference || undefined,
+            source: 'redirect',
+          };
+          shouldSave = true;
+        }
 
         if (shouldSave) {
           await order.save();

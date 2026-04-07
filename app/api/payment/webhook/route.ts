@@ -418,6 +418,27 @@ export async function POST(request: NextRequest) {
 
     const resolvedMethod = mapPaymentMethod(PaymentMethod);
 
+    if (paymentRecord) {
+      paymentRecord.easykashRef = easykashRef || paymentRecord.easykashRef;
+      paymentRecord.easykashProductCode =
+        ProductCode || paymentRecord.easykashProductCode;
+      paymentRecord.easykashVoucher = voucher || paymentRecord.easykashVoucher;
+      paymentRecord.easykashResponse = {
+        ...(paymentRecord.easykashResponse || {}),
+        status: normalizedStatus,
+        PaymentMethod,
+        Amount,
+        ProductCode,
+        easykashRef,
+        voucher,
+        BuyerEmail: body.BuyerEmail,
+        BuyerMobile: body.BuyerMobile,
+        BuyerName: body.BuyerName,
+        Timestamp: body.Timestamp,
+        customerReference: customerRefStr,
+      };
+    }
+
     if (isSuccessfulPayment) {
       if (paymentRecord) {
         const normalizedOrderAmount = getPaymentOrderAmount(
@@ -443,28 +464,8 @@ export async function POST(request: NextRequest) {
         paymentRecord.status = 'paid';
         paymentRecord.paidAt = new Date();
         paymentRecord.paymentMethod = resolvedMethod;
-        paymentRecord.easykashRef = easykashRef || paymentRecord.easykashRef;
-        paymentRecord.easykashProductCode =
-          ProductCode || paymentRecord.easykashProductCode;
-        paymentRecord.easykashVoucher =
-          voucher || paymentRecord.easykashVoucher;
-        paymentRecord.easykashResponse = {
-          status: normalizedStatus,
-          PaymentMethod,
-          Amount,
-          ProductCode,
-          easykashRef,
-          voucher,
-          BuyerEmail: body.BuyerEmail,
-          BuyerMobile: body.BuyerMobile,
-          BuyerName: body.BuyerName,
-          Timestamp: body.Timestamp,
-        };
       }
 
-      if (easykashRef) order.easykashRef = easykashRef;
-      if (ProductCode) order.easykashProductCode = ProductCode;
-      if (voucher) order.easykashVoucher = voucher;
       order.paymentMethod = resolvedMethod;
 
       const { totalPaid, remainingAmount } = calculateOrderFinancials(order);
@@ -517,21 +518,6 @@ export async function POST(request: NextRequest) {
         order.status = hasPaidPayment ? 'partial-paid' : 'pending';
       }
     }
-
-    order.easykashResponse = {
-      ...(order.easykashResponse || {}),
-      status: normalizedStatus,
-      PaymentMethod,
-      Amount,
-      ProductCode,
-      easykashRef,
-      voucher,
-      BuyerEmail: body.BuyerEmail,
-      BuyerMobile: body.BuyerMobile,
-      BuyerName: body.BuyerName,
-      Timestamp: body.Timestamp,
-      customerReference: customerRefStr,
-    };
 
     await order.save();
 

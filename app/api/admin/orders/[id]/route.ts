@@ -24,6 +24,27 @@ const STATUS_ALIASES: Record<string, string> = {
   refounded: 'refunded',
 };
 
+function hasOrderUserId(userId: unknown): boolean {
+  if (typeof userId === 'string') return userId.trim().length > 0;
+  if (typeof userId === 'object' && userId !== null) return true;
+  return false;
+}
+
+function sanitizeOrderForAdmin(order: {
+  easykashRef?: unknown;
+  easykashProductCode?: unknown;
+  easykashVoucher?: unknown;
+  easykashResponse?: unknown;
+  [key: string]: unknown;
+}) {
+  const sanitized = { ...order };
+  delete sanitized.easykashRef;
+  delete sanitized.easykashProductCode;
+  delete sanitized.easykashVoucher;
+  delete sanitized.easykashResponse;
+  return sanitized;
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -43,13 +64,21 @@ export async function GET(
     }
 
     const hasIsGuest = typeof order.isGuest === 'boolean';
-    const hasUserId =
-      typeof order.userId === 'string' && order.userId.trim().length > 0;
+    const hasUserId = hasOrderUserId(order.userId);
+    const sanitizedOrder = sanitizeOrderForAdmin(
+      order as unknown as {
+        easykashRef?: unknown;
+        easykashProductCode?: unknown;
+        easykashVoucher?: unknown;
+        easykashResponse?: unknown;
+        [key: string]: unknown;
+      },
+    );
 
     return NextResponse.json({
       success: true,
       data: {
-        ...order,
+        ...sanitizedOrder,
         isGuest: hasIsGuest ? order.isGuest : !hasUserId,
       },
     });
@@ -103,7 +132,17 @@ export async function PUT(
     }
 
     if (changes.length === 0) {
-      return NextResponse.json({ success: true, data: order });
+      const unchangedOrder = order.toObject() as unknown as {
+        easykashRef?: unknown;
+        easykashProductCode?: unknown;
+        easykashVoucher?: unknown;
+        easykashResponse?: unknown;
+        [key: string]: unknown;
+      };
+      return NextResponse.json({
+        success: true,
+        data: sanitizeOrderForAdmin(unchangedOrder),
+      });
     }
 
     await order.save();
@@ -122,7 +161,17 @@ export async function PUT(
       details: `Updated order ${order.orderNumber}: ${changes.join(', ')}`,
     });
 
-    return NextResponse.json({ success: true, data: order });
+    const updatedOrder = order.toObject() as unknown as {
+      easykashRef?: unknown;
+      easykashProductCode?: unknown;
+      easykashVoucher?: unknown;
+      easykashResponse?: unknown;
+      [key: string]: unknown;
+    };
+    return NextResponse.json({
+      success: true,
+      data: sanitizeOrderForAdmin(updatedOrder),
+    });
   } catch (error) {
     console.error('Error updating order:', error);
     return NextResponse.json(
