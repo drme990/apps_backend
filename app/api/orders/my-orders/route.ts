@@ -120,23 +120,16 @@ export async function GET() {
         };
       })
       .filter((order) => {
-        if (
-          order.status === 'paid' ||
-          order.status === 'completed' ||
-          order.status === 'refunded' ||
-          order.status === 'cancelled'
-        ) {
+        if (order.status === 'paid' || order.status === 'completed') {
           return true;
         }
 
-        if (order.status === 'processing') {
-          return (
-            order.hasActivePendingPayment || (order.remainingAmount || 0) > 0
-          );
+        if (order.status === 'partial-paid') {
+          return order.canPayRemainingAmount;
         }
 
-        if (order.status === 'partial-paid') {
-          return (order.remainingAmount || 0) > 0;
+        if (order.status === 'processing') {
+          return order.canCompleteOrder;
         }
 
         return false;

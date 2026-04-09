@@ -1,112 +1,43 @@
-# apps_backend
+# backend
 
-Canonical API and business-logic service for the full platform.
+Canonical API and business-logic service for Admin Panel, Ghadaq, and Manasik.
 
-## What This App Does
+## Latest Updates (April 2026)
 
-- Serves all public storefront APIs for ghadaq and manasik-v2.
-- Serves all admin APIs for admin_panel.
-- Handles authentication, authorization, validation, and rate-limited operations.
-- Owns all data persistence through MongoDB models.
-- Integrates external services (EasyKash, email, Cloudinary, Cloudflare R2, Facebook CAPI).
+- Product media migration completed:
+  - removed legacy `images` field from model and API contracts
+  - standardized `media[]` entries with per-item platform visibility
+  - valid platforms: `shared`, `ghadaq`, `manasik`
+- Public product APIs now support `platform` query filtering and return only:
+  - platform-specific media
+  - shared media
+- Added migration script:
+  - `scripts/migrate-product-media.ts`
+  - normalizes old records and removes legacy `images`
+- Payment/order reliability improvements:
+  - webhook validation and audit hardening
+  - partial-payment and payment-link flow maturity
 
-## Architecture Role
+## What This Service Owns
 
-- Single source of truth for domain logic.
-- Frontend apps should stay thin and call this backend instead of duplicating logic.
-- API families:
-- /api/admin/\* for back-office operations.
-- /api/auth/\* for app-level auth flows.
-- /api/payment/\* for checkout, links, status, and webhooks.
-- /api/\* public endpoints for products/countries/coupons/appearance/referral.
+- All admin APIs under `/api/admin/*`.
+- All storefront APIs under `/api/*`.
+- Authentication namespaces:
+  - `/api/auth/admin/*`
+  - `/api/auth/ghadaq/*`
+  - `/api/auth/manasik/*`
+- Checkout/payment state machine and webhook updates.
+- Persistence, validation, and operational safeguards.
 
-Request flow:
+## Core Domains
 
-- admin_panel/ghadaq/manasik-v2 -> apps_backend -> MongoDB + integrations
-
-## Feature Inventory
-
-### Authentication and Authorization
-
-- Admin login/logout/session endpoints.
-- Multi-app auth namespaces:
-- /api/auth/admin/\*
-- /api/auth/ghadaq/\*
-- /api/auth/manasik/\*
-- Role and permission guards for admin routes.
-- App auth guards for user profile and private customer operations.
-
-### Product and Catalog Engine
-
-- Product CRUD, reorder, and auto-pricing support.
-- Bilingual content and SEO slug handling.
-- Multi-currency pricing and minimum payment structures.
-- Reservation-field schema validation and storage.
-- Upgrade product logic and metadata handling.
-- Best-seller and active/inactive visibility controls.
-
-### Media and Asset Handling
-
-- Image upload/delete through Cloudinary.
-- Video upload/delete through Cloudflare R2.
-- Product media URLs returned in backend response contract.
-
-### Orders and Checkout
-
-- Checkout order creation pipeline.
-- Coupon validation and application.
-- Referral attribution.
-- Reservation payload persistence.
-- Partial-payment support.
-- Order lifecycle management and admin-side updates.
-
-### Payments
-
-- EasyKash checkout integration.
-- Payment-link creation and tokenized pay-link handling.
-- Payment status resolution endpoint.
-- Webhook processing and state synchronization.
-- Payment-link lifecycle states (unused, opened, used).
-
-### Platform Operations
-
-- Countries CRUD and ordering.
-- Exchange-rate endpoints and recalculation trigger.
-- Booking blocked-date management.
-- Appearance configuration per project.
-- Referral CRUD.
-- Activity logs and operational audit trails.
-- Cron route for price update automation.
-
-## Data Models
-
-Core models include:
-
-- Product
-- Order
-- User
-- Coupon
-- Country
-- Referral
-- ActivityLog
-- Appearance
-- CronLog
-
-## Admin Permission Keys
-
-- products
-- orders
-- customers
-- analytics
-- booking
-- coupons
-- countries
-- users
-- referrals
-- activityLogs
-- appearance
-- exchange
-- payments
+- Products and media
+- Orders and payments
+- Customers and auth
+- Coupons and referrals
+- Countries and exchange rates
+- Appearance and booking dates
+- Analytics and activity logs
 
 ## Integrations
 
@@ -115,11 +46,11 @@ Core models include:
 - Resend
 - Cloudinary
 - Cloudflare R2
-- Facebook Conversions API
+- Facebook CAPI
 
 ## Environment Variables
 
-Create apps_backend/.env.local:
+Create `backend/.env.local`:
 
 ```env
 DATA_BASE_URL=
@@ -151,23 +82,27 @@ CRON_SECRET=
 
 ## Scripts
 
-- npm run dev
-- npm run build
-- npm start
-- npm run lint
+- `npm run dev`
+- `npm run build`
+- `npm start`
+- `npm run lint`
 
-## Local Development
+## Migration Scripts
+
+- `npx tsx scripts/migrate-product-media.ts`
+- optional URI override:
+  - `npx tsx scripts/migrate-product-media.ts --uri=<mongo-uri>`
+
+## Local Run
 
 ```bash
-cd apps_backend
+cd backend
 npm install
 npm run dev
 ```
 
-Default local URL:
+Default URL: `http://localhost:3000`
 
-- http://localhost:3000
+## API Docs
 
-## API Directory Guide
-
-See app/api/README.md for grouped route details and behavior by domain.
+Detailed route grouping is documented in `app/api/README.md`.
