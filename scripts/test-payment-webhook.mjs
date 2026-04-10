@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 
 // Set the webhook status to test from here only.
 // Allowed examples: PAID, PENDING, FAILED, EXPIRED, DECLINED, CANCELED, CANCELLED, REFUNDED, NEW, SUCCESS.
-const TESAT_STATUS = 'FAILED';
+const TESAT_STATUS = 'PAID';
 const USE_SIGNATURE = false;
 const TEST_BYPASS_HEADER = true;
 
@@ -271,7 +271,9 @@ async function main() {
   const orderNumber = String(argv[0] || '').trim();
   const status = normalizeTestStatus(TESAT_STATUS);
 
-  const dbUrl = String(process.env.DATA_BASE_URL || '').trim();
+  const dbUrl = String(
+    process.env.DATA_BASE_URL || 'mongodb://localhost:27017/manasik',
+  ).trim();
   if (!dbUrl) {
     console.error('Missing DATA_BASE_URL environment variable.');
     process.exitCode = 1;
