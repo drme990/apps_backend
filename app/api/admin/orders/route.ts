@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
+    const viewMode = searchParams.get('view') || 'full';
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
@@ -84,35 +85,58 @@ export async function GET(request: NextRequest) {
       query.createdAt = createdAtFilter;
     }
 
+    const tableProjection = {
+      _id: 1,
+      orderNumber: 1,
+      userId: 1,
+      isGuest: 1,
+      'items.productName': 1,
+      'items.quantity': 1,
+      totalAmount: 1,
+      currency: 1,
+      status: 1,
+      'billingData.fullName': 1,
+      'billingData.email': 1,
+      'billingData.phone': 1,
+      'billingData.country': 1,
+      referralId: 1,
+      remainingAmount: 1,
+      source: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    const fullProjection = {
+      _id: 1,
+      orderNumber: 1,
+      userId: 1,
+      isGuest: 1,
+      items: 1,
+      totalAmount: 1,
+      currency: 1,
+      status: 1,
+      paymentMethod: 1,
+      billingData: 1,
+      couponCode: 1,
+      couponDiscount: 1,
+      fullAmount: 1,
+      paidAmount: 1,
+      remainingAmount: 1,
+      isPartialPayment: 1,
+      paymentType: 1,
+      referralId: 1,
+      termsAgreedAt: 1,
+      source: 1,
+      countryCode: 1,
+      locale: 1,
+      sizeIndex: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
     const [orders, total] = await Promise.all([
       Order.find(query)
-        .select({
-          _id: 1,
-          orderNumber: 1,
-          userId: 1,
-          isGuest: 1,
-          items: 1,
-          totalAmount: 1,
-          currency: 1,
-          status: 1,
-          paymentMethod: 1,
-          billingData: 1,
-          couponCode: 1,
-          couponDiscount: 1,
-          fullAmount: 1,
-          paidAmount: 1,
-          remainingAmount: 1,
-          isPartialPayment: 1,
-          paymentType: 1,
-          referralId: 1,
-          termsAgreedAt: 1,
-          source: 1,
-          countryCode: 1,
-          locale: 1,
-          sizeIndex: 1,
-          createdAt: 1,
-          updatedAt: 1,
-        })
+        .select(viewMode === 'table' ? tableProjection : fullProjection)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(maxLimit)
