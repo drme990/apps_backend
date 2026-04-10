@@ -25,6 +25,7 @@ import {
   normalizePhone,
   type PartialPaymentCreationLock,
 } from '@/lib/services/partial-payment-guard';
+import { getOutstandingBalanceLock } from '@/lib/services/outstanding-balance-lock';
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
@@ -368,6 +369,25 @@ export async function POST(request: NextRequest) {
           code: 'ACCOUNT_REQUIRED',
         },
         { status: 401 },
+      );
+    }
+
+    const outstandingBalanceLock = await getOutstandingBalanceLock({
+      source: orderSource,
+      userId: effectiveUserId,
+      email: resolvedBillingEmail,
+    });
+
+    if (outstandingBalanceLock.hasOutstandingBalance) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'You have an outstanding remaining balance. Complete it before placing a new order.',
+          code: 'OUTSTANDING_BALANCE_EXISTS',
+          data: outstandingBalanceLock,
+        },
+        { status: 409 },
       );
     }
 
