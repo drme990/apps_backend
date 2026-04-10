@@ -45,6 +45,26 @@ export interface IBaseAppUserMethods {
 
 type BaseAppUserModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
+function normalizeAppUserPhone(value: unknown): string {
+  if (typeof value !== 'string') return '';
+
+  let normalized = value.trim();
+  if (!normalized) return '';
+
+  normalized = normalized.replace(/[\s().-]/g, '');
+  if (normalized.startsWith('00')) {
+    normalized = `+${normalized.slice(2)}`;
+  }
+
+  if (normalized.startsWith('+')) {
+    const digits = normalized.slice(1).replace(/\D/g, '');
+    return digits ? `+${digits}` : '';
+  }
+
+  const digitsOnly = normalized.replace(/\D/g, '');
+  return digitsOnly || '';
+}
+
 function buildBaseAppUserModel(
   appId: Exclude<AppId, 'admin_panel'>,
   collection: string,
@@ -56,7 +76,12 @@ function buildBaseAppUserModel(
       name: { type: String, required: true },
       email: { type: String, required: true, unique: true, lowercase: true },
       password: { type: String, required: true, select: false },
-      phone: { type: String, trim: true, default: '' },
+      phone: {
+        type: String,
+        trim: true,
+        default: '',
+        set: normalizeAppUserPhone,
+      },
       country: { type: String, trim: true, default: '' },
       isBanned: { type: Boolean, default: false, index: true },
       resetPasswordToken: { type: String, select: false },
@@ -67,6 +92,15 @@ function buildBaseAppUserModel(
   );
 
   schema.index({ email: 1, isBanned: 1 });
+  schema.index(
+    { phone: 1 },
+    {
+      unique: true,
+      partialFilterExpression: {
+        phone: { $type: 'string', $ne: '' },
+      },
+    },
+  );
 
   schema.pre('save', async function () {
     if (!this.isModified('password')) return;

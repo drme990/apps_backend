@@ -21,6 +21,8 @@ import {
   acquirePartialPaymentCreationLock,
   buildPartialPaymentIdentity,
   canUserCreatePartialPayment,
+  normalizeEmail,
+  normalizePhone,
   type PartialPaymentCreationLock,
 } from '@/lib/services/partial-payment-guard';
 import { validateCoupon } from '@/lib/services/coupon';
@@ -128,7 +130,6 @@ export async function POST(request: NextRequest) {
       reservationData,
       source,
       deviceFingerprint,
-      createAccount,
       accountPassword,
     } = body;
 
@@ -138,16 +139,109 @@ export async function POST(request: NextRequest) {
       orderSource === 'ghadaq' ? 'ghadaq' : 'manasik';
 
     const sessionUser = await getAuthUser(checkoutAppId);
-    const isAuthenticated = !!sessionUser;
-    const requiresAccountForPayment =
-      paymentOption === 'half' || paymentOption === 'custom';
-    const shouldCreateOrLoginFromCheckout =
-      Boolean(createAccount) || requiresAccountForPayment;
 
     let tokenToSet: string | null = null;
     let effectiveUserId: string | null = sessionUser?.userId || null;
 
-    if (!isAuthenticated && shouldCreateOrLoginFromCheckout) {
+    const UserModel = getUserModelByAppId(
+      checkoutAppId,
+    ) as unknown as mongoose.Model<
+      mongoose.Document & {
+        _id: mongoose.Types.ObjectId;
+        email: string;
+        name: string;
+        password?: string;
+        phone?: string;
+        country?: string;
+        appId?: string;
+        isBanned?: boolean;
+        comparePassword(candidatePassword: string): Promise<boolean>;
+      }
+    >;
+
+    const normalizedInputEmail = normalizeEmail(billingData.email);
+    const normalizedInputPhone = normalizePhone(billingData.phone);
+
+    if (!normalizedInputEmail) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid email', code: 'INVALID_EMAIL' },
+        { status: 400 },
+      );
+    }
+
+    if (!normalizedInputPhone) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Phone number is required',
+          code: 'PHONE_REQUIRED',
+        },
+        { status: 400 },
+      );
+    }
+
+    let resolvedBillingEmail = normalizedInputEmail;
+    let resolvedBillingPhone = normalizedInputPhone;
+    let resolvedBillingCountry = billingData.country?.trim() || '';
+
+    if (sessionUser) {
+      const authenticatedUser = await UserModel.findById(sessionUser.userId)
+        .select('name email phone country isBanned')
+        .lean(false);
+
+      if (!authenticatedUser) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Authentication required',
+            code: 'AUTH_REQUIRED',
+          },
+          { status: 401 },
+        );
+      }
+
+      if (authenticatedUser.isBanned) {
+        return NextResponse.json(
+          { success: false, error: 'Your account has been banned' },
+          { status: 403 },
+        );
+      }
+
+      effectiveUserId = authenticatedUser._id.toString();
+      resolvedBillingEmail =
+        normalizeEmail(authenticatedUser.email) || normalizedInputEmail;
+      resolvedBillingPhone =
+        normalizePhone(authenticatedUser.phone) || normalizedInputPhone;
+      resolvedBillingCountry =
+        authenticatedUser.country?.trim() || resolvedBillingCountry;
+
+      if (!normalizePhone(authenticatedUser.phone) && normalizedInputPhone) {
+        const existingPhone = await UserModel.findOne({
+          phone: normalizedInputPhone,
+          _id: { $ne: authenticatedUser._id },
+        })
+          .select('_id')
+          .lean();
+
+        if (existingPhone) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Phone number already used',
+              code: 'PHONE_ALREADY_USED',
+            },
+            { status: 409 },
+          );
+        }
+
+        authenticatedUser.phone = normalizedInputPhone;
+        if (!authenticatedUser.country && resolvedBillingCountry) {
+          authenticatedUser.country = resolvedBillingCountry;
+        }
+        await authenticatedUser.save();
+        resolvedBillingPhone = normalizedInputPhone;
+      }
+    } else {
       const normalizedPassword =
         typeof accountPassword === 'string' ? accountPassword.trim() : '';
 
@@ -155,67 +249,98 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
-            error:
-              'A password with at least 6 characters is required for this payment option',
+            error: 'Password is required to continue checkout',
+            code: 'ACCOUNT_PASSWORD_REQUIRED',
           },
           { status: 400 },
         );
       }
 
-      const UserModel = getUserModelByAppId(
-        checkoutAppId,
-      ) as unknown as mongoose.Model<
-        mongoose.Document & {
-          _id: mongoose.Types.ObjectId;
-          email: string;
-          name: string;
-          password?: string;
-          phone?: string;
-          country?: string;
-          appId?: string;
-          comparePassword(candidatePassword: string): Promise<boolean>;
-        }
-      >;
-      const normalizedEmail = billingData.email.trim().toLowerCase();
-      const existingUser = await UserModel.findOne({ email: normalizedEmail })
+      const existingEmailUser = await UserModel.findOne({
+        email: normalizedInputEmail,
+      })
+        .select('+password')
+        .lean(false);
+      const existingPhoneUser = await UserModel.findOne({
+        phone: normalizedInputPhone,
+      })
         .select('+password')
         .lean(false);
 
-      if (existingUser) {
-        if ('isBanned' in existingUser && existingUser.isBanned) {
+      if (existingEmailUser) {
+        if (existingEmailUser.isBanned) {
           return NextResponse.json(
             { success: false, error: 'Your account has been banned' },
             { status: 403 },
           );
         }
 
-        const isMatch = await existingUser.comparePassword(normalizedPassword);
+        const isMatch =
+          await existingEmailUser.comparePassword(normalizedPassword);
         if (!isMatch) {
           return NextResponse.json(
             {
               success: false,
-              error: 'This email is already registered. Please login first.',
-              code: 'REGISTERED_EMAIL_LOGIN_REQUIRED',
-              redirectTo: `/auth/login?email=${encodeURIComponent(normalizedEmail)}&from=checkout`,
+              error: 'Email already used',
+              code: 'EMAIL_ALREADY_USED',
             },
-            { status: 401 },
+            { status: 409 },
           );
         }
 
+        if (
+          existingPhoneUser &&
+          existingPhoneUser._id.toString() !== existingEmailUser._id.toString()
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Phone number already used',
+              code: 'PHONE_ALREADY_USED',
+            },
+            { status: 409 },
+          );
+        }
+
+        if (!normalizePhone(existingEmailUser.phone) && normalizedInputPhone) {
+          existingEmailUser.phone = normalizedInputPhone;
+        }
+        if (!existingEmailUser.country && resolvedBillingCountry) {
+          existingEmailUser.country = resolvedBillingCountry;
+        }
+        await existingEmailUser.save();
+
         tokenToSet = generateToken({
-          _id: existingUser._id.toString(),
+          _id: existingEmailUser._id.toString(),
           appId: checkoutAppId,
-          name: existingUser.name,
-          email: existingUser.email,
+          name: existingEmailUser.name,
+          email: existingEmailUser.email,
         });
-        effectiveUserId = existingUser._id.toString();
+        effectiveUserId = existingEmailUser._id.toString();
+        resolvedBillingEmail =
+          normalizeEmail(existingEmailUser.email) || normalizedInputEmail;
+        resolvedBillingPhone =
+          normalizePhone(existingEmailUser.phone) || normalizedInputPhone;
+        resolvedBillingCountry =
+          existingEmailUser.country?.trim() || resolvedBillingCountry;
       } else {
+        if (existingPhoneUser) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Phone number already used',
+              code: 'PHONE_ALREADY_USED',
+            },
+            { status: 409 },
+          );
+        }
+
         const newUser = await UserModel.create({
           name: billingData.fullName.trim(),
-          email: normalizedEmail,
+          email: normalizedInputEmail,
           password: normalizedPassword,
-          phone: billingData.phone.trim(),
-          country: billingData.country?.trim() || '',
+          phone: normalizedInputPhone,
+          country: resolvedBillingCountry,
           appId: checkoutAppId,
         });
 
@@ -226,7 +351,24 @@ export async function POST(request: NextRequest) {
           email: newUser.email,
         });
         effectiveUserId = newUser._id.toString();
+        resolvedBillingEmail =
+          normalizeEmail(newUser.email) || normalizedInputEmail;
+        resolvedBillingPhone =
+          normalizePhone(newUser.phone) || normalizedInputPhone;
+        resolvedBillingCountry =
+          newUser.country?.trim() || resolvedBillingCountry;
       }
+    }
+
+    if (!effectiveUserId) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Checkout requires an account',
+          code: 'ACCOUNT_REQUIRED',
+        },
+        { status: 401 },
+      );
     }
 
     if (!termsAgreed) {
@@ -567,8 +709,8 @@ export async function POST(request: NextRequest) {
     const partialPaymentIdentity = buildPartialPaymentIdentity({
       source: orderSource,
       userId: effectiveUserId,
-      email: billingData.email,
-      phone: billingData.phone,
+      email: resolvedBillingEmail,
+      phone: resolvedBillingPhone,
       ip,
       fingerprint: deviceFingerprint,
     });
@@ -577,8 +719,8 @@ export async function POST(request: NextRequest) {
       partialPaymentLock = await acquirePartialPaymentCreationLock({
         source: orderSource,
         userId: effectiveUserId,
-        email: billingData.email,
-        phone: billingData.phone,
+        email: resolvedBillingEmail,
+        phone: resolvedBillingPhone,
         ip,
         fingerprint: deviceFingerprint,
       });
@@ -598,8 +740,8 @@ export async function POST(request: NextRequest) {
       const guardDecision = await canUserCreatePartialPayment({
         source: orderSource,
         userId: effectiveUserId,
-        email: billingData.email,
-        phone: billingData.phone,
+        email: resolvedBillingEmail,
+        phone: resolvedBillingPhone,
         ip,
         fingerprint: deviceFingerprint,
       });
@@ -632,8 +774,8 @@ export async function POST(request: NextRequest) {
           quantity,
         },
       ],
-      userId: effectiveUserId || undefined,
-      isGuest: !effectiveUserId,
+      userId: effectiveUserId,
+      isGuest: false,
       totalAmount: payAmount,
       fullAmount: amountAfterDiscount,
       paidAmount: 0,
@@ -645,9 +787,9 @@ export async function POST(request: NextRequest) {
       status: 'pending',
       billingData: {
         fullName: billingData.fullName,
-        email: partialPaymentIdentity.normalizedEmail || billingData.email,
-        phone: billingData.phone,
-        country: billingData.country || 'N/A',
+        email: partialPaymentIdentity.normalizedEmail || resolvedBillingEmail,
+        phone: resolvedBillingPhone,
+        country: resolvedBillingCountry || 'N/A',
       },
       referralId: referralId || undefined,
       couponCode: appliedCouponCode,
@@ -660,7 +802,7 @@ export async function POST(request: NextRequest) {
       normalizedPhone: partialPaymentIdentity.normalizedPhone,
       latestClientIp: partialPaymentIdentity.normalizedIp,
       deviceFingerprint: partialPaymentIdentity.normalizedFingerprint,
-      countryCode: billingData.country || '',
+      countryCode: resolvedBillingCountry || '',
       locale,
       payments: [],
       paymentAttempts: [],
@@ -714,13 +856,13 @@ export async function POST(request: NextRequest) {
       numItems: quantity,
       sourceUrl: `${process.env.BASE_URL || 'https://www.manasik.net'}/checkout`,
       userData: {
-        em: billingData.email,
-        ph: billingData.phone,
+        em: resolvedBillingEmail,
+        ph: resolvedBillingPhone,
         fn: billingData.fullName.split(' ')[0],
         ln:
           billingData.fullName.split(' ').slice(1).join(' ') ||
           billingData.fullName.split(' ')[0],
-        country: billingData.country,
+        country: resolvedBillingCountry,
         client_ip_address: reqIp,
         client_user_agent: reqUa,
         external_id: order._id.toString(),
@@ -823,8 +965,8 @@ export async function POST(request: NextRequest) {
             amount: easykashAmount,
             currency: paymentCurrency,
             name: billingData.fullName,
-            email: billingData.email,
-            mobile: billingData.phone,
+            email: resolvedBillingEmail,
+            mobile: resolvedBillingPhone,
             cashExpiry: cashExpiryHours,
             redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
             customerReference: candidateReference,

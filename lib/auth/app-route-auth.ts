@@ -21,6 +21,10 @@ import {
   registerSchema,
   resetPasswordSchema,
 } from '@/lib/validation/schemas';
+import {
+  normalizeEmail,
+  normalizePhone,
+} from '@/lib/services/partial-payment-guard';
 
 type RouteApp = 'admin_panel' | 'ghadaq' | 'manasik';
 
@@ -131,6 +135,30 @@ function clearAuthCookies(response: NextResponse, appId: AppId) {
   });
 }
 
+function getDuplicateKeyField(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const mongoError = error as {
+    code?: number;
+    keyPattern?: Record<string, unknown>;
+    keyValue?: Record<string, unknown>;
+  };
+
+  if (mongoError.code !== 11000) return null;
+
+  if (mongoError.keyPattern) {
+    const field = Object.keys(mongoError.keyPattern)[0];
+    if (field) return field;
+  }
+
+  if (mongoError.keyValue) {
+    const field = Object.keys(mongoError.keyValue)[0];
+    if (field) return field;
+  }
+
+  return null;
+}
+
 export async function loginForApp(request: NextRequest, app: RouteApp) {
   try {
     await connectDB();
@@ -234,17 +262,56 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     const { name, email, password, phone, country } = parsed.data;
     const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
 
-    const existing = await UserModel.findOne({ email: email.toLowerCase() });
-    if (existing) {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) {
       return NextResponse.json(
-        { success: false, error: 'Email already exists' },
+        { success: false, error: 'Invalid email', code: 'INVALID_EMAIL' },
         { status: 400 },
       );
     }
 
+    const normalizedPhone = normalizePhone(phone);
+
+    const existing = await UserModel.findOne({ email: normalizedEmail });
+    if (existing) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Email already used',
+          code: 'EMAIL_ALREADY_USED',
+        },
+        { status: 409 },
+      );
+    }
+
+    if (appId !== 'admin_panel') {
+      if (!normalizedPhone) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Phone number is required',
+            code: 'PHONE_REQUIRED',
+          },
+          { status: 400 },
+        );
+      }
+
+      const existingPhone = await UserModel.findOne({ phone: normalizedPhone });
+      if (existingPhone) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Phone number already used',
+            code: 'PHONE_ALREADY_USED',
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const createPayload: Record<string, unknown> = {
       name,
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       password,
       appId,
     };
@@ -253,7 +320,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       createPayload.role = 'admin';
       createPayload.allowedPages = [];
     } else {
-      createPayload.phone = phone || '';
+      createPayload.phone = normalizedPhone || '';
       createPayload.country = country || '';
     }
 
@@ -282,6 +349,29 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     setAuthCookies(response, appId, token);
     return response;
   } catch (error) {
+    const duplicateField = getDuplicateKeyField(error);
+    if (duplicateField === 'email') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Email already used',
+          code: 'EMAIL_ALREADY_USED',
+        },
+        { status: 409 },
+      );
+    }
+
+    if (duplicateField === 'phone') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Phone number already used',
+          code: 'PHONE_ALREADY_USED',
+        },
+        { status: 409 },
+      );
+    }
+
     console.error('Error during register:', error);
     return NextResponse.json(
       { success: false, error: 'Registration failed' },
@@ -360,12 +450,30 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
     }
 
     if (typeof parsed.data.email === 'string') {
-      updatePayload.email = parsed.data.email.toLowerCase();
+      const normalizedEmail = normalizeEmail(parsed.data.email);
+      if (!normalizedEmail) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid email', code: 'INVALID_EMAIL' },
+          { status: 400 },
+        );
+      }
+      updatePayload.email = normalizedEmail;
     }
 
     if (appId !== 'admin_panel') {
       if (typeof parsed.data.phone === 'string') {
-        updatePayload.phone = parsed.data.phone;
+        const normalizedPhone = normalizePhone(parsed.data.phone);
+        if (!normalizedPhone) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Phone number is required',
+              code: 'PHONE_REQUIRED',
+            },
+            { status: 400 },
+          );
+        }
+        updatePayload.phone = normalizedPhone;
       }
       if (typeof parsed.data.country === 'string') {
         updatePayload.country = parsed.data.country;
@@ -382,8 +490,30 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
 
       if (existingUser) {
         return NextResponse.json(
-          { success: false, error: 'Email already exists' },
-          { status: 400 },
+          {
+            success: false,
+            error: 'Email already used',
+            code: 'EMAIL_ALREADY_USED',
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (appId !== 'admin_panel' && typeof updatePayload.phone === 'string') {
+      const existingPhone = await UserModel.findOne({
+        phone: updatePayload.phone,
+        _id: { $ne: authUser.userId },
+      });
+
+      if (existingPhone) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Phone number already used',
+            code: 'PHONE_ALREADY_USED',
+          },
+          { status: 409 },
         );
       }
     }
