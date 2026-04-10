@@ -15,11 +15,19 @@ interface OutstandingBalanceCandidate {
   };
   normalizedEmail?: string;
   status?: string;
+  isPartialPayment?: boolean;
+  paymentType?: 'full' | 'half' | 'partial';
   totalAmount?: number;
   paidAmount?: number;
   fullAmount?: number;
   remainingAmount?: number;
-  payments?: unknown[];
+  payments?: Array<{
+    status?: string;
+    amount?: number;
+    currency?: string;
+    orderAmount?: number;
+    easykashOrderId?: string;
+  }>;
   createdAt?: Date | string;
 }
 
@@ -56,6 +64,28 @@ function toIdString(value: unknown): string | undefined {
   return undefined;
 }
 
+function resolvePaymentType(candidate: OutstandingBalanceCandidate) {
+  if (candidate.paymentType) {
+    return candidate.paymentType;
+  }
+
+  if (!candidate.isPartialPayment) {
+    return 'full';
+  }
+
+  const fullAmount = Number(candidate.fullAmount ?? 0);
+  const paidNowAmount = Number(candidate.totalAmount ?? 0);
+
+  if (fullAmount > 0) {
+    const halfAmount = Math.ceil(fullAmount / 2);
+    if (Math.abs(paidNowAmount - halfAmount) <= 1) {
+      return 'half';
+    }
+  }
+
+  return 'partial';
+}
+
 export async function getOutstandingBalanceLock(
   input: OutstandingBalanceLockInput,
 ): Promise<OutstandingBalanceLockResult> {
@@ -77,7 +107,7 @@ export async function getOutstandingBalanceLock(
     return { hasOutstandingBalance: false };
   }
 
-  const candidates = (await Order.find({
+  const latestOrder = (await Order.findOne({
     source: input.source,
     status: {
       $nin: ['cancelled', 'refunded', 'failed'],
@@ -93,6 +123,8 @@ export async function getOutstandingBalanceLock(
       billingData: 1,
       normalizedEmail: 1,
       status: 1,
+      isPartialPayment: 1,
+      paymentType: 1,
       totalAmount: 1,
       paidAmount: 1,
       fullAmount: 1,
@@ -101,23 +133,27 @@ export async function getOutstandingBalanceLock(
       createdAt: 1,
     })
     .sort({ createdAt: -1 })
-    .limit(50)
-    .lean()) as OutstandingBalanceCandidate[];
+    .lean()) as OutstandingBalanceCandidate | null;
 
-  for (const candidate of candidates) {
-    const { totalPaid, remainingAmount } = calculateOrderFinancials(candidate);
-    if (totalPaid <= 0 || remainingAmount <= 0) {
-      continue;
-    }
-
-    return {
-      hasOutstandingBalance: true,
-      orderId: toIdString(candidate._id),
-      orderNumber: candidate.orderNumber,
-      currency: candidate.currency,
-      remainingAmount,
-    };
+  if (!latestOrder) {
+    return { hasOutstandingBalance: false };
   }
 
-  return { hasOutstandingBalance: false };
+  // Block only partial payment orders; half-payment orders are allowed.
+  if (resolvePaymentType(latestOrder) !== 'partial') {
+    return { hasOutstandingBalance: false };
+  }
+
+  const { totalPaid, remainingAmount } = calculateOrderFinancials(latestOrder);
+  if (totalPaid <= 0 || remainingAmount <= 0) {
+    return { hasOutstandingBalance: false };
+  }
+
+  return {
+    hasOutstandingBalance: true,
+    orderId: toIdString(latestOrder._id),
+    orderNumber: latestOrder.orderNumber,
+    currency: latestOrder.currency,
+    remainingAmount,
+  };
 }
