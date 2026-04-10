@@ -3,6 +3,16 @@ import { connectDB } from '@/lib/db';
 import { getAuthUser } from '@/lib/auth';
 import { getOutstandingBalanceLock } from '@/lib/services/outstanding-balance-lock';
 
+type CheckoutSource = 'manasik' | 'ghadaq';
+
+function toCheckoutSource(appId: string): CheckoutSource | null {
+  if (appId === 'manasik' || appId === 'ghadaq') {
+    return appId;
+  }
+
+  return null;
+}
+
 async function resolveAppUser() {
   const ghadaq = await getAuthUser('ghadaq');
   if (ghadaq) return ghadaq;
@@ -27,8 +37,18 @@ export async function GET() {
       });
     }
 
+    const checkoutSource = toCheckoutSource(user.appId);
+    if (!checkoutSource) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          hasOutstandingBalance: false,
+        },
+      });
+    }
+
     const lockStatus = await getOutstandingBalanceLock({
-      source: user.appId,
+      source: checkoutSource,
       userId: user.userId,
       email: user.email,
     });
