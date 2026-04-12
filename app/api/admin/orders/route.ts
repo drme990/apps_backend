@@ -41,20 +41,35 @@ export async function GET(request: NextRequest) {
     const skip = (page - 1) * maxLimit;
 
     const query: Record<string, unknown> = {};
+    const andConditions: Record<string, unknown>[] = [];
     if (status && status !== 'all') query.status = status;
-    if (referralId && referralId !== 'all') query.referralId = referralId;
+    if (referralId && referralId !== 'all') {
+      if (referralId === 'default') {
+        andConditions.push({
+          $or: [
+            { referralId: { $exists: false } },
+            { referralId: null },
+            { referralId: '' },
+          ],
+        });
+      } else {
+        query.referralId = referralId;
+      }
+    }
     if (source && source !== 'all') query.source = source;
 
     if (search) {
-      query.$or = [
-        { orderNumber: { $regex: search, $options: 'i' } },
-        { 'billingData.fullName': { $regex: search, $options: 'i' } },
-        { 'billingData.email': { $regex: search, $options: 'i' } },
-        { 'billingData.phone': { $regex: search, $options: 'i' } },
-      ];
+      andConditions.push({
+        $or: [
+          { orderNumber: { $regex: search, $options: 'i' } },
+          { 'billingData.fullName': { $regex: search, $options: 'i' } },
+          { 'billingData.email': { $regex: search, $options: 'i' } },
+          { 'billingData.phone': { $regex: search, $options: 'i' } },
+        ],
+      });
     }
 
-    const createdAtFilter: Record<string, Date> = {};
+    const updatedAtFilter: Record<string, Date> = {};
     const parsedSpecificDate = parseIsoDate(specificDate);
 
     if (parsedSpecificDate) {
@@ -64,25 +79,29 @@ export async function GET(request: NextRequest) {
       const endExclusive = new Date(start);
       endExclusive.setDate(endExclusive.getDate() + 1);
 
-      createdAtFilter.$gte = start;
-      createdAtFilter.$lt = endExclusive;
+      updatedAtFilter.$gte = start;
+      updatedAtFilter.$lt = endExclusive;
     } else {
       const parsedFromDate = parseIsoDate(fromDate);
       const parsedToDate = parseIsoDate(toDate);
 
       if (parsedFromDate) {
         parsedFromDate.setHours(0, 0, 0, 0);
-        createdAtFilter.$gte = parsedFromDate;
+        updatedAtFilter.$gte = parsedFromDate;
       }
 
       if (parsedToDate) {
         parsedToDate.setHours(23, 59, 59, 999);
-        createdAtFilter.$lte = parsedToDate;
+        updatedAtFilter.$lte = parsedToDate;
       }
     }
 
-    if (Object.keys(createdAtFilter).length > 0) {
-      query.createdAt = createdAtFilter;
+    if (Object.keys(updatedAtFilter).length > 0) {
+      query.updatedAt = updatedAtFilter;
+    }
+
+    if (andConditions.length > 0) {
+      query.$and = andConditions;
     }
 
     const tableProjection = {
@@ -137,7 +156,7 @@ export async function GET(request: NextRequest) {
     const [orders, total] = await Promise.all([
       Order.find(query)
         .select(viewMode === 'table' ? tableProjection : fullProjection)
-        .sort({ createdAt: -1 })
+        .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(maxLimit)
         .lean(),
