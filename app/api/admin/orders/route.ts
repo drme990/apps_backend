@@ -112,6 +112,7 @@ export async function GET(request: NextRequest) {
       'items.productName': 1,
       'items.quantity': 1,
       totalAmount: 1,
+      paidAmount: 1,
       currency: 1,
       status: 1,
       'billingData.fullName': 1,
