@@ -44,7 +44,25 @@ export async function GET(request: NextRequest) {
     const andConditions: Record<string, unknown>[] = [];
     if (status && status !== 'all') query.status = status;
     if (referralId && referralId !== 'all') {
-      if (referralId === 'default') {
+      if (
+        referralId === 'default' ||
+        referralId === 'default-MNK' ||
+        referralId === 'default-GHD'
+      ) {
+        const sourceCondition =
+          referralId === 'default-MNK'
+            ? {
+                $or: [
+                  { source: 'manasik' },
+                  { source: { $exists: false } },
+                  { source: null },
+                  { source: '' },
+                ],
+              }
+            : referralId === 'default-GHD'
+              ? { source: 'ghadaq' }
+              : null;
+
         andConditions.push({
           $or: [
             { referralId: { $exists: false } },
@@ -52,6 +70,10 @@ export async function GET(request: NextRequest) {
             { referralId: '' },
           ],
         });
+
+        if (sourceCondition) {
+          andConditions.push(sourceCondition);
+        }
       } else {
         query.referralId = referralId;
       }
