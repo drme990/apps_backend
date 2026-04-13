@@ -6,6 +6,7 @@ export interface ICountry {
   name: { ar: string; en: string };
   currencyCode: string;
   currencySymbol: string;
+  roundingRule: 'nearest-ten' | 'nearest-five' | 'ceil';
   flagEmoji: string;
   isActive: boolean;
   sortOrder: number | null;
@@ -47,6 +48,11 @@ const CountrySchema = new mongoose.Schema<ICountry>(
       type: String,
       required: [true, 'Currency symbol is required'],
       trim: true,
+    },
+    roundingRule: {
+      type: String,
+      enum: ['nearest-ten', 'nearest-five', 'ceil'],
+      default: 'ceil',
     },
     flagEmoji: { type: String, default: '' },
     isActive: { type: Boolean, default: true },

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
+import Country from '@/lib/models/Country';
 import { logActivity } from '@/lib/services/logger';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
-import { roundPrice } from '@/lib/currency-rounding';
+import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
 import { parseJsonBody } from '@/lib/validation/http';
 import { autoPriceSchema } from '@/lib/validation/schemas';
 
@@ -21,6 +22,16 @@ export async function POST(
     const parsed = await parseJsonBody(request, autoPriceSchema);
     if (!parsed.success) return parsed.response;
     const { targetCurrencies } = parsed.data;
+    const normalizedCurrencies = targetCurrencies.map((code) =>
+      code.toUpperCase(),
+    );
+
+    const countries = await Country.find({
+      currencyCode: { $in: normalizedCurrencies },
+    })
+      .select('currencyCode roundingRule')
+      .lean();
+    const roundingMap = buildCurrencyRoundingMap(countries);
 
     const product = await Product.findOne({
       _id: id,
@@ -47,12 +58,16 @@ export async function POST(
 
         if (existingIndex >= 0) {
           if (!size.prices[existingIndex].isManual) {
-            size.prices[existingIndex].amount = roundPrice(amount, code);
+            size.prices[existingIndex].amount = roundPrice(
+              amount,
+              code,
+              roundingMap,
+            );
           }
         } else {
           size.prices.push({
             currencyCode: code,
-            amount: roundPrice(amount, code),
+            amount: roundPrice(amount, code, roundingMap),
             isManual: false,
           });
         }
@@ -84,12 +99,12 @@ export async function POST(
               !product.partialPayment.minimumPayments[existingIndex].isManual
             ) {
               product.partialPayment.minimumPayments[existingIndex].value =
-                roundPrice(amount, code);
+                roundPrice(amount, code, roundingMap);
             }
           } else {
             product.partialPayment.minimumPayments.push({
               currencyCode: code,
-              value: roundPrice(amount, code),
+              value: roundPrice(amount, code, roundingMap),
               isManual: false,
             });
           }

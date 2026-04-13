@@ -1,32 +1,22 @@
+import Country from '@/lib/models/Country';
+
 /**
  * Currency-specific rounding rules for auto-calculated prices.
  *
- * - 'nearest-ten':  round UP to the nearest 10  (e.g. 4→10, 11→20, 30→30)
- * - 'nearest-five': round UP to the nearest 5   (e.g. 2→5, 6→10, 15→15)
- * - 'ceil':         Math.ceil – round UP to the nearest integer (default)
- *
- * Currencies not listed here fall back to 'ceil'.
- * Add new entries as needed — the key is the uppercase ISO 4217 code.
+ * Rules are configured in countries data and resolved by currency code.
  */
 
 export type RoundingRule = 'nearest-ten' | 'nearest-five' | 'ceil';
 
-const CURRENCY_ROUNDING: Record<string, RoundingRule> = {
-  // Round to nearest 10
-  EGP: 'nearest-ten',
-
-  // Round to nearest 5
-  SAR: 'nearest-five',
-  QAR: 'nearest-five',
-  USD: 'nearest-five',
-  EUR: 'nearest-five',
-  TRY: 'nearest-five',
+type CountryWithRounding = {
+  currencyCode: string;
+  roundingRule?: RoundingRule | null;
 };
 
-/** Apply the rounding rule for the given currency code. */
-export function roundPrice(amount: number, currencyCode: string): number {
-  const rule = CURRENCY_ROUNDING[currencyCode.toUpperCase()] ?? 'ceil';
-
+export function roundPriceByRule(
+  amount: number,
+  rule: RoundingRule = 'ceil',
+): number {
   switch (rule) {
     case 'nearest-ten':
       return Math.ceil(amount / 10) * 10;
@@ -36,4 +26,46 @@ export function roundPrice(amount: number, currencyCode: string): number {
     default:
       return Math.ceil(amount);
   }
+}
+
+export function buildCurrencyRoundingMap(
+  countries: CountryWithRounding[],
+): Record<string, RoundingRule> {
+  const map: Record<string, RoundingRule> = {};
+
+  for (const country of countries) {
+    const code = country.currencyCode?.toUpperCase();
+    if (!code || map[code]) continue;
+    map[code] = country.roundingRule ?? 'ceil';
+  }
+
+  return map;
+}
+
+export async function getCurrencyRoundingMap(
+  currencyCodes?: string[],
+): Promise<Record<string, RoundingRule>> {
+  const normalizedCodes = currencyCodes
+    ?.map((code) => code.toUpperCase())
+    .filter(Boolean);
+
+  const query = normalizedCodes?.length
+    ? { currencyCode: { $in: normalizedCodes } }
+    : {};
+
+  const countries = (await Country.find(query)
+    .select('currencyCode roundingRule')
+    .lean()) as CountryWithRounding[];
+
+  return buildCurrencyRoundingMap(countries);
+}
+
+/** Apply the rounding rule for the given currency code. */
+export function roundPrice(
+  amount: number,
+  currencyCode: string,
+  roundingMap?: Record<string, RoundingRule>,
+): number {
+  const rule = roundingMap?.[currencyCode.toUpperCase()] ?? 'ceil';
+  return roundPriceByRule(amount, rule);
 }

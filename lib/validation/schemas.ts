@@ -174,6 +174,7 @@ export const countryCreateSchema = z
     code: z.string().trim().min(2),
     name: localizedTextSchema,
     currencyCode: z.string().trim().min(3).optional(),
+    roundingRule: z.enum(['nearest-ten', 'nearest-five', 'ceil']).optional(),
     isActive: z.boolean().optional(),
     sortOrder: z.number().optional(),
   })
@@ -184,6 +185,7 @@ export const countryUpdateSchema = z
     code: z.string().trim().min(2).optional(),
     name: localizedTextSchema.optional(),
     currencyCode: z.string().trim().min(3).optional(),
+    roundingRule: z.enum(['nearest-ten', 'nearest-five', 'ceil']).optional(),
     isActive: z.boolean().optional(),
     sortOrder: z.number().optional(),
   })

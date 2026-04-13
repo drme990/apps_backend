@@ -4,7 +4,7 @@ import Product from '@/lib/models/Product';
 import Country from '@/lib/models/Country';
 import CronLog from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
-import { roundPrice } from '@/lib/currency-rounding';
+import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
 
 export async function GET(request: Request) {
   // Verify the request is from Vercel Cron
@@ -23,11 +23,12 @@ export async function GET(request: Request) {
 
     // Get all active country currency codes as target currencies
     const countries = await Country.find({ isActive: true })
-      .select('currencyCode')
+      .select('currencyCode roundingRule')
       .lean();
     const targetCurrencies = [
       ...new Set(countries.map((c) => c.currencyCode.toUpperCase())),
     ];
+    const roundingMap = buildCurrencyRoundingMap(countries);
 
     if (targetCurrencies.length === 0) {
       return NextResponse.json({
@@ -58,13 +59,17 @@ export async function GET(request: Request) {
 
           if (existingIndex >= 0) {
             if (!size.prices[existingIndex].isManual) {
-              size.prices[existingIndex].amount = roundPrice(amount, code);
+              size.prices[existingIndex].amount = roundPrice(
+                amount,
+                code,
+                roundingMap,
+              );
               modified = true;
             }
           } else {
             size.prices.push({
               currencyCode: code,
-              amount: roundPrice(amount, code),
+              amount: roundPrice(amount, code, roundingMap),
               isManual: false,
             });
             modified = true;
@@ -97,13 +102,13 @@ export async function GET(request: Request) {
                 !product.partialPayment.minimumPayments[existingIndex].isManual
               ) {
                 product.partialPayment.minimumPayments[existingIndex].value =
-                  roundPrice(amount, code);
+                  roundPrice(amount, code, roundingMap);
                 modified = true;
               }
             } else {
               product.partialPayment.minimumPayments.push({
                 currencyCode: code,
-                value: roundPrice(amount, code),
+                value: roundPrice(amount, code, roundingMap),
                 isManual: false,
               });
               modified = true;
