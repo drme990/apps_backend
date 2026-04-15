@@ -669,6 +669,16 @@ export async function POST(request: NextRequest) {
     let paymentType: 'full' | 'half' | 'partial' = 'full';
 
     if (paymentOption === 'half') {
+      if (product.supportsHalfPayment === false) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'This product does not support half payment',
+          },
+          { status: 400 },
+        );
+      }
+
       isPartialPayment = true;
       paymentType = 'half';
       payAmount = Math.ceil(amountAfterDiscount / 2);

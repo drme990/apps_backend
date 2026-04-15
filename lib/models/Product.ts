@@ -65,6 +65,7 @@ export interface IProduct {
   inStock: boolean;
   isBestSeller?: boolean;
   isActive: boolean;
+  supportsHalfPayment?: boolean;
   media: IProductMedia[];
   sizes: IProductSize[];
   partialPayment: IPartialPayment;
@@ -237,6 +238,7 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     inStock: { type: Boolean, default: true },
     isBestSeller: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    supportsHalfPayment: { type: Boolean, default: true },
     media: {
       type: [ProductMediaSchema],
       default: [],
