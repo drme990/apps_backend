@@ -29,6 +29,7 @@ import { getOutstandingBalanceLock } from '@/lib/services/outstanding-balance-lo
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadImage } from '@/lib/services/cloudinary';
+import { convertCurrency } from '@/lib/services/currency';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -942,18 +943,68 @@ export async function POST(request: NextRequest) {
     let paymentCurrency = currencyUpper;
 
     if (!EASYKASH_CURRENCIES.includes(currencyUpper)) {
-      const egpPriceEntry = selectedSize.prices?.find(
-        (p: { currencyCode: string; amount: number }) =>
-          p.currencyCode === 'EGP',
-      );
-      const egpUnitPrice = egpPriceEntry?.amount ?? unitPrice;
-      const egpTotal = egpUnitPrice * quantity;
-      const couponRatio = totalAmount > 0 ? couponDiscount / totalAmount : 0;
-      const egpAfterDiscount = egpTotal - egpTotal * couponRatio;
-      const payRatio =
-        amountAfterDiscount > 0 ? payAmount / amountAfterDiscount : 1;
-      easykashAmount = Math.ceil(egpAfterDiscount * payRatio);
-      paymentCurrency = 'EGP';
+      try {
+        const convertedAmount = await convertCurrency(
+          payAmount,
+          currencyUpper,
+          'EGP',
+        );
+
+        if (!Number.isFinite(convertedAmount) || convertedAmount <= 0) {
+          throw new Error('Converted amount is invalid');
+        }
+
+        easykashAmount = Math.ceil(convertedAmount);
+        paymentCurrency = 'EGP';
+      } catch (conversionError) {
+        const egpPriceEntry = selectedSize.prices?.find(
+          (p: { currencyCode: string; amount: number }) =>
+            p.currencyCode === 'EGP',
+        );
+
+        if (
+          typeof egpPriceEntry?.amount !== 'number' ||
+          egpPriceEntry.amount <= 0
+        ) {
+          await Order.findByIdAndDelete(order._id);
+          const reason =
+            conversionError instanceof Error
+              ? conversionError.message
+              : 'Unknown conversion error';
+
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Unable to convert ${currencyUpper} amount to EGP and no EGP product price is configured. (${reason})`,
+            },
+            { status: 500 },
+          );
+        }
+
+        const egpUnitPrice = egpPriceEntry.amount;
+        const egpTotal = egpUnitPrice * quantity;
+        const couponRatio = totalAmount > 0 ? couponDiscount / totalAmount : 0;
+        const egpAfterDiscount = egpTotal - egpTotal * couponRatio;
+        const payRatio =
+          amountAfterDiscount > 0 ? payAmount / amountAfterDiscount : 1;
+
+        easykashAmount = Math.ceil(egpAfterDiscount * payRatio);
+        paymentCurrency = 'EGP';
+
+        const reason =
+          conversionError instanceof Error
+            ? conversionError.message
+            : 'Unknown conversion error';
+        log('warn', 'checkout.currency_conversion_fallback_to_db_egp', {
+          ip,
+          traceId,
+          orderNumber: order.orderNumber,
+          fromCurrency: currencyUpper,
+          toCurrency: 'EGP',
+          reason,
+          fallbackEgpAmount: easykashAmount,
+        });
+      }
     }
 
     if (easykashAmount <= 1) {

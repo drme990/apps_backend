@@ -9,14 +9,41 @@ function hasOrderUserId(userId: unknown): boolean {
   return false;
 }
 
-function parseIsoDate(value: string | null): Date | null {
+function parseIsoDateParts(
+  value: string | null,
+): { year: number; month: number; day: number } | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
 
   const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(year, month - 1, day);
+  const date = new Date(Date.UTC(year, month - 1, day));
 
   if (Number.isNaN(date.getTime())) return null;
-  return date;
+  return { year, month, day };
+}
+
+function parseTimezoneOffsetMinutes(value: string | null): number {
+  const parsed = Number.parseInt(value || '', 10);
+  if (Number.isNaN(parsed)) return 0;
+
+  // Real-world timezone offsets typically fall between UTC-12 and UTC+14.
+  if (parsed < -840 || parsed > 840) return 0;
+  return parsed;
+}
+
+function getUtcStartOfLocalDay(
+  dateParts: { year: number; month: number; day: number },
+  timezoneOffsetMinutes: number,
+): Date {
+  const utcMidnightMs = Date.UTC(
+    dateParts.year,
+    dateParts.month - 1,
+    dateParts.day,
+    0,
+    0,
+    0,
+    0,
+  );
+  return new Date(utcMidnightMs + timezoneOffsetMinutes * 60 * 1000);
 }
 
 export async function GET(request: NextRequest) {
@@ -38,6 +65,9 @@ export async function GET(request: NextRequest) {
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
+    const timezoneOffsetMinutes = parseTimezoneOffsetMinutes(
+      searchParams.get('tzOffsetMinutes'),
+    );
     const skip = (page - 1) * maxLimit;
 
     const query: Record<string, unknown> = {};
@@ -92,11 +122,13 @@ export async function GET(request: NextRequest) {
     }
 
     const updatedAtFilter: Record<string, Date> = {};
-    const parsedSpecificDate = parseIsoDate(specificDate);
+    const parsedSpecificDate = parseIsoDateParts(specificDate);
 
     if (parsedSpecificDate) {
-      const start = new Date(parsedSpecificDate);
-      start.setHours(0, 0, 0, 0);
+      const start = getUtcStartOfLocalDay(
+        parsedSpecificDate,
+        timezoneOffsetMinutes,
+      );
 
       const endExclusive = new Date(start);
       endExclusive.setDate(endExclusive.getDate() + 1);
@@ -104,17 +136,24 @@ export async function GET(request: NextRequest) {
       updatedAtFilter.$gte = start;
       updatedAtFilter.$lt = endExclusive;
     } else {
-      const parsedFromDate = parseIsoDate(fromDate);
-      const parsedToDate = parseIsoDate(toDate);
+      const parsedFromDate = parseIsoDateParts(fromDate);
+      const parsedToDate = parseIsoDateParts(toDate);
 
       if (parsedFromDate) {
-        parsedFromDate.setHours(0, 0, 0, 0);
-        updatedAtFilter.$gte = parsedFromDate;
+        updatedAtFilter.$gte = getUtcStartOfLocalDay(
+          parsedFromDate,
+          timezoneOffsetMinutes,
+        );
       }
 
       if (parsedToDate) {
-        parsedToDate.setHours(23, 59, 59, 999);
-        updatedAtFilter.$lte = parsedToDate;
+        const toDateStart = getUtcStartOfLocalDay(
+          parsedToDate,
+          timezoneOffsetMinutes,
+        );
+        const toDateEndExclusive = new Date(toDateStart);
+        toDateEndExclusive.setDate(toDateEndExclusive.getDate() + 1);
+        updatedAtFilter.$lt = toDateEndExclusive;
       }
     }
 

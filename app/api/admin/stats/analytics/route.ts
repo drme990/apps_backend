@@ -5,6 +5,14 @@ import Order from '@/lib/models/Order';
 
 type RevenuePoint = { label: string; revenue: number };
 type AnalyticsMatchFilter = { status?: string };
+type SupportedEarningsCurrency = 'EGP' | 'SAR' | 'USD' | 'EUR';
+
+const SUPPORTED_EARNINGS_CURRENCIES: readonly SupportedEarningsCurrency[] = [
+  'EGP',
+  'SAR',
+  'USD',
+  'EUR',
+];
 
 function getLastDaysRange(days: number): Date {
   const now = new Date();
@@ -79,6 +87,7 @@ export async function GET(request: Request) {
 
     const dayStart = getLastDaysRange(days);
     const monthStart = getLastMonthsRange(months);
+    const earningsStart = months >= 12 ? monthStart : dayStart;
 
     // Build common match filter
     const matchFilter: AnalyticsMatchFilter = {};
@@ -94,6 +103,7 @@ export async function GET(request: Request) {
       ordersByStatusAgg,
       paymentTypeAgg,
       topProductsAgg,
+      earningsByCurrencyAgg,
     ] = await Promise.all([
       // Legacy chart: Orders by country
       Order.aggregate([
@@ -226,6 +236,38 @@ export async function GET(request: Request) {
         { $sort: { value: -1 } },
         { $limit: 10 },
       ]),
+
+      // Earnings by currency from paid payments records.
+      Order.aggregate([
+        {
+          $match: {
+            ...matchFilter,
+            payments: { $exists: true, $ne: [] },
+          },
+        },
+        { $unwind: '$payments' },
+        {
+          $addFields: {
+            paymentEventDate: {
+              $ifNull: ['$payments.paidAt', '$payments.createdAt'],
+            },
+            paymentCurrencyUpper: { $toUpper: '$payments.currency' },
+          },
+        },
+        {
+          $match: {
+            paymentEventDate: { $gte: earningsStart },
+            'payments.status': 'paid',
+            paymentCurrencyUpper: { $in: [...SUPPORTED_EARNINGS_CURRENCIES] },
+          },
+        },
+        {
+          $group: {
+            _id: '$paymentCurrencyUpper',
+            total: { $sum: { $ifNull: ['$payments.amount', 0] } },
+          },
+        },
+      ]),
     ]);
 
     const weekdayNames = [
@@ -318,6 +360,20 @@ export async function GET(request: Request) {
       }),
     );
 
+    const earningsByCurrencyMap = new Map<SupportedEarningsCurrency, number>(
+      earningsByCurrencyAgg.map((item: { _id: string; total: number }) => [
+        item._id as SupportedEarningsCurrency,
+        item.total,
+      ]),
+    );
+
+    const earningsByCurrency = {
+      EGP: earningsByCurrencyMap.get('EGP') ?? 0,
+      SAR: earningsByCurrencyMap.get('SAR') ?? 0,
+      USD: earningsByCurrencyMap.get('USD') ?? 0,
+      EUR: earningsByCurrencyMap.get('EUR') ?? 0,
+    };
+
     return NextResponse.json({
       success: true,
       data: {
@@ -328,6 +384,7 @@ export async function GET(request: Request) {
         topProducts,
         ordersByCountry: ordersByCountryData,
         ordersByWeekday: ordersByWeekdayData,
+        earningsByCurrency,
       },
     });
   } catch (error) {
