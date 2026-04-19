@@ -74,6 +74,18 @@ function mapRouteAppToAppId(app: RouteApp): AppId {
   return app;
 }
 
+function blockedAccountResponse() {
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        'Your account is temporarily restricted. Contact support on WhatsApp. You can still complete remaining payments from your order history.',
+      code: 'ACCOUNT_ACTION_BLOCKED',
+    },
+    { status: 403 },
+  );
+}
+
 function toPublicUser(user: AuthUserDoc, appId: AppId) {
   return {
     _id: user._id,
@@ -84,6 +96,7 @@ function toPublicUser(user: AuthUserDoc, appId: AppId) {
       ? {
           phone: user.phone || '',
           country: user.country || '',
+          isBanned: Boolean(user.isBanned),
         }
       : {}),
     ...(appId === 'admin_panel'
@@ -202,13 +215,6 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
       return NextResponse.json(
         { success: false, error: 'Invalid email or password' },
         { status: 401 },
-      );
-    }
-
-    if (appId !== 'admin_panel' && user.isBanned) {
-      return NextResponse.json(
-        { success: false, error: 'Your account has been banned' },
-        { status: 403 },
       );
     }
 
@@ -403,13 +409,6 @@ export async function getProfileForApp(app: RouteApp) {
       );
     }
 
-    if (appId !== 'admin_panel' && user.isBanned) {
-      return NextResponse.json(
-        { success: false, error: 'Your account has been banned' },
-        { status: 403 },
-      );
-    }
-
     return NextResponse.json({
       success: true,
       data: toPublicUser(user, appId),
@@ -482,6 +481,18 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
 
     const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
 
+    const userDoc = await UserModel.findById(authUser.userId);
+    if (!userDoc) {
+      return NextResponse.json(
+        { success: false, error: 'User not found' },
+        { status: 404 },
+      );
+    }
+
+    if (appId !== 'admin_panel' && userDoc.isBanned) {
+      return blockedAccountResponse();
+    }
+
     if (typeof updatePayload.email === 'string') {
       const existingUser = await UserModel.findOne({
         email: updatePayload.email,
@@ -516,14 +527,6 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
           { status: 409 },
         );
       }
-    }
-
-    const userDoc = await UserModel.findById(authUser.userId);
-    if (!userDoc) {
-      return NextResponse.json(
-        { success: false, error: 'User not found' },
-        { status: 404 },
-      );
     }
 
     if (parsed.data.currentPassword && parsed.data.newPassword) {

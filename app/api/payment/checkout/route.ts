@@ -204,7 +204,12 @@ export async function POST(request: NextRequest) {
 
       if (authenticatedUser.isBanned) {
         return NextResponse.json(
-          { success: false, error: 'Your account has been banned' },
+          {
+            success: false,
+            error:
+              'Your account is restricted from placing new orders. You can still pay any remaining amount from order history.',
+            code: 'ACCOUNT_ACTION_BLOCKED',
+          },
           { status: 403 },
         );
       }
@@ -272,7 +277,12 @@ export async function POST(request: NextRequest) {
       if (existingEmailUser) {
         if (existingEmailUser.isBanned) {
           return NextResponse.json(
-            { success: false, error: 'Your account has been banned' },
+            {
+              success: false,
+              error:
+                'Your account is restricted from placing new orders. You can still pay any remaining amount from order history.',
+              code: 'ACCOUNT_ACTION_BLOCKED',
+            },
             { status: 403 },
           );
         }
