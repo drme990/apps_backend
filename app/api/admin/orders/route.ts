@@ -210,7 +210,6 @@ export async function GET(request: NextRequest) {
       source: 1,
       countryCode: 1,
       locale: 1,
-      sizeIndex: 1,
       createdAt: 1,
       updatedAt: 1,
     };

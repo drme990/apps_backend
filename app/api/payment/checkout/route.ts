@@ -813,6 +813,11 @@ export async function POST(request: NextRequest) {
           price: unitPrice,
           currency: currencyUpper,
           quantity,
+          sizeIndex: activeSizeIndex,
+          sizeName: {
+            ar: selectedSize?.name?.ar || '',
+            en: selectedSize?.name?.en || '',
+          },
         },
       ],
       userId: effectiveUserId,
@@ -823,7 +828,6 @@ export async function POST(request: NextRequest) {
       remainingAmount: amountAfterDiscount,
       isPartialPayment,
       paymentType,
-      sizeIndex: activeSizeIndex,
       currency: currencyUpper,
       status: 'pending',
       billingData: {

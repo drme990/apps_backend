@@ -123,6 +123,8 @@ export interface IOrderItem {
   price: number;
   currency: string;
   quantity: number;
+  sizeIndex?: number;
+  sizeName?: { ar: string; en: string };
 }
 
 export interface IBillingData {
@@ -204,7 +206,6 @@ export interface IOrder {
   remainingAmount?: number;
   isPartialPayment?: boolean;
   paymentType?: PaymentType;
-  sizeIndex?: number;
   referralId?: string;
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
@@ -236,6 +237,11 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
     price: { type: Number, required: true, min: 0 },
     currency: { type: String, required: true },
     quantity: { type: Number, required: true, min: 1, default: 1 },
+    sizeIndex: { type: Number, min: 0, default: 0 },
+    sizeName: {
+      ar: { type: String, trim: true },
+      en: { type: String, trim: true },
+    },
   },
   { _id: false },
 );
@@ -456,7 +462,6 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       default: 'full',
       index: true,
     },
-    sizeIndex: { type: Number, min: 0, default: 0 },
     referralId: { type: String, trim: true, index: true },
     termsAgreedAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },

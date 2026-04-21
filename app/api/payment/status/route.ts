@@ -276,7 +276,6 @@ export async function GET(request: NextRequest) {
         remainingAmount: orderObj.remainingAmount ?? 0,
         reservationData: orderObj.reservationData || [],
         referralId: orderObj.referralId || null,
-        sizeIndex: orderObj.sizeIndex ?? 0,
         source: orderObj.source ?? 'manasik',
         referralInfo,
         createdAt: orderObj.createdAt,
