@@ -5,6 +5,7 @@ import Appearance from '@/lib/models/Appearance';
 export async function GET(request: NextRequest) {
   const EMPTY = {
     worksImages: { row1: [] as string[], row2: [] as string[] },
+    audioReviews: [] as string[],
     whatsAppDefaultMessage: '',
     bannerText: { ar: '', en: '' },
   };
@@ -26,6 +27,7 @@ export async function GET(request: NextRequest) {
     const project = request.nextUrl.searchParams.get('project') || 'manasik';
     const appearance = (await Appearance.findOne({ project }).lean()) as {
       worksImages?: { row1: string[]; row2: string[] };
+      audioReviews?: string[];
       whatsAppDefaultMessage?: string;
       bannerText?: unknown;
     } | null;
@@ -50,6 +52,7 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         worksImages,
+        audioReviews: appearance.audioReviews ?? [],
         whatsAppDefaultMessage: appearance.whatsAppDefaultMessage?.trim() || '',
         bannerText: normalizeBannerText(appearance.bannerText),
         // Keep backward compatibility for existing consumers.

@@ -6,7 +6,7 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { appearanceUpdateSchema } from '@/lib/validation/schemas';
 
-const VALID_PROJECTS = ['ghadaq', 'manasik'];
+const VALID_PROJECTS = ['ghadaq', 'manasik', 'shared'];
 
 export async function GET(
   _request: NextRequest,

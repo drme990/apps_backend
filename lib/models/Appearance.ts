@@ -2,8 +2,9 @@ import mongoose from 'mongoose';
 
 export interface IAppearance {
   _id?: string;
-  project: 'ghadaq' | 'manasik';
+  project: 'ghadaq' | 'manasik' | 'shared';
   worksImages: { row1: string[]; row2: string[] };
+  audioReviews?: string[];
   whatsAppDefaultMessage?: string;
   bannerText?: { ar: string; en: string };
   createdAt?: Date;
@@ -17,11 +18,15 @@ const AppearanceSchema = new mongoose.Schema<IAppearance>(
       required: true,
       unique: true,
       index: true,
-      enum: ['ghadaq', 'manasik'],
+      enum: ['ghadaq', 'manasik', 'shared'],
     },
     worksImages: {
       row1: { type: [String], default: [] },
       row2: { type: [String], default: [] },
+    },
+    audioReviews: {
+      type: [String],
+      default: [],
     },
     whatsAppDefaultMessage: {
       type: String,
