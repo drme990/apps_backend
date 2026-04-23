@@ -4,7 +4,7 @@ export interface IAppearance {
   _id?: string;
   project: 'ghadaq' | 'manasik' | 'shared';
   worksImages: { row1: string[]; row2: string[] };
-  audioReviews?: string[];
+  audioReviews?: { ar: string[]; en: string[] };
   whatsAppDefaultMessage?: string;
   bannerText?: { ar: string; en: string };
   createdAt?: Date;
@@ -25,8 +25,8 @@ const AppearanceSchema = new mongoose.Schema<IAppearance>(
       row2: { type: [String], default: [] },
     },
     audioReviews: {
-      type: [String],
-      default: [],
+      ar: { type: [String], default: [] },
+      en: { type: [String], default: [] },
     },
     whatsAppDefaultMessage: {
       type: String,
