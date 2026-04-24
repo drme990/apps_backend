@@ -25,6 +25,8 @@ import {
   normalizeEmail,
   normalizePhone,
 } from '@/lib/services/partial-payment-guard';
+import { getClientIp, isValidIp } from '@/lib/utils/ip';
+import { isIpBanned } from '@/lib/models/BannedIP';
 
 type RouteApp = 'admin_panel' | 'ghadaq' | 'manasik';
 
@@ -38,6 +40,9 @@ type AuthUserDoc = {
   phone?: string;
   country?: string;
   isBanned?: boolean;
+  registrationIp?: string;
+  lastLoginIp?: string;
+  lastLoginAt?: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 };
 
@@ -182,6 +187,8 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
     const appId = mapRouteAppToAppId(app);
     const { email, password } = parsed.data;
 
+    const clientIp = getClientIp(request);
+
     const rateLimitKey = `login:${appId}:${email.toLowerCase()}`;
     const rateLimit = await checkRateLimit(rateLimitKey, {
       maxAttempts: 5,
@@ -216,6 +223,12 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
         { success: false, error: 'Invalid email or password' },
         { status: 401 },
       );
+    }
+
+    if (isValidIp(clientIp)) {
+      user.lastLoginIp = clientIp;
+      user.lastLoginAt = new Date();
+      await user.save();
     }
 
     const token = generateToken({
@@ -267,6 +280,22 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
 
     const { name, email, password, phone, country } = parsed.data;
     const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
+
+    const clientIp = getClientIp(request);
+
+    if (appId !== 'admin_panel' && isValidIp(clientIp)) {
+      const ipBanned = await isIpBanned(clientIp);
+      if (ipBanned) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Your IP address has been banned. Contact support for assistance.',
+            code: 'IP_BANNED',
+          },
+          { status: 403 },
+        );
+      }
+    }
 
     const normalizedEmail = normalizeEmail(email);
     if (!normalizedEmail) {
@@ -320,6 +349,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       email: normalizedEmail,
       password,
       appId,
+      registrationIp: isValidIp(clientIp) ? clientIp : undefined,
     };
 
     if (appId === 'admin_panel') {

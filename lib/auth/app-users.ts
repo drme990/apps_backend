@@ -37,6 +37,9 @@ export interface IBaseAppUser {
   appId: Exclude<AppId, 'admin_panel'>;
   createdAt?: Date;
   updatedAt?: Date;
+  registrationIp?: string;
+  lastLoginIp?: string;
+  lastLoginAt?: Date;
 }
 
 export interface IBaseAppUserMethods {
@@ -87,6 +90,9 @@ function buildBaseAppUserModel(
       resetPasswordToken: { type: String, select: false },
       resetPasswordExpires: { type: Date, select: false },
       appId: { type: String, enum: [appId], default: appId },
+      registrationIp: { type: String, trim: true },
+      lastLoginIp: { type: String, trim: true },
+      lastLoginAt: { type: Date },
     },
     { timestamps: true, collection },
   );

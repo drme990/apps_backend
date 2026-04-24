@@ -9,6 +9,7 @@ import {
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
 import { logActivity } from '@/lib/services/logger';
+import { banIpAddress, unbanIpAddress } from '@/lib/models/BannedIP';
 
 const bodySchema = z.object({
   isBanned: z.boolean(),
@@ -48,7 +49,7 @@ export async function PATCH(
     const customer = await customerModel.findByIdAndUpdate(
       id,
       { isBanned: parsedBody.data.isBanned },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!customer) {
@@ -58,6 +59,19 @@ export async function PATCH(
       );
     }
 
+    const ipAddress = customer.registrationIp || customer.lastLoginIp;
+    if (ipAddress) {
+      if (parsedBody.data.isBanned) {
+        await banIpAddress(
+          ipAddress,
+          auth.user.userId,
+          `User ban: ${customer.email} (${appId})`,
+        );
+      } else {
+        await unbanIpAddress(ipAddress);
+      }
+    }
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
@@ -65,7 +79,7 @@ export async function PATCH(
       action: 'update',
       resource: 'user',
       resourceId: String(customer._id),
-      details: `${parsedBody.data.isBanned ? 'Banned' : 'Unbanned'} customer ${customer.email} (${appId})`,
+      details: `${parsedBody.data.isBanned ? 'Banned' : 'Unbanned'} customer ${customer.email} (${appId})${ipAddress ? ` - IP: ${ipAddress}` : ''}`,
     });
 
     return NextResponse.json({
