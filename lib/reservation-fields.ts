@@ -164,12 +164,25 @@ export function normalizeReservationFields(
           ? Math.max(0, parseInt(rawMaxLength, 10) || 0) || undefined
           : undefined;
 
+    // Use product's custom options if available, otherwise use preset options
+    const matchedOptions = (matched as { options?: unknown }).options;
+    const customOptions =
+      Array.isArray(matchedOptions) && matchedOptions.length > 0
+        ? matchedOptions.filter(
+            (opt): opt is ReservationFieldOption =>
+              typeof opt === 'object' &&
+              opt !== null &&
+              typeof (opt as ReservationFieldOption).ar === 'string' &&
+              typeof (opt as ReservationFieldOption).en === 'string',
+          )
+        : undefined;
+
     return [
       {
         key: preset.key,
         type: preset.type,
         label: preset.label,
-        options: preset.options,
+        options: customOptions ?? preset.options,
         required,
         maxLength,
         supportsMulti: Boolean(

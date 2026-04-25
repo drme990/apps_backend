@@ -57,6 +57,16 @@ export async function POST(request: NextRequest) {
     const parsed = await parseJsonBody(request, productCreateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
+
+    // Check if slug already exists
+    const existingSlug = await Product.findOne({ slug: body.slug });
+    if (existingSlug) {
+      return NextResponse.json(
+        { success: false, error: 'Product slug already exists' },
+        { status: 409 },
+      );
+    }
+
     const normalizedMedia = normalizeProductMedia(body.media);
     const product = await Product.create({
       ...body,

@@ -69,6 +69,20 @@ export async function PUT(
     const body = parsed.data;
     const normalizedMedia = normalizeProductMedia(body.media);
 
+    // Check if slug already exists on another product
+    if (body.slug) {
+      const existingSlug = await Product.findOne({
+        slug: body.slug,
+        _id: { $ne: id },
+      });
+      if (existingSlug) {
+        return NextResponse.json(
+          { success: false, error: 'Product slug already exists' },
+          { status: 409 },
+        );
+      }
+    }
+
     // Use findById + set + save for reliable nested array updates (e.g. reservationFields)
     const doc = await Product.findOne({ _id: id, isDeleted: { $ne: true } });
     if (!doc) {
