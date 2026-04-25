@@ -65,9 +65,12 @@ export async function PUT(
     const appearance = await Appearance.findOneAndUpdate(
       { project },
       { ...body, project },
-      { new: true, upsert: true, runValidators: true },
+      {
+        returnDocument: 'after',
+        upsert: true,
+        runValidators: true,
+      },
     );
-
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,

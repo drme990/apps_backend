@@ -5,7 +5,7 @@ import Appearance from '@/lib/models/Appearance';
 export async function GET(request: NextRequest) {
   const EMPTY = {
     worksImages: { row1: [] as string[], row2: [] as string[] },
-    audioReviews: [] as string[],
+    audioReviews: [] as unknown[],
     whatsAppDefaultMessage: '',
     bannerText: { ar: '', en: '' },
   };
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const project = request.nextUrl.searchParams.get('project') || 'manasik';
     const appearance = (await Appearance.findOne({ project }).lean()) as {
       worksImages?: { row1: string[]; row2: string[] };
-      audioReviews?: string[];
+      audioReviews?: unknown[];
       whatsAppDefaultMessage?: string;
       bannerText?: unknown;
     } | null;
