@@ -49,6 +49,7 @@ export const RESERVATION_FIELD_PRESETS: ReservationFieldConfig[] = [
     label: { ar: 'النية', en: 'Intention' },
     options: [
       { ar: 'عقيقة', en: 'Aqeeqah' },
+      { ar: 'أُضحيــَــة', en: 'Sacrifice' },
       { ar: 'صدقة', en: 'Charity' },
       { ar: 'نذر', en: 'Vow (Nadhr)' },
       { ar: 'فدو', en: 'Protective Sacrifice' },
