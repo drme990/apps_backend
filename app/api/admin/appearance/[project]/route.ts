@@ -5,6 +5,7 @@ import Appearance from '@/lib/models/Appearance';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { appearanceUpdateSchema } from '@/lib/validation/schemas';
+import { AudioReviewInput, validateAudioMains } from '@/lib/audio-main-logic';
 
 const VALID_PROJECTS = ['ghadaq', 'manasik', 'shared'];
 
@@ -28,6 +29,14 @@ export async function GET(
     }
 
     const appearance = await Appearance.findOne({ project }).lean();
+
+    // Validate audio mains on load to fix any data inconsistencies
+    if (appearance?.audioReviews && Array.isArray(appearance.audioReviews)) {
+      appearance.audioReviews = validateAudioMains(
+        appearance.audioReviews as AudioReviewInput[],
+      );
+    }
+
     return NextResponse.json({ success: true, data: appearance });
   } catch (error) {
     console.error('Error fetching appearance:', error);
@@ -62,6 +71,12 @@ export async function PUT(
     const parsed = await parseJsonBody(request, appearanceUpdateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
+
+    // Validate audio reviews - enforce main audio rules
+    if (body.audioReviews && Array.isArray(body.audioReviews)) {
+      body.audioReviews = validateAudioMains(body.audioReviews);
+    }
+
     const appearance = await Appearance.findOneAndUpdate(
       { project },
       { ...body, project },

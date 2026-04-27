@@ -7,6 +7,8 @@ type RevenuePoint = { label: string; revenue: number };
 type AnalyticsMatchFilter = { status?: string };
 type SupportedEarningsCurrency = 'EGP' | 'SAR' | 'USD' | 'EUR';
 
+type MongoExpression = Record<string, unknown>;
+
 const SUPPORTED_EARNINGS_CURRENCIES: readonly SupportedEarningsCurrency[] = [
   'EGP',
   'SAR',
@@ -95,6 +97,50 @@ export async function GET(request: Request) {
       matchFilter.status = statusParam;
     }
 
+    const dateMatchFilter = {
+      createdAt: { $gte: dayStart },
+    };
+
+    const paymentTypeExpression: MongoExpression = {
+      $ifNull: [
+        '$paymentType',
+        {
+          $cond: [
+            { $eq: ['$isPartialPayment', true] },
+            {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $ifNull: ['$fullAmount', 0] }, 0] },
+                    {
+                      $lte: [
+                        {
+                          $abs: {
+                            $subtract: [
+                              { $ifNull: ['$totalAmount', 0] },
+                              {
+                                $ceil: {
+                                  $divide: [{ $ifNull: ['$fullAmount', 0] }, 2],
+                                },
+                              },
+                            ],
+                          },
+                        },
+                        1,
+                      ],
+                    },
+                  ],
+                },
+                'half',
+                'partial',
+              ],
+            },
+            'full',
+          ],
+        },
+      ],
+    };
+
     const [
       ordersByCountry,
       ordersByWeekday,
@@ -110,6 +156,7 @@ export async function GET(request: Request) {
         {
           $match: {
             ...matchFilter,
+            ...dateMatchFilter,
             'billingData.country': { $exists: true, $ne: null },
           },
         },
@@ -123,7 +170,7 @@ export async function GET(request: Request) {
           $sort: { value: -1 },
         },
         {
-          $limit: 10,
+          $limit: 15,
         },
       ]),
 
@@ -132,7 +179,7 @@ export async function GET(request: Request) {
         {
           $match: {
             ...matchFilter,
-            createdAt: { $exists: true },
+            createdAt: { $exists: true, $gte: dayStart },
           },
         },
         {
@@ -196,7 +243,10 @@ export async function GET(request: Request) {
       // Orders by status
       Order.aggregate([
         {
-          $match: matchFilter,
+          $match: {
+            ...matchFilter,
+            ...dateMatchFilter,
+          },
         },
         {
           $group: {
@@ -206,16 +256,17 @@ export async function GET(request: Request) {
         },
       ]),
 
-      // Full vs partial
+      // Payment types
       Order.aggregate([
         {
-          $match: matchFilter,
+          $match: {
+            ...matchFilter,
+            ...dateMatchFilter,
+          },
         },
         {
           $group: {
-            _id: {
-              $cond: [{ $eq: ['$isPartialPayment', true] }, 'partial', 'full'],
-            },
+            _id: paymentTypeExpression,
             value: { $sum: 1 },
           },
         },
@@ -224,7 +275,10 @@ export async function GET(request: Request) {
       // Top products by sold quantity
       Order.aggregate([
         {
-          $match: matchFilter,
+          $match: {
+            ...matchFilter,
+            ...dateMatchFilter,
+          },
         },
         { $unwind: '$items' },
         {
@@ -350,6 +404,7 @@ export async function GET(request: Request) {
 
     const paymentTypeBreakdown = [
       { name: 'full', value: paymentTypeMap.get('full') ?? 0 },
+      { name: 'half', value: paymentTypeMap.get('half') ?? 0 },
       { name: 'partial', value: paymentTypeMap.get('partial') ?? 0 },
     ];
 
