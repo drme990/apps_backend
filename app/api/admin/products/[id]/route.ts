@@ -134,6 +134,103 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    await connectDB();
+    const auth = await requireAdminPageAccess('products');
+    if ('error' in auth) return auth.error;
+
+    const { id } = await params;
+    const parsed = await parseJsonBody(request, productUpdateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data as Record<string, unknown>;
+
+    const hasMedia = Object.prototype.hasOwnProperty.call(body, 'media');
+    const hasReservationFields = Object.prototype.hasOwnProperty.call(
+      body,
+      'reservationFields',
+    );
+
+    if (body.slug) {
+      const existingSlug = await Product.findOne({
+        slug: body.slug,
+        _id: { $ne: id },
+      });
+      if (existingSlug) {
+        return NextResponse.json(
+          { success: false, error: 'Product slug already exists' },
+          { status: 409 },
+        );
+      }
+    }
+
+    const doc = await Product.findOne({ _id: id, isDeleted: { $ne: true } });
+    if (!doc) {
+      return NextResponse.json(
+        { success: false, error: 'Product not found' },
+        { status: 404 },
+      );
+    }
+
+    const updatePayload: Record<string, unknown> = { ...body };
+
+    if (hasMedia) {
+      updatePayload.media = normalizeProductMedia(body.media);
+    } else {
+      delete updatePayload.media;
+    }
+
+    if (hasReservationFields) {
+      updatePayload.reservationFields = normalizeReservationFields(
+        body.reservationFields,
+      );
+    } else {
+      delete updatePayload.reservationFields;
+    }
+
+    doc.set(updatePayload);
+    const product = await doc.save();
+
+    const productObject = product.toObject();
+    const createdWithLegacy = productObject as typeof productObject & {
+      images?: unknown;
+    };
+    const { images: _legacyCreateImages, ...safeCreatedProduct } =
+      createdWithLegacy;
+    const responseMedia = normalizeProductMedia(productObject.media);
+
+    await logActivity({
+      userId: auth.user.userId,
+      userName: auth.user.name,
+      userEmail: auth.user.email,
+      action: 'update',
+      resource: 'product',
+      resourceId: product._id.toString(),
+      details: `Updated product: ${product.name.en || product.name.ar}`,
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...safeCreatedProduct,
+        media: responseMedia,
+        reservationFields: normalizeReservationFields(
+          product.reservationFields,
+        ),
+      },
+    });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update product' },
+      { status: 500 },
+    );
+  }
+}
+
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
