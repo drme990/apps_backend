@@ -177,6 +177,9 @@ export const countryCreateSchema = z
     roundingRule: z.enum(['nearest-ten', 'nearest-five', 'ceil']).optional(),
     isActive: z.boolean().optional(),
     sortOrder: z.number().optional(),
+    visibilityMode: z.enum(['all', 'specific']).optional(),
+    visibleToCountries: z.array(z.string().trim().min(2)).optional(),
+    visibleToOther: z.boolean().optional(),
   })
   .strict();
 
@@ -188,6 +191,9 @@ export const countryUpdateSchema = z
     roundingRule: z.enum(['nearest-ten', 'nearest-five', 'ceil']).optional(),
     isActive: z.boolean().optional(),
     sortOrder: z.number().optional(),
+    visibilityMode: z.enum(['all', 'specific']).optional(),
+    visibleToCountries: z.array(z.string().trim().min(2)).optional(),
+    visibleToOther: z.boolean().optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

@@ -10,6 +10,9 @@ export interface ICountry {
   flagEmoji: string;
   isActive: boolean;
   sortOrder: number | null;
+  visibilityMode?: 'all' | 'specific';
+  visibleToCountries?: string[];
+  visibleToOther?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -57,6 +60,19 @@ const CountrySchema = new mongoose.Schema<ICountry>(
     flagEmoji: { type: String, default: '' },
     isActive: { type: Boolean, default: true },
     sortOrder: { type: Number, default: null },
+    visibilityMode: {
+      type: String,
+      enum: ['all', 'specific'],
+      default: 'all',
+    },
+    visibleToCountries: {
+      type: [String],
+      default: [],
+    },
+    visibleToOther: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true },
 );
