@@ -149,6 +149,9 @@ export async function POST(request: NextRequest) {
       source,
       deviceFingerprint,
       accountPassword,
+      isUpgrade,
+      fromProductId,
+      upgradeDiscount,
     } = body;
 
     const orderSource: 'manasik' | 'ghadaq' =
@@ -663,7 +666,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const totalAmount = unitPrice * quantity;
+    let totalAmount = unitPrice * quantity;
+
+    // Apply upgrade discount if applicable
+    const upgradeDiscountPercent =
+      isUpgrade && typeof upgradeDiscount === 'number' && upgradeDiscount > 0
+        ? upgradeDiscount
+        : 0;
+    if (upgradeDiscountPercent > 0) {
+      totalAmount = Math.round(totalAmount * (1 - upgradeDiscountPercent / 100));
+    }
 
     let couponDiscount = 0;
     let appliedCouponCode: string | undefined;
@@ -853,6 +865,10 @@ export async function POST(request: NextRequest) {
       couponCode: appliedCouponCode,
       couponId: appliedCouponId,
       couponDiscount,
+      // Upgrade discount tracking
+      isUpgrade: isUpgrade ?? false,
+      fromProductId: fromProductId || undefined,
+      upgradeDiscount: upgradeDiscountPercent > 0 ? upgradeDiscountPercent : undefined,
       termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
       source: orderSource,

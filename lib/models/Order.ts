@@ -201,6 +201,10 @@ export interface IOrder {
   couponCode?: string;
   couponId?: mongoose.Types.ObjectId | string;
   couponDiscount?: number;
+  // Upgrade discount tracking
+  isUpgrade?: boolean;
+  fromProductId?: mongoose.Types.ObjectId | string;
+  upgradeDiscount?: number;
   fullAmount?: number;
   paidAmount?: number;
   remainingAmount?: number;
@@ -438,6 +442,10 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     couponCode: { type: String, trim: true, uppercase: true },
     couponId: { type: mongoose.Schema.Types.ObjectId, ref: 'Coupon' },
     couponDiscount: { type: Number, min: 0, default: 0 },
+    // Upgrade discount tracking
+    isUpgrade: { type: Boolean, default: false },
+    fromProductId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    upgradeDiscount: { type: Number, min: 0, max: 100, default: 0 },
     fullAmount: { type: Number, min: 0 },
     paidAmount: { type: Number, min: 0 },
     remainingAmount: { type: Number, min: 0 },

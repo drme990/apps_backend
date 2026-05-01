@@ -86,6 +86,10 @@ export const checkoutSchema = z
     termsAgreed: z.boolean(),
     reservationData: z.unknown().optional(),
     source: z.enum(['manasik', 'ghadaq']).optional(),
+    // Upgrade discount fields
+    isUpgrade: z.boolean().optional(),
+    fromProductId: z.string().trim().optional(),
+    upgradeDiscount: z.coerce.number().min(0).max(100).optional(),
   })
   .strict();
 
