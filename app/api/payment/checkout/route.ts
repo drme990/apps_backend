@@ -8,6 +8,23 @@ import Booking from '@/lib/models/Booking';
 import { getAuthUser } from '@/lib/auth';
 import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
+
+const COUNTRY_HEADER_CANDIDATES = [
+  'x-vercel-ip-country',
+  'cf-ipcountry',
+  'cloudfront-viewer-country',
+  'x-country-code',
+] as const;
+
+function normalizeCountryCode(raw: string | null): string | null {
+  if (!raw) return null;
+
+  const code = raw.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return null;
+  if (code === 'XX' || code === 'ZZ') return null;
+
+  return code;
+}
 import {
   findReservationInputByField,
   matchReservationOption,
@@ -139,6 +156,14 @@ export async function POST(request: NextRequest) {
       source === 'ghadaq' ? 'ghadaq' : 'manasik';
     const checkoutAppId: Exclude<AppId, 'admin_panel'> =
       orderSource === 'ghadaq' ? 'ghadaq' : 'manasik';
+
+    const locationCode = COUNTRY_HEADER_CANDIDATES.reduce<string | null>(
+      (resolved, headerName) => {
+        if (resolved) return resolved;
+        return normalizeCountryCode(request.headers.get(headerName));
+      },
+      null,
+    );
 
     const sessionUser = await getAuthUser(checkoutAppId);
 
@@ -843,11 +868,9 @@ export async function POST(request: NextRequest) {
       termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
       source: orderSource,
-      normalizedEmail: partialPaymentIdentity.normalizedEmail,
-      normalizedPhone: partialPaymentIdentity.normalizedPhone,
       latestClientIp: partialPaymentIdentity.normalizedIp,
       deviceFingerprint: partialPaymentIdentity.normalizedFingerprint,
-      countryCode: resolvedBillingCountry || '',
+      location: locationCode || undefined,
       locale,
       payments: [],
       paymentAttempts: [],

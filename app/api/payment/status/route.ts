@@ -185,10 +185,7 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        if (paymentMethod) {
-          order.paymentMethod = mapPaymentMethod(paymentMethod);
-          shouldSave = true;
-        }
+
 
         if (matchedPayment) {
           if (providerRefNum) {

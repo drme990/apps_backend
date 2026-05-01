@@ -1,6 +1,9 @@
 import Order from '@/lib/models/Order';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
-import { normalizeEmail } from '@/lib/services/partial-payment-guard';
+import {
+  BLOCKING_PARTIAL_PAYMENT_STATUSES,
+  normalizeEmail,
+} from '@/lib/services/partial-payment-guard';
 
 type CheckoutSource = 'manasik' | 'ghadaq';
 
@@ -13,7 +16,6 @@ interface OutstandingBalanceCandidate {
   billingData?: {
     email?: string;
   };
-  normalizedEmail?: string;
   status?: string;
   isPartialPayment?: boolean;
   paymentType?: 'full' | 'half' | 'partial';
@@ -64,26 +66,9 @@ function toIdString(value: unknown): string | undefined {
   return undefined;
 }
 
-function resolvePaymentType(candidate: OutstandingBalanceCandidate) {
-  if (candidate.paymentType) {
-    return candidate.paymentType;
-  }
-
-  if (!candidate.isPartialPayment) {
-    return 'full';
-  }
-
-  const fullAmount = Number(candidate.fullAmount ?? 0);
-  const paidNowAmount = Number(candidate.totalAmount ?? 0);
-
-  if (fullAmount > 0) {
-    const halfAmount = Math.ceil(fullAmount / 2);
-    if (Math.abs(paidNowAmount - halfAmount) <= 1) {
-      return 'half';
-    }
-  }
-
-  return 'partial';
+function toPositiveNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 export async function getOutstandingBalanceLock(
@@ -99,7 +84,6 @@ export async function getOutstandingBalanceLock(
   }
 
   if (normalizedBillingEmail) {
-    identityClauses.push({ normalizedEmail: normalizedBillingEmail });
     identityClauses.push({ 'billingData.email': normalizedBillingEmail });
   }
 
@@ -109,9 +93,7 @@ export async function getOutstandingBalanceLock(
 
   const latestOrder = (await Order.findOne({
     source: input.source,
-    status: {
-      $nin: ['cancelled', 'refunded', 'failed'],
-    },
+    status: { $in: BLOCKING_PARTIAL_PAYMENT_STATUSES },
     $or: identityClauses,
   })
     .select({
@@ -121,7 +103,6 @@ export async function getOutstandingBalanceLock(
       source: 1,
       userId: 1,
       billingData: 1,
-      normalizedEmail: 1,
       status: 1,
       isPartialPayment: 1,
       paymentType: 1,
@@ -139,12 +120,31 @@ export async function getOutstandingBalanceLock(
     return { hasOutstandingBalance: false };
   }
 
-  // Block only partial payment orders; half-payment orders are allowed.
-  if (resolvePaymentType(latestOrder) !== 'partial') {
-    return { hasOutstandingBalance: false };
+  const calculated = calculateOrderFinancials(latestOrder);
+  let remainingAmount = calculated.remainingAmount;
+  let totalPaid = calculated.totalPaid;
+
+  if (remainingAmount <= 0) {
+    const explicitRemaining = toPositiveNumber(latestOrder.remainingAmount);
+    if (explicitRemaining > 0) {
+      remainingAmount = explicitRemaining;
+    }
   }
 
-  const { totalPaid, remainingAmount } = calculateOrderFinancials(latestOrder);
+  if (totalPaid <= 0) {
+    const explicitPaid = toPositiveNumber(latestOrder.paidAmount);
+    if (explicitPaid > 0) {
+      totalPaid = explicitPaid;
+    } else if (remainingAmount > 0) {
+      const fullAmount =
+        toPositiveNumber(latestOrder.fullAmount) ||
+        toPositiveNumber(latestOrder.totalAmount);
+      if (fullAmount > 0) {
+        totalPaid = Math.max(0, fullAmount - remainingAmount);
+      }
+    }
+  }
+
   if (totalPaid <= 0 || remainingAmount <= 0) {
     return { hasOutstandingBalance: false };
   }

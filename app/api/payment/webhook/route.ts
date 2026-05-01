@@ -466,7 +466,6 @@ export async function POST(request: NextRequest) {
         paymentRecord.paymentMethod = resolvedMethod;
       }
 
-      order.paymentMethod = resolvedMethod;
 
       const { totalPaid, remainingAmount } = calculateOrderFinancials(order);
       order.paidAmount = totalPaid;
@@ -553,7 +552,7 @@ export async function POST(request: NextRequest) {
             ln:
               order.billingData?.fullName?.split(' ').slice(1).join(' ') ||
               order.billingData?.fullName?.split(' ')[0],
-            country: order.billingData?.country || order.countryCode,
+            country: order.billingData?.country || order.location,
             external_id: order._id.toString(),
           },
         }).catch(() => {});

@@ -192,7 +192,7 @@ export interface IOrder {
   totalAmount: number;
   currency: string;
   status: OrderStatus;
-  paymentMethod?: PaymentMethod;
+  location?: string;
   billingData: IBillingData;
   easykashRef?: string;
   easykashProductCode?: string;
@@ -212,11 +212,8 @@ export interface IOrder {
   payments?: IPayment[];
   paymentAttempts?: IPaymentAttempt[];
   source?: 'manasik' | 'ghadaq';
-  normalizedEmail?: string;
-  normalizedPhone?: string;
   latestClientIp?: string;
   deviceFingerprint?: string;
-  countryCode?: string;
   locale?: string;
   createdAt?: Date;
   updatedAt?: Date;
@@ -432,18 +429,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       default: 'pending',
       index: true,
     },
-    paymentMethod: {
-      type: String,
-      enum: [
-        'card',
-        'wallet',
-        'bank_transfer',
-        'fawry',
-        'meeza',
-        'valu',
-        'other',
-      ],
-    },
+
     billingData: { type: BillingDataSchema, required: true },
     easykashRef: { type: String, index: true },
     easykashProductCode: { type: String, index: true },
@@ -473,8 +459,6 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       default: 'manasik',
       index: true,
     },
-    normalizedEmail: { type: String, trim: true, lowercase: true, index: true },
-    normalizedPhone: { type: String, trim: true, index: true },
     latestClientIp: { type: String, trim: true, index: true },
     deviceFingerprint: {
       type: String,
@@ -482,7 +466,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       lowercase: true,
       index: true,
     },
-    countryCode: { type: String, trim: true },
+    location: { type: String, trim: true },
     locale: { type: String, trim: true, default: 'ar' },
   },
   { timestamps: true },
@@ -503,19 +487,11 @@ OrderSchema.pre('save', function () {
   this.paidAmount = totalPaid;
   this.remainingAmount = remainingAmount;
 
-  const normalizedEmail =
-    normalizeEmail(this.normalizedEmail || this.billingData?.email) ||
-    undefined;
-  const normalizedPhone =
-    normalizePhone(this.normalizedPhone || this.billingData?.phone) ||
-    undefined;
   const normalizedIp =
     normalizeIp(this.latestClientIp || this.paymentAttempts?.[0]?.ip) ||
     undefined;
   const normalizedFingerprint = normalizeEmail(this.deviceFingerprint);
 
-  if (normalizedEmail) this.normalizedEmail = normalizedEmail;
-  if (normalizedPhone) this.normalizedPhone = normalizedPhone;
   if (normalizedIp) this.latestClientIp = normalizedIp;
   if (normalizedFingerprint) this.deviceFingerprint = normalizedFingerprint;
 });
@@ -525,20 +501,6 @@ OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ source: 1, status: 1, createdAt: -1 });
 OrderSchema.index({ 'billingData.email': 1, source: 1 });
 OrderSchema.index({ source: 1, status: 1, paymentType: 1, createdAt: -1 });
-OrderSchema.index({
-  source: 1,
-  status: 1,
-  paymentType: 1,
-  normalizedEmail: 1,
-  createdAt: -1,
-});
-OrderSchema.index({
-  source: 1,
-  status: 1,
-  paymentType: 1,
-  normalizedPhone: 1,
-  createdAt: -1,
-});
 OrderSchema.index({
   source: 1,
   status: 1,

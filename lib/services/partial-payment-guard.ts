@@ -68,8 +68,6 @@ interface GuardOrderProjection {
     email?: string;
     phone?: string;
   };
-  normalizedEmail?: string;
-  normalizedPhone?: string;
   latestClientIp?: string;
   deviceFingerprint?: string;
   paymentType?: PaymentType;
@@ -338,18 +336,12 @@ function resolveMatchedBy(
     matchedBy.push('userId');
   }
 
-  const orderEmail =
-    normalizeEmail(order.normalizedEmail) ||
-    normalizeEmail(order.billingData?.email) ||
-    undefined;
+  const orderEmail = normalizeEmail(order.billingData?.email) || undefined;
   if (identity.normalizedEmail && orderEmail === identity.normalizedEmail) {
     matchedBy.push('email');
   }
 
-  const orderPhone =
-    normalizePhone(order.normalizedPhone) ||
-    normalizePhone(order.billingData?.phone) ||
-    undefined;
+  const orderPhone = normalizePhone(order.billingData?.phone) || undefined;
   if (identity.normalizedPhone && orderPhone === identity.normalizedPhone) {
     matchedBy.push('phone');
   }
@@ -390,12 +382,10 @@ export async function canUserCreatePartialPayment(
   }
 
   if (identity.normalizedEmail) {
-    identityClauses.push({ normalizedEmail: identity.normalizedEmail });
     identityClauses.push({ 'billingData.email': identity.normalizedEmail });
   }
 
   if (identity.normalizedPhone) {
-    identityClauses.push({ normalizedPhone: identity.normalizedPhone });
 
     const phoneRegex = buildPhoneRegex(identity.normalizedPhone);
     if (phoneRegex) {
@@ -433,8 +423,6 @@ export async function canUserCreatePartialPayment(
       status: 1,
       userId: 1,
       billingData: 1,
-      normalizedEmail: 1,
-      normalizedPhone: 1,
       latestClientIp: 1,
       deviceFingerprint: 1,
       paymentType: 1,
