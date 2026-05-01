@@ -50,7 +50,7 @@ export async function GET() {
     const lockStatus = await getOutstandingBalanceLock({
       source: checkoutSource,
       userId: user.userId,
-      email: user.email,
+      // Only use userId for matching orders - no email/phone
     });
 
     return NextResponse.json({ success: true, data: lockStatus });

@@ -1,9 +1,6 @@
 import Order from '@/lib/models/Order';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
-import {
-  BLOCKING_PARTIAL_PAYMENT_STATUSES,
-  normalizeEmail,
-} from '@/lib/services/partial-payment-guard';
+import { BLOCKING_PARTIAL_PAYMENT_STATUSES } from '@/lib/services/partial-payment-guard';
 
 type CheckoutSource = 'manasik' | 'ghadaq';
 
@@ -45,6 +42,8 @@ export interface OutstandingBalanceLockResult {
   orderNumber?: string;
   currency?: string;
   remainingAmount?: number;
+  totalUnpaidOrders?: number; // Total count of unpaid orders
+  oldestUnpaidOrderNumber?: string; // For reference
 }
 
 function toIdString(value: unknown): string | undefined {
@@ -75,23 +74,20 @@ export async function getOutstandingBalanceLock(
   input: OutstandingBalanceLockInput,
 ): Promise<OutstandingBalanceLockResult> {
   const normalizedUserId = input.userId?.trim() || undefined;
-  const normalizedBillingEmail = normalizeEmail(input.email);
 
   const identityClauses: Array<Record<string, unknown>> = [];
 
+  // Only use userId for matching - ignore email/phone
   if (normalizedUserId) {
     identityClauses.push({ userId: normalizedUserId });
-  }
-
-  if (normalizedBillingEmail) {
-    identityClauses.push({ 'billingData.email': normalizedBillingEmail });
   }
 
   if (identityClauses.length === 0) {
     return { hasOutstandingBalance: false };
   }
 
-  const latestOrder = (await Order.findOne({
+  // Find ALL unpaid orders (not just the latest) - sorted by oldest first
+  const allUnpaidOrders = (await Order.find({
     source: input.source,
     status: { $in: BLOCKING_PARTIAL_PAYMENT_STATUSES },
     $or: identityClauses,
@@ -113,47 +109,62 @@ export async function getOutstandingBalanceLock(
       payments: 1,
       createdAt: 1,
     })
-    .sort({ createdAt: -1 })
-    .lean()) as OutstandingBalanceCandidate | null;
+    .sort({ createdAt: 1 }) // Oldest first
+    .lean()) as OutstandingBalanceCandidate[];
 
-  if (!latestOrder) {
+  // Filter to only orders with actual remaining balance
+  const ordersWithBalance = allUnpaidOrders.filter((order) => {
+    const calculated = calculateOrderFinancials(order);
+    let remainingAmount = calculated.remainingAmount;
+    let totalPaid = calculated.totalPaid;
+
+    if (remainingAmount <= 0) {
+      const explicitRemaining = toPositiveNumber(order.remainingAmount);
+      if (explicitRemaining > 0) {
+        remainingAmount = explicitRemaining;
+      }
+    }
+
+    if (totalPaid <= 0) {
+      const explicitPaid = toPositiveNumber(order.paidAmount);
+      if (explicitPaid > 0) {
+        totalPaid = explicitPaid;
+      } else if (remainingAmount > 0) {
+        const fullAmount =
+          toPositiveNumber(order.fullAmount) ||
+          toPositiveNumber(order.totalAmount);
+        if (fullAmount > 0) {
+          totalPaid = Math.max(0, fullAmount - remainingAmount);
+        }
+      }
+    }
+
+    return totalPaid > 0 && remainingAmount > 0;
+  });
+
+  if (ordersWithBalance.length === 0) {
     return { hasOutstandingBalance: false };
   }
 
-  const calculated = calculateOrderFinancials(latestOrder);
+  // Return the OLDEST unpaid order (first in the array)
+  const oldestOrder = ordersWithBalance[0];
+  const calculated = calculateOrderFinancials(oldestOrder);
   let remainingAmount = calculated.remainingAmount;
-  let totalPaid = calculated.totalPaid;
 
   if (remainingAmount <= 0) {
-    const explicitRemaining = toPositiveNumber(latestOrder.remainingAmount);
+    const explicitRemaining = toPositiveNumber(oldestOrder.remainingAmount);
     if (explicitRemaining > 0) {
       remainingAmount = explicitRemaining;
     }
   }
 
-  if (totalPaid <= 0) {
-    const explicitPaid = toPositiveNumber(latestOrder.paidAmount);
-    if (explicitPaid > 0) {
-      totalPaid = explicitPaid;
-    } else if (remainingAmount > 0) {
-      const fullAmount =
-        toPositiveNumber(latestOrder.fullAmount) ||
-        toPositiveNumber(latestOrder.totalAmount);
-      if (fullAmount > 0) {
-        totalPaid = Math.max(0, fullAmount - remainingAmount);
-      }
-    }
-  }
-
-  if (totalPaid <= 0 || remainingAmount <= 0) {
-    return { hasOutstandingBalance: false };
-  }
-
   return {
     hasOutstandingBalance: true,
-    orderId: toIdString(latestOrder._id),
-    orderNumber: latestOrder.orderNumber,
-    currency: latestOrder.currency,
+    orderId: toIdString(oldestOrder._id),
+    orderNumber: oldestOrder.orderNumber,
+    currency: oldestOrder.currency,
     remainingAmount,
+    totalUnpaidOrders: ordersWithBalance.length,
+    oldestUnpaidOrderNumber: oldestOrder.orderNumber,
   };
 }
