@@ -64,6 +64,7 @@ export interface IProduct {
   baseCurrency: string;
   inStock: boolean;
   isBestSeller?: boolean;
+  label?: { ar: string; en: string } | null;
   isActive: boolean;
   supportsHalfPayment?: boolean;
   media: IProductMedia[];
@@ -237,6 +238,10 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     },
     inStock: { type: Boolean, default: true },
     isBestSeller: { type: Boolean, default: false },
+    label: {
+      ar: { type: String, trim: true },
+      en: { type: String, trim: true },
+    },
     isActive: { type: Boolean, default: true },
     supportsHalfPayment: { type: Boolean, default: true },
     media: {
