@@ -242,6 +242,7 @@ const ProductSchema = new mongoose.Schema<IProduct>(
       ar: { type: String, trim: true },
       en: { type: String, trim: true },
     },
+    showAlways: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
     supportsHalfPayment: { type: Boolean, default: true },
     media: {
