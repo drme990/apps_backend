@@ -66,6 +66,7 @@ export interface IProduct {
   inStock: boolean;
   isBestSeller?: boolean;
   label?: { ar: string; en: string } | null;
+  showAlways?: boolean;
   isActive: boolean;
   supportsHalfPayment?: boolean;
   media: IProductMedia[];
