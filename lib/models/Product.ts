@@ -19,6 +19,7 @@ export interface IProductSize {
   price: number;
   prices: ICurrencyPrice[];
   feedsUp?: number;
+  isAvailable?: boolean;
 }
 
 export interface IPartialPayment {
@@ -108,6 +109,7 @@ const ProductSizeSchema = new mongoose.Schema({
   price: { type: Number, required: true, min: 0, default: 0 },
   prices: [CurrencyPriceSchema],
   feedsUp: { type: Number, min: 0, default: 0 },
+  isAvailable: { type: Boolean, default: true },
 });
 
 const ProductMediaSchema = new mongoose.Schema(

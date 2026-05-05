@@ -168,18 +168,6 @@ function buildLockKey(
   return `partial:${source}:${kind}:${hashIdentifier(source, kind, value)}`;
 }
 
-function buildPhoneRegex(normalizedPhone: string): RegExp | undefined {
-  const digitsOnly = normalizedPhone.replace(/\D/g, '');
-  if (!digitsOnly) return undefined;
-
-  const escapedDigits = digitsOnly
-    .split('')
-    .map((digit) => digit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('\\D*');
-
-  return new RegExp(`\\+?${escapedDigits}$`);
-}
-
 export function buildPartialPaymentIdentity(
   input: CanUserCreatePartialPaymentInput,
 ): NormalizedPartialPaymentIdentity {
@@ -379,18 +367,6 @@ export async function canUserCreatePartialPayment(
 
   if (identity.normalizedUserId) {
     identityClauses.push({ userId: identity.normalizedUserId });
-  }
-
-  if (identity.normalizedEmail) {
-    identityClauses.push({ 'billingData.email': identity.normalizedEmail });
-  }
-
-  if (identity.normalizedPhone) {
-
-    const phoneRegex = buildPhoneRegex(identity.normalizedPhone);
-    if (phoneRegex) {
-      identityClauses.push({ 'billingData.phone': { $regex: phoneRegex } });
-    }
   }
 
   if (identity.normalizedIp) {

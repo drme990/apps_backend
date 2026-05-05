@@ -443,6 +443,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!product.isActive) {
+      return NextResponse.json(
+        { success: false, error: 'Product is unavailable' },
+        { status: 400 },
+      );
+    }
+
     const booking = await Booking.findOne({ key: 'global' }).lean();
     const blockedExecutionDates = new Set(
       (booking?.blockedExecutionDates ?? []).filter((value: string) =>
@@ -638,6 +645,12 @@ export async function POST(request: NextRequest) {
         ? sizeIndex
         : 0;
     const selectedSize = product.sizes[activeSizeIndex];
+    if (selectedSize?.isAvailable === false) {
+      return NextResponse.json(
+        { success: false, error: 'Selected size is unavailable' },
+        { status: 400 },
+      );
+    }
     let unitPrice = selectedSize.price ?? 0;
 
     const sizeCurrencyPrice = selectedSize.prices?.find(
@@ -674,7 +687,9 @@ export async function POST(request: NextRequest) {
         ? upgradeDiscount
         : 0;
     if (upgradeDiscountPercent > 0) {
-      totalAmount = Math.round(totalAmount * (1 - upgradeDiscountPercent / 100));
+      totalAmount = Math.round(
+        totalAmount * (1 - upgradeDiscountPercent / 100),
+      );
     }
 
     let couponDiscount = 0;
@@ -868,7 +883,8 @@ export async function POST(request: NextRequest) {
       // Upgrade discount tracking
       isUpgrade: isUpgrade ?? false,
       fromProductId: fromProductId || undefined,
-      upgradeDiscount: upgradeDiscountPercent > 0 ? upgradeDiscountPercent : undefined,
+      upgradeDiscount:
+        upgradeDiscountPercent > 0 ? upgradeDiscountPercent : undefined,
       termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
       source: orderSource,
