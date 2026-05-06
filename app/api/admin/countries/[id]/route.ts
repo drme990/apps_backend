@@ -46,16 +46,27 @@ export async function PUT(
     const parsed = await parseJsonBody(request, countryUpdateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
-    const country = await Country.findByIdAndUpdate(id, body, {
-      new: true,
-      runValidators: true,
-    });
+    const country = await Country.findById(id);
     if (!country) {
       return NextResponse.json(
         { success: false, error: 'Country not found' },
         { status: 404 },
       );
     }
+
+    if (country.code === 'OT' && body.isActive === false) {
+      return NextResponse.json(
+        { success: false, error: 'Other country must remain active' },
+        { status: 400 },
+      );
+    }
+
+    if (country.code === 'OT') {
+      country.isActive = true;
+    }
+
+    country.set(body);
+    await country.save();
 
     await logActivity({
       userId: auth.user.userId,

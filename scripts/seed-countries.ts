@@ -33,9 +33,165 @@ const ACTIVE_CODES = new Set([
   'DE',
   'FR',
   'IT',
+  'OT',
 ]);
 
+const REGION_BY_CODE = new Map<string, string>();
+
+const assignRegion = (region: string, codes: string[]) => {
+  codes.forEach((code) => REGION_BY_CODE.set(code, region));
+};
+
+assignRegion('Other', ['OT']);
+assignRegion('Middle East & North Africa', [
+  'EG',
+  'SA',
+  'KW',
+  'QA',
+  'AE',
+  'BH',
+  'JO',
+  'IQ',
+  'OM',
+  'YE',
+  'LB',
+  'SY',
+  'PS',
+  'MA',
+  'TN',
+  'DZ',
+  'LY',
+  'SD',
+  'MR',
+  'DJ',
+  'KM',
+]);
+assignRegion('Turkey & Central Asia', [
+  'TR',
+  'AZ',
+  'KZ',
+  'UZ',
+  'TM',
+  'KG',
+  'TJ',
+  'GE',
+  'AM',
+]);
+assignRegion('South & Southeast Asia', [
+  'IN',
+  'PK',
+  'BD',
+  'AF',
+  'LK',
+  'NP',
+  'MV',
+  'ID',
+  'MY',
+  'TH',
+  'PH',
+  'VN',
+  'MM',
+  'KH',
+  'SG',
+  'BN',
+]);
+assignRegion('East Asia', ['CN', 'JP', 'KR', 'MN']);
+assignRegion('Europe', [
+  'GB',
+  'DE',
+  'FR',
+  'IT',
+  'ES',
+  'NL',
+  'BE',
+  'AT',
+  'GR',
+  'PT',
+  'IE',
+  'FI',
+  'SE',
+  'NO',
+  'DK',
+  'CH',
+  'PL',
+  'CZ',
+  'HU',
+  'RO',
+  'BG',
+  'HR',
+  'RS',
+  'BA',
+  'AL',
+  'XK',
+  'MK',
+  'ME',
+  'SI',
+  'SK',
+  'LT',
+  'LV',
+  'EE',
+  'RU',
+  'UA',
+  'BY',
+  'MD',
+  'IS',
+  'CY',
+  'MT',
+  'LU',
+]);
+assignRegion('Africa', [
+  'NG',
+  'ZA',
+  'KE',
+  'GH',
+  'TZ',
+  'ET',
+  'SO',
+  'SN',
+  'CM',
+  'CI',
+  'UG',
+  'RW',
+  'ML',
+  'NE',
+  'TD',
+  'MG',
+  'MZ',
+  'ZM',
+  'ZW',
+  'BF',
+  'GN',
+  'BW',
+  'NA',
+  'MU',
+]);
+assignRegion('Americas', [
+  'US',
+  'CA',
+  'MX',
+  'BR',
+  'AR',
+  'CO',
+  'CL',
+  'PE',
+  'VE',
+  'EC',
+  'GY',
+  'SR',
+  'TT',
+]);
+assignRegion('Oceania', ['AU', 'NZ', 'FJ', 'PG']);
+
+const getRegionForCode = (code: string) => REGION_BY_CODE.get(code) ?? 'Other';
+
 const countries = [
+  {
+    code: 'OT',
+    name: { ar: 'أخرى', en: 'Other' },
+    currencyCode: 'USD',
+    currencySymbol: '$',
+    flagEmoji: '🌍',
+  },
   // ── Middle East & North Africa ──
   {
     code: 'EG',
@@ -988,19 +1144,29 @@ async function seed() {
 
   let created = 0;
   let skipped = 0;
+  let updated = 0;
 
   for (const country of countries) {
+    const region = getRegionForCode(country.code);
     const existing = await Country.findOne({ code: country.code });
     if (existing) {
-      console.log(
-        `  ⏭️  ${country.code} (${country.name.en}) already exists, skipping.`,
-      );
-      skipped++;
+      if (!existing.region || existing.region.trim() === '') {
+        await Country.updateOne({ _id: existing._id }, { $set: { region } });
+        console.log(
+          `  🔁 ${country.code} (${country.name.en}) region updated.`,
+        );
+        updated++;
+      } else {
+        console.log(
+          `  ⏭️  ${country.code} (${country.name.en}) already exists, skipping.`,
+        );
+        skipped++;
+      }
       continue;
     }
 
     const isActive = ACTIVE_CODES.has(country.code);
-    await Country.create({ ...country, isActive });
+    await Country.create({ ...country, isActive, region });
     console.log(
       `  ✅ ${country.code} (${country.name.en}) created${isActive ? ' [ACTIVE]' : ''}.`,
     );
@@ -1008,7 +1174,7 @@ async function seed() {
   }
 
   console.log(
-    `\n✨ Done! ${created} countries created, ${skipped} skipped. Total: ${countries.length} countries.`,
+    `\n✨ Done! ${created} countries created, ${updated} regions updated, ${skipped} skipped. Total: ${countries.length} countries.`,
   );
   await mongoose.disconnect();
   process.exit(0);
