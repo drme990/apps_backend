@@ -349,26 +349,6 @@ function normalizeEmail(value: string | undefined): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function normalizePhone(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-
-  let normalized = value.trim();
-  if (!normalized) return undefined;
-
-  normalized = normalized.replace(/[\s().-]/g, '');
-  if (normalized.startsWith('00')) {
-    normalized = `+${normalized.slice(2)}`;
-  }
-
-  if (normalized.startsWith('+')) {
-    const digits = normalized.slice(1).replace(/\D/g, '');
-    return digits ? `+${digits}` : undefined;
-  }
-
-  const digitsOnly = normalized.replace(/\D/g, '');
-  return digitsOnly || undefined;
-}
-
 function normalizeIp(value: string | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
   let normalized = value.trim().toLowerCase();

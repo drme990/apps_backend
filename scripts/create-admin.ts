@@ -16,6 +16,7 @@ const AdminUserSchema = new mongoose.Schema(
       type: [String],
       enum: [
         'products',
+        'products-discovery',
         'orders',
         'booking',
         'coupons',

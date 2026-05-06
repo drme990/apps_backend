@@ -150,6 +150,7 @@ export async function GET(request: Request) {
       paymentTypeAgg,
       topProductsAgg,
       earningsByCurrencyAgg,
+      ordersByLocation,
     ] = await Promise.all([
       // Legacy chart: Orders by country
       Order.aggregate([
@@ -322,6 +323,32 @@ export async function GET(request: Request) {
           },
         },
       ]),
+
+      // Orders by location (NEW)
+      Order.aggregate([
+        {
+          $match: {
+            ...matchFilter,
+            ...dateMatchFilter,
+            location: {
+              $exists: true,
+              $nin: [null, ''],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$location',
+            value: { $sum: 1 },
+          },
+        },
+        {
+          $sort: { value: -1 },
+        },
+        {
+          $limit: 15,
+        },
+      ]),
     ]);
 
     const weekdayNames = [
@@ -429,6 +456,13 @@ export async function GET(request: Request) {
       EUR: earningsByCurrencyMap.get('EUR') ?? 0,
     };
 
+    const ordersByLocationData = ordersByLocation.map(
+      (item: { _id: string | null; value: number }) => ({
+        name: item._id || 'Unknown',
+        value: item.value,
+      }),
+    );
+
     return NextResponse.json({
       success: true,
       data: {
@@ -439,6 +473,7 @@ export async function GET(request: Request) {
         topProducts,
         ordersByCountry: ordersByCountryData,
         ordersByWeekday: ordersByWeekdayData,
+        ordersByLocation: ordersByLocationData,
         earningsByCurrency,
       },
     });
