@@ -796,6 +796,114 @@ export async function POST(request: NextRequest) {
       fingerprint: deviceFingerprint,
     });
 
+    // Reuse existing processing order if it matches the same checkout details
+    // Avoid creating duplicate orders when a user clicks Buy multiple times
+    // and an earlier payment session is still valid.
+    try {
+      const now = Date.now();
+      const cashExpiryWindowMs = getEasykashCashExpiryHours() * 60 * 60 * 1000;
+
+      const candidateProcessingOrders = await Order.find({
+        source: orderSource,
+        status: 'processing',
+        userId: effectiveUserId,
+        isPartialPayment: isPartialPayment,
+        'items.0.productId': product._id.toString(),
+      })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      for (const existing of candidateProcessingOrders) {
+        // Basic checks: payment type, full amount, item details
+        const existingPaymentType =
+          existing.paymentType ||
+          (existing.isPartialPayment ? 'partial' : 'full');
+        if (existingPaymentType !== paymentType) continue;
+
+        if (Number(existing.fullAmount ?? 0) !== Number(amountAfterDiscount))
+          continue;
+
+        const firstItem = (existing.items || [])[0] || {};
+        if (Number(firstItem.sizeIndex) !== Number(activeSizeIndex)) continue;
+        if (Number(firstItem.quantity || 1) !== Number(quantity || 1)) continue;
+
+        const normalizedExistingEmail = normalizeEmail(
+          existing.billingData?.email,
+        );
+        const normalizedExistingPhone = normalizePhone(
+          existing.billingData?.phone,
+        );
+        const normalizedCurrentEmail =
+          partialPaymentIdentity.normalizedEmail ||
+          normalizeEmail(resolvedBillingEmail);
+        const normalizedCurrentPhone = normalizePhone(resolvedBillingPhone);
+        if (normalizedExistingEmail !== normalizedCurrentEmail) continue;
+        if (normalizedExistingPhone !== normalizedCurrentPhone) continue;
+
+        const couponMatches =
+          (existing.couponCode || '') === (appliedCouponCode || '');
+        if (!couponMatches) continue;
+
+        // Reservation data deep-equality
+        const existingReservation = JSON.stringify(
+          existing.reservationData || [],
+        );
+        const currentReservation = JSON.stringify(reservationAnswers || []);
+        if (existingReservation !== currentReservation) continue;
+
+        const payments = Array.isArray(existing.payments)
+          ? existing.payments
+          : [];
+        if (payments.length === 0) continue;
+
+        const firstPayment = payments[0];
+        if (
+          !firstPayment ||
+          !firstPayment.redirectUrl ||
+          !firstPayment.expiresAt
+        )
+          continue;
+
+        const expiresAt = new Date(firstPayment.expiresAt).getTime();
+        const createdAt = firstPayment.createdAt
+          ? new Date(firstPayment.createdAt).getTime()
+          : 0;
+        const isStillValid =
+          expiresAt > now &&
+          (createdAt === 0 || createdAt + cashExpiryWindowMs > now);
+        if (!isStillValid) continue;
+
+        // Reuse existing processing order
+        const response = NextResponse.json({
+          success: true,
+          data: {
+            order: {
+              _id: existing._id,
+              orderNumber: existing.orderNumber,
+              totalAmount: existing.totalAmount,
+              fullAmount: existing.fullAmount,
+              remainingAmount: existing.isPartialPayment
+                ? (existing.fullAmount || 0) - (existing.paidAmount || 0)
+                : 0,
+              isPartialPayment: !!existing.isPartialPayment,
+              couponDiscount: existing.couponDiscount || 0,
+              currency: existing.currency,
+              status: existing.status,
+            },
+            checkoutUrl: firstPayment.redirectUrl,
+            reused: true,
+          },
+        });
+
+        if (tokenToSet) setAuthCookie(response, checkoutAppId, tokenToSet);
+        return response;
+      }
+    } catch (reuseErr) {
+      // Log and continue creating a new order if reuse checks fail unexpectedly
+      // (avoid blocking checkout flow on reuse logic issues)
+    }
+
     if (paymentType === 'partial') {
       partialPaymentLock = await acquirePartialPaymentCreationLock({
         source: orderSource,
@@ -834,10 +942,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
-            code: guardDecision.reasonCode || 'ACTIVE_PARTIAL_ORDER',
+            code:
+              guardDecision.code ||
+              guardDecision.reasonCode ||
+              'ACTIVE_PARTIAL_ORDER',
             error:
               guardDecision.message ||
               'You already have an active partial payment order. Complete it before creating a new one.',
+            blockingOrderNumber: guardDecision.blockingOrderNumber,
           },
           { status: 409 },
         );

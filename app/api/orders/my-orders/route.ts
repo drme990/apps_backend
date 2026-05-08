@@ -120,16 +120,15 @@ export async function GET() {
         };
       })
       .filter((order) => {
+        // Hide temporary processing orders from the user's order history
+        if (order.status === 'processing') return false;
+
         if (order.status === 'paid' || order.status === 'completed') {
           return true;
         }
 
         if (order.status === 'partial-paid') {
           return order.canPayRemainingAmount;
-        }
-
-        if (order.status === 'processing') {
-          return order.canCompleteOrder;
         }
 
         return false;

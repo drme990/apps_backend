@@ -46,6 +46,7 @@ export type PartialPaymentGuardReasonCode =
 export interface CanUserCreatePartialPaymentResult {
   allowed: boolean;
   reasonCode?: PartialPaymentGuardReasonCode;
+  code?: 'SAME_USER_PARTIAL_ORDER' | 'OTHER_ACCOUNT_PARTIAL_ORDER';
   message?: string;
   blockingOrderId?: string;
   blockingOrderNumber?: string;
@@ -422,11 +423,27 @@ export async function canUserCreatePartialPayment(
       continue;
     }
 
+    // Determine if the blocking order belongs to the same user or is from another account
+    const blockedByUserId = matchedBy.includes('userId');
+
+    // Construct message based on whether it's the user's own order or another account
+    let message: string;
+    if (blockedByUserId) {
+      // Same user's order: include order number for reference
+      message = `You already have an active partial payment order (#${candidate.orderNumber}). Complete it before creating a new one.`;
+    } else {
+      // Different account (IP match): generic message
+      message =
+        'You have an order from another account. Please complete it before creating a new one.';
+    }
+
     return {
       allowed: false,
       reasonCode: 'ACTIVE_PARTIAL_ORDER',
-      message:
-        'You already have an active partial payment order. Complete it before creating a new one.',
+      code: blockedByUserId
+        ? 'SAME_USER_PARTIAL_ORDER'
+        : 'OTHER_ACCOUNT_PARTIAL_ORDER',
+      message,
       blockingOrderId: toIdString(candidate._id),
       blockingOrderNumber: candidate.orderNumber,
       blockingStatus: candidate.status,
