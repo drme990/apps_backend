@@ -306,6 +306,13 @@ const countries = [
     flagEmoji: '🇩🇿',
   },
   {
+    code: 'MW',
+    name: { ar: 'ملاوي', en: 'Malawi' },
+    currencyCode: 'MWK',
+    currencySymbol: 'MK',
+    flagEmoji: '🇲🇼',
+  },
+  {
     code: 'LY',
     name: { ar: 'ليبيا', en: 'Libya' },
     currencyCode: 'LYD',

@@ -68,6 +68,21 @@ export async function PUT(
     country.set(body);
     await country.save();
 
+    // Always keep countries using the same currency in sync.
+    if (typeof body.roundingRule !== 'undefined' && country.currencyCode) {
+      try {
+        await Country.updateMany(
+          { currencyCode: country.currencyCode, _id: { $ne: country._id } },
+          { $set: { roundingRule: country.roundingRule } },
+        );
+      } catch (err) {
+        console.warn(
+          'Failed to propagate roundingRule to sibling countries',
+          err,
+        );
+      }
+    }
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,

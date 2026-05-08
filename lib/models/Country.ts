@@ -6,7 +6,12 @@ export interface ICountry {
   name: { ar: string; en: string };
   currencyCode: string;
   currencySymbol: string;
-  roundingRule: 'nearest-ten' | 'nearest-five' | 'ceil';
+  roundingRule:
+    | 'nearest-ten'
+    | 'nearest-five'
+    | 'nearest-fifty'
+    | 'nearest-hundred'
+    | 'ceil';
   flagEmoji: string;
   isActive: boolean;
   sortOrder: number | null;
@@ -54,7 +59,13 @@ const CountrySchema = new mongoose.Schema<ICountry>(
     },
     roundingRule: {
       type: String,
-      enum: ['nearest-ten', 'nearest-five', 'ceil'],
+      enum: [
+        'nearest-ten',
+        'nearest-five',
+        'nearest-fifty',
+        'nearest-hundred',
+        'ceil',
+      ],
       default: 'ceil',
     },
     flagEmoji: { type: String, default: '' },
