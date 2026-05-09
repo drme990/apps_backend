@@ -20,6 +20,8 @@ type CustomerDTO = {
   name: string;
   email: string;
   phone: string;
+  registrationIp?: string;
+  lastLoginIp?: string;
   country: string;
   appId: 'ghadaq' | 'manasik';
   isBanned: boolean;
@@ -67,6 +69,17 @@ export async function GET(request: NextRequest) {
             { name: { $regex: normalizedSearch, $options: 'i' } },
             { email: { $regex: normalizedSearch, $options: 'i' } },
             { phone: { $regex: normalizedSearch, $options: 'i' } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $toString: '$_id' },
+                  regex: normalizedSearch,
+                  options: 'i',
+                },
+              },
+            },
+            { registrationIp: { $regex: normalizedSearch, $options: 'i' } },
+            { lastLoginIp: { $regex: normalizedSearch, $options: 'i' } },
           ];
         }
         if (typeof isBannedFilter === 'boolean') {
@@ -77,7 +90,9 @@ export async function GET(request: NextRequest) {
           .find(filterQuery)
           .sort({ createdAt: -1 })
           .limit(200)
-          .select('name email phone country isBanned createdAt')
+          .select(
+            'name email phone registrationIp lastLoginIp country isBanned createdAt',
+          )
           .lean();
 
         return customers.map(
@@ -86,6 +101,14 @@ export async function GET(request: NextRequest) {
             name: typeof customer.name === 'string' ? customer.name : '',
             email: typeof customer.email === 'string' ? customer.email : '',
             phone: typeof customer.phone === 'string' ? customer.phone : '',
+            registrationIp:
+              typeof customer.registrationIp === 'string'
+                ? customer.registrationIp
+                : undefined,
+            lastLoginIp:
+              typeof customer.lastLoginIp === 'string'
+                ? customer.lastLoginIp
+                : undefined,
             country:
               typeof customer.country === 'string' ? customer.country : '',
             appId,
