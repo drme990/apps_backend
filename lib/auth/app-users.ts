@@ -17,6 +17,7 @@ export const ADMIN_ALLOWED_PAGES = [
   'countries',
   'admins',
   'referrals',
+  'refTracker',
   'activityLogs',
   'appearance',
   'exchange',

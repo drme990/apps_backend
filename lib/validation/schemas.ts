@@ -139,6 +139,30 @@ export const fbEventSchema = z
   })
   .strict();
 
+export const refTrackerActionSchema = z.enum([
+  'session_created',
+  'navigate_products',
+  'select_product',
+  'pay_now',
+  'checkout_choice',
+  'proceed_to_payment',
+]);
+
+export const refTrackerEventSchema = z
+  .object({
+    appId: z.enum(['manasik', 'ghadaq']),
+    sessionNumber: z.string().trim().min(1).max(128),
+    userId: z.string().trim().optional(),
+    ref: z.string().trim().optional(),
+    action: refTrackerActionSchema,
+    path: z.string().trim().min(1).max(512),
+    productName: z.string().trim().optional(),
+    buttonLabel: z.string().trim().optional(),
+    choice: z.string().trim().optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
+  })
+  .strict();
+
 export const uploadImageFormSchema = z.object({
   file: z.any(), // File object is checked in route via formData
   oldUrl: z.string().trim().optional(),

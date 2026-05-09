@@ -63,6 +63,7 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'admins',
         'users',
         'referrals',
+        'refTracker',
         'activityLogs',
         'appearance',
         'exchange',
