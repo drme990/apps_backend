@@ -4,8 +4,8 @@ import { getAuthUser } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 
 async function resolveAppUser() {
-  const ghadq = await getAuthUser('ghadaq');
-  if (ghadq) return ghadq;
+  const ghadaq = await getAuthUser('ghadaq');
+  if (ghadaq) return ghadaq;
 
   const manasik = await getAuthUser('manasik');
   if (manasik) return manasik;

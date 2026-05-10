@@ -65,9 +65,9 @@ AppUserSchema.pre('save', async function () {
 const AdminUser =
   mongoose.models.ScriptAdminUser ||
   mongoose.model('ScriptAdminUser', AdminUserSchema);
-const GhadqUser =
-  mongoose.models.ScriptGhadqUser ||
-  mongoose.model('ScriptGhadqUser', AppUserSchema, 'users_ghadaq');
+const GhadaqUser =
+  mongoose.models.ScriptGhadaqUser ||
+  mongoose.model('ScriptGhadaqUser', AppUserSchema, 'users_ghadaq');
 const ManasikUser =
   mongoose.models.ScriptManasikUser ||
   mongoose.model('ScriptManasikUser', AppUserSchema, 'users_manasik');
@@ -150,7 +150,7 @@ async function createUserFromScript() {
     } else {
       const phone = (await question('Phone (optional): ')).trim();
       const country = (await question('Country (optional): ')).trim();
-      const Model = appId === 'ghadaq' ? GhadqUser : ManasikUser;
+      const Model = appId === 'ghadaq' ? GhadaqUser : ManasikUser;
 
       const existingUser = await Model.findOne({ email });
       if (existingUser) {
