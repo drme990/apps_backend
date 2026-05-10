@@ -76,6 +76,7 @@ interface GuardOrderProjection {
   totalAmount?: number;
   fullAmount?: number;
   paymentAttempts?: Array<{ ip?: string }>;
+  payments?: Array<{ status?: string; amount?: number; orderAmount?: number }>;
 }
 
 function toIdString(value: unknown): string | undefined {
@@ -407,6 +408,7 @@ export async function canUserCreatePartialPayment(
       totalAmount: 1,
       fullAmount: 1,
       paymentAttempts: 1,
+      payments: 1,
       createdAt: 1,
     })
     .sort({ createdAt: -1 })
@@ -420,6 +422,16 @@ export async function canUserCreatePartialPayment(
 
     const matchedBy = resolveMatchedBy(candidate, identity);
     if (matchedBy.length === 0) {
+      continue;
+    }
+
+    // If the candidate partial order has no paid payments yet, do not treat it
+    // as a blocking active partial payment. This allows users to create a new
+    // order when a prior partial-order exists but the initial installment
+    // hasn't been paid (e.g., only a pending redirect exists).
+    const payments = candidate.payments ?? [];
+    const hasPaidPayment = payments.some((p) => p?.status === 'paid');
+    if (!hasPaidPayment) {
       continue;
     }
 
