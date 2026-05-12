@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess, requireAuth } from '@/lib/auth';
 import Country from '@/lib/models/Country';
+import { normalizeCountryVisibilityMap } from '@/lib/country-visibility';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { countryCreateSchema } from '@/lib/validation/schemas';
@@ -23,7 +24,13 @@ export async function GET(request: NextRequest) {
       .sort({ sortOrder: 1, 'name.ar': 1 })
       .limit(500)
       .lean();
-    return NextResponse.json({ success: true, data: countries });
+    const normalized = countries.map((country) => ({
+      ...country,
+      countriesToSee: normalizeCountryVisibilityMap(
+        country.countriesToSee,
+      ),
+    }));
+    return NextResponse.json({ success: true, data: normalized });
   } catch (error) {
     console.error('Error fetching countries:', error);
     return NextResponse.json(
@@ -53,7 +60,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const country = await Country.create(body);
+    const country = await Country.create({
+      ...body,
+      visibilityMode: body.visibilityMode ?? 'all',
+      countriesToSee: normalizeCountryVisibilityMap(
+        body.countriesToSee,
+      ),
+    });
 
     await logActivity({
       userId: auth.user.userId,

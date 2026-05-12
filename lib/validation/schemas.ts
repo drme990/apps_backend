@@ -215,8 +215,27 @@ export const countryCreateSchema = z
     isActive: z.boolean().optional(),
     sortOrder: z.number().optional(),
     region: z.string().trim().min(1).optional(),
-    visibilityMode: z.enum(['all', 'specific']).optional(),
-    visibleToCountries: z.array(z.string().trim().min(2)).optional(),
+    visibilityMode: z.enum(['all', 'custom']).optional(),
+    countriesToSee: z
+      .record(
+        z
+          .string()
+          .trim()
+          .regex(/^[A-Z]{2}$/),
+        z
+          .object({
+            realPrice: z.boolean().optional(),
+            exchangePrice: z.boolean().optional(),
+          })
+          .refine((value) => !(value.realPrice && value.exchangePrice), {
+            message:
+              'A country cannot be assigned to both realPrice and exchangePrice',
+          })
+          .refine((value) => Boolean(value.realPrice || value.exchangePrice), {
+            message: 'At least one visibility option must be selected',
+          }),
+      )
+      .optional(),
   })
   .strict();
 
@@ -237,8 +256,27 @@ export const countryUpdateSchema = z
     isActive: z.boolean().optional(),
     sortOrder: z.number().optional(),
     region: z.string().trim().min(1).optional(),
-    visibilityMode: z.enum(['all', 'specific']).optional(),
-    visibleToCountries: z.array(z.string().trim().min(2)).optional(),
+    visibilityMode: z.enum(['all', 'custom']).optional(),
+    countriesToSee: z
+      .record(
+        z
+          .string()
+          .trim()
+          .regex(/^[A-Z]{2}$/),
+        z
+          .object({
+            realPrice: z.boolean().optional(),
+            exchangePrice: z.boolean().optional(),
+          })
+          .refine((value) => !(value.realPrice && value.exchangePrice), {
+            message:
+              'A country cannot be assigned to both realPrice and exchangePrice',
+          })
+          .refine((value) => Boolean(value.realPrice || value.exchangePrice), {
+            message: 'At least one visibility option must be selected',
+          }),
+      )
+      .optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

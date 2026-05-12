@@ -1,4 +1,8 @@
 import mongoose from 'mongoose';
+import type {
+  CountryVisibilityMap,
+  CountryVisibilityMode,
+} from '@/lib/country-visibility';
 
 export interface ICountry {
   _id?: string;
@@ -16,8 +20,8 @@ export interface ICountry {
   isActive: boolean;
   sortOrder: number | null;
   region?: string;
-  visibilityMode?: 'all' | 'specific';
-  visibleToCountries?: string[];
+  visibilityMode?: CountryVisibilityMode;
+  countriesToSee?: CountryVisibilityMap;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -74,12 +78,12 @@ const CountrySchema = new mongoose.Schema<ICountry>(
     region: { type: String, trim: true, default: '' },
     visibilityMode: {
       type: String,
-      enum: ['all', 'specific'],
+      enum: ['all', 'custom'],
       default: 'all',
     },
-    visibleToCountries: {
-      type: [String],
-      default: [],
+    countriesToSee: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
   },
   { timestamps: true },

@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Country from '@/lib/models/Country';
+import {
+  getVisibleCountriesForViewer,
+  normalizeCountryCode,
+  normalizeCountryVisibilityMap,
+} from '@/lib/country-visibility';
 
-const VERCEL_COUNTRY_HEADER = 'x-vercel-ip-country';
 const VERCEL_IP_HEADER = 'x-vercel-ip-address';
-
-function normalizeCountryCode(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const code = raw.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(code)) return null;
-  if (code === 'XX' || code === 'ZZ') return null;
-  return code;
-}
 
 function getClientIp(request: NextRequest): string | null {
   const direct = request.headers.get(VERCEL_IP_HEADER);
@@ -38,23 +34,6 @@ async function getCountryFromCountryIs(ip: string): Promise<string | null> {
   }
 }
 
-function getVisibleCountries(allCountries: any[], viewerCode: string): any[] {
-  const viewer = allCountries.find((c) => c.code === viewerCode);
-  if (!viewer || (viewer.visibilityMode ?? 'all') === 'all')
-    return allCountries;
-
-  const allowed = (viewer.visibleToCountries ?? []).map((c: string) =>
-    String(c).toUpperCase(),
-  );
-  const filtered = allCountries.filter((c) =>
-    allowed.includes(String(c.code).toUpperCase()),
-  );
-
-  return filtered.some((c) => c.code === viewerCode)
-    ? filtered
-    : [viewer, ...filtered];
-}
-
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -66,11 +45,21 @@ export async function GET(request: NextRequest) {
     const countries = await Country.find(query)
       .sort({ sortOrder: 1, 'name.ar': 1 })
       .lean();
+    const normalizedCountries = countries.map((country) => ({
+      ...country,
+      countriesToSee: normalizeCountryVisibilityMap(
+        country.countriesToSee,
+      ),
+    }));
 
-    // Detect viewer country server-side (prefer hosting provider header)
-    const countryFromVercel = normalizeCountryCode(
-      request.headers.get(VERCEL_COUNTRY_HEADER),
+    const viewerCountryCode = normalizeCountryCode(
+      request.nextUrl.searchParams.get('viewerCountryCode'),
     );
+
+    // Detect viewer country server-side (prefer explicit viewerCountryCode, then hosting provider header)
+    const countryFromVercel =
+      viewerCountryCode ||
+      normalizeCountryCode(request.headers.get('x-vercel-ip-country'));
 
     const ip = getClientIp(request);
     const countryFromIp = ip ? await getCountryFromCountryIs(ip) : null;
@@ -79,12 +68,27 @@ export async function GET(request: NextRequest) {
 
     // If we detected a viewerCode, apply visibility rules server-side.
     const visible = viewerCode
-      ? getVisibleCountries(countries, viewerCode)
-      : countries;
+      ? getVisibleCountriesForViewer(normalizedCountries, viewerCode)
+      : normalizedCountries.map((country) => ({
+          ...country,
+          viewerVisibility: { realPrice: true, exchangePrice: true },
+        }));
+
+    // Return only the required fields
+    const filteredData = visible.map((country) => ({
+      _id: country._id,
+      code: country.code,
+      name: country.name,
+      currencyCode: country.currencyCode,
+      currencySymbol: country.currencySymbol,
+      flagEmoji: country.flagEmoji,
+      sortOrder: country.sortOrder,
+      viewerVisibility: country.viewerVisibility,
+    }));
 
     return NextResponse.json({
       success: true,
-      data: visible,
+      data: filteredData,
       meta: { viewerCode: viewerCode ?? null },
     });
   } catch (error) {

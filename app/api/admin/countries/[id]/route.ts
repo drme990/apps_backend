@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Country from '@/lib/models/Country';
+import { normalizeCountryVisibilityMap } from '@/lib/country-visibility';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { countryUpdateSchema } from '@/lib/validation/schemas';
@@ -23,7 +24,13 @@ export async function GET(
         { status: 404 },
       );
     }
-    return NextResponse.json({ success: true, data: country });
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...country,
+        countriesToSee: normalizeCountryVisibilityMap(country.countriesToSee),
+      },
+    });
   } catch (error) {
     console.error('Error fetching country:', error);
     return NextResponse.json(
@@ -65,7 +72,11 @@ export async function PUT(
       country.isActive = true;
     }
 
-    country.set(body);
+    country.set({
+      ...body,
+      visibilityMode: body.visibilityMode ?? country.visibilityMode,
+      countriesToSee: normalizeCountryVisibilityMap(body.countriesToSee),
+    });
     await country.save();
 
     // Always keep countries using the same currency in sync.
@@ -93,7 +104,13 @@ export async function PUT(
       details: `Updated country: ${country.name.en} (${country.code})`,
     });
 
-    return NextResponse.json({ success: true, data: country });
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...country.toObject(),
+        countriesToSee: normalizeCountryVisibilityMap(country.countriesToSee),
+      },
+    });
   } catch (error) {
     console.error('Error updating country:', error);
     return NextResponse.json(

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Country from '@/lib/models/Country';
+import { normalizeCountryVisibilityMap } from '@/lib/country-visibility';
 
 export async function GET(
   _request: NextRequest,
@@ -18,7 +19,15 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ success: true, data: country });
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...country,
+        countriesToSee: normalizeCountryVisibilityMap(
+          country.countriesToSee,
+        ),
+      },
+    });
   } catch (error) {
     console.error('Error fetching country:', error);
     return NextResponse.json(
