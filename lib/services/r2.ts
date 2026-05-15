@@ -170,7 +170,7 @@ export const generatePresignedUploadUrl = async (
   });
 
   try {
-    const uploadUrl = await getSignedUrl(s3Client, command, {
+    const uploadUrl = await getSignedUrl(s3Client as any, command, {
       expiresIn,
     });
 
