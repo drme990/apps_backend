@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
     audioReviews: [] as unknown[],
     whatsAppDefaultMessage: '',
     bannerText: { ar: '', en: '' },
+    documentationAnswer: { ar: '', en: '' },
   };
 
   const normalizeBannerText = (value: unknown): { ar: string; en: string } => {
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
       audioReviews?: unknown[];
       whatsAppDefaultMessage?: string;
       bannerText?: unknown;
+      documentationAnswer?: unknown;
     } | null;
 
     if (!appearance) {
@@ -55,6 +57,7 @@ export async function GET(request: NextRequest) {
         audioReviews: appearance.audioReviews ?? [],
         whatsAppDefaultMessage: appearance.whatsAppDefaultMessage?.trim() || '',
         bannerText: normalizeBannerText(appearance.bannerText),
+        documentationAnswer: normalizeBannerText(appearance.documentationAnswer),
         // Keep backward compatibility for existing consumers.
         row1: worksImages.row1,
         row2: worksImages.row2,

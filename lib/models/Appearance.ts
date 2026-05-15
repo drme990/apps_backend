@@ -18,6 +18,7 @@ export interface IAppearance {
   audioReviews?: IAudioReview[];
   whatsAppDefaultMessage?: string;
   bannerText?: { ar: string; en: string };
+  documentationAnswer?: { ar: string; en: string };
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -66,6 +67,18 @@ const AppearanceSchema = new mongoose.Schema<IAppearance>(
       default: '',
     },
     bannerText: {
+      ar: {
+        type: String,
+        trim: true,
+        default: '',
+      },
+      en: {
+        type: String,
+        trim: true,
+        default: '',
+      },
+    },
+    documentationAnswer: {
       ar: {
         type: String,
         trim: true,
