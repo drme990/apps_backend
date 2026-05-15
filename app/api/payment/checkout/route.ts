@@ -184,6 +184,7 @@ export async function POST(request: NextRequest) {
         country?: string;
         appId?: string;
         isBanned?: boolean;
+        ref?: string;
         comparePassword(candidatePassword: string): Promise<boolean>;
       }
     >;
@@ -215,7 +216,7 @@ export async function POST(request: NextRequest) {
 
     if (sessionUser) {
       const authenticatedUser = await UserModel.findById(sessionUser.userId)
-        .select('name email phone country isBanned')
+        .select('name email phone country isBanned ref')
         .lean(false);
 
       if (!authenticatedUser) {
@@ -408,6 +409,18 @@ export async function POST(request: NextRequest) {
         },
         { status: 401 },
       );
+    }
+
+    let resolvedRef = referralId || undefined;
+    const finalUserDoc = await UserModel.findById(effectiveUserId).select('ref').lean(false);
+    if (finalUserDoc) {
+      if (finalUserDoc.ref) {
+        resolvedRef = finalUserDoc.ref;
+      } else if (referralId) {
+        finalUserDoc.ref = referralId;
+        await finalUserDoc.save();
+        resolvedRef = referralId;
+      }
     }
 
     // Outstanding balance check removed - users can now pay for new orders
@@ -988,7 +1001,7 @@ export async function POST(request: NextRequest) {
         phone: resolvedBillingPhone,
         country: resolvedBillingCountry || 'N/A',
       },
-      referralId: referralId || undefined,
+      referralId: resolvedRef,
       couponCode: appliedCouponCode,
       couponId: appliedCouponId,
       couponDiscount,

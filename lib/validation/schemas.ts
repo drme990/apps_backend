@@ -34,6 +34,7 @@ export const registerSchema = z
     password: z.string().min(6),
     phone: z.string().trim().optional(),
     country: z.string().trim().optional(),
+    ref: z.string().trim().optional(),
     appId: z.enum(['manasik', 'ghadaq', 'admin_panel']),
   })
   .strict();

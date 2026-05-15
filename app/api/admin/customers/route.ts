@@ -25,6 +25,7 @@ type CustomerDTO = {
   country: string;
   appId: 'ghadaq' | 'manasik';
   isBanned: boolean;
+  ref?: string | null;
   createdAt: Date;
 };
 
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest) {
           .sort({ createdAt: -1 })
           .limit(200)
           .select(
-            'name email phone registrationIp lastLoginIp country isBanned createdAt',
+            'name email phone registrationIp lastLoginIp country isBanned ref createdAt',
           )
           .lean();
 
@@ -113,6 +114,7 @@ export async function GET(request: NextRequest) {
               typeof customer.country === 'string' ? customer.country : '',
             appId,
             isBanned: Boolean(customer.isBanned),
+            ref: typeof customer.ref === 'string' ? customer.ref : null,
             createdAt:
               customer.createdAt instanceof Date
                 ? customer.createdAt

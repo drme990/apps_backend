@@ -39,6 +39,7 @@ type AuthUserDoc = {
   allowedPages?: string[];
   phone?: string;
   country?: string;
+  ref?: string | null;
   isBanned?: boolean;
   registrationIp?: string;
   lastLoginIp?: string;
@@ -101,6 +102,7 @@ function toPublicUser(user: AuthUserDoc, appId: AppId) {
       ? {
           phone: user.phone || '',
           country: user.country || '',
+          ref: user.ref || null,
           isBanned: Boolean(user.isBanned),
         }
       : {}),
@@ -278,7 +280,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     const parsed = await parseJsonBody(request, registerPayloadSchema);
     if (!parsed.success) return parsed.response;
 
-    const { name, email, password, phone, country } = parsed.data;
+    const { name, email, password, phone, country, ref } = parsed.data;
     const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
 
     const clientIp = getClientIp(request);
@@ -358,6 +360,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     } else {
       createPayload.phone = normalizedPhone || '';
       createPayload.country = country || '';
+      createPayload.ref = ref || null;
     }
 
     const user = await UserModel.create(createPayload);

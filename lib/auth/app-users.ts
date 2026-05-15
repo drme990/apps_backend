@@ -42,6 +42,7 @@ export interface IBaseAppUser {
   registrationIp?: string;
   lastLoginIp?: string;
   lastLoginAt?: Date;
+  ref?: string | null;
 }
 
 export interface IBaseAppUserMethods {
@@ -95,6 +96,7 @@ function buildBaseAppUserModel(
       registrationIp: { type: String, trim: true },
       lastLoginIp: { type: String, trim: true },
       lastLoginAt: { type: Date },
+      ref: { type: String, trim: true, default: null },
     },
     { timestamps: true, collection },
   );
