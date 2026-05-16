@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validatePhoneNumber } from './phone-validation';
 
 // objectLoose was removed or not used
 
@@ -32,7 +33,20 @@ export const registerSchema = z
     name: z.string().trim().min(1),
     email: z.string().email(),
     password: z.string().min(6),
-    phone: z.string().trim().optional(),
+    phone: z
+      .string()
+      .trim()
+      .optional()
+      .refine(
+        (phone) => {
+          if (!phone) return true; // Phone is optional
+          const validation = validatePhoneNumber(phone);
+          return validation.isValid;
+        },
+        {
+          message: 'Invalid phone number format',
+        },
+      ),
     country: z.string().trim().optional(),
     ref: z.string().trim().optional(),
     appId: z.enum(['manasik', 'ghadaq', 'admin_panel']),
@@ -71,7 +85,19 @@ export const checkoutSchema = z
       .object({
         fullName: z.string().trim().min(1),
         email: z.string().email(),
-        phone: z.string().trim().min(1),
+        phone: z
+          .string()
+          .trim()
+          .min(1)
+          .refine(
+            (phone) => {
+              const validation = validatePhoneNumber(phone);
+              return validation.isValid;
+            },
+            {
+              message: 'Invalid phone number format',
+            },
+          ),
         country: z.string().trim().optional(),
       })
       .strict(),
@@ -329,7 +355,19 @@ export const referralCreateSchema = z
   .object({
     name: z.string().trim().min(1),
     referralId: z.string().trim().min(1),
-    phone: z.string().trim().min(1),
+    phone: z
+      .string()
+      .trim()
+      .min(1)
+      .refine(
+        (phone) => {
+          const validation = validatePhoneNumber(phone);
+          return validation.isValid;
+        },
+        {
+          message: 'Invalid phone number format',
+        },
+      ),
   })
   .strict();
 
@@ -337,7 +375,21 @@ export const referralUpdateSchema = z
   .object({
     name: z.string().trim().min(1).optional(),
     referralId: z.string().trim().min(1).optional(),
-    phone: z.string().trim().min(1).optional(),
+    phone: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .refine(
+        (phone) => {
+          if (!phone) return true; // Phone is optional
+          const validation = validatePhoneNumber(phone);
+          return validation.isValid;
+        },
+        {
+          message: 'Invalid phone number format',
+        },
+      ),
     isActive: z.boolean().optional(),
   })
   .strict()
