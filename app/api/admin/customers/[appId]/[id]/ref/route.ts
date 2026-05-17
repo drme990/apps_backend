@@ -9,6 +9,7 @@ import {
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
 import { logActivity } from '@/lib/services/logger';
+import CustomerRefHistory from '@/lib/models/CustomerRefHistory';
 
 const bodySchema = z.object({
   ref: z.string().trim().nullable(),
@@ -45,9 +46,34 @@ export async function PATCH(
     const customerModel = getUserModelByAppId(
       appId,
     ) as unknown as AppCustomerModel;
+    const customerBefore = await customerModel
+      .findById(id)
+      .select('name email ref');
+
+    if (!customerBefore) {
+      return NextResponse.json(
+        { success: false, error: 'Customer not found' },
+        { status: 404 },
+      );
+    }
+
+    const nextRef = parsedBody.data.ref || null;
+    const previousRef = customerBefore.ref || null;
+
+    if (previousRef === nextRef) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          _id: String(customerBefore._id),
+          ref: previousRef,
+          changed: false,
+        },
+      });
+    }
+
     const customer = await customerModel.findByIdAndUpdate(
       id,
-      { ref: parsedBody.data.ref || null },
+      { ref: nextRef },
       { returnDocument: 'after' },
     );
 
@@ -65,7 +91,20 @@ export async function PATCH(
       action: 'update',
       resource: 'user',
       resourceId: String(customer._id),
-      details: `Updated referralId (ref) for customer ${customer.email} (${appId}) to: ${parsedBody.data.ref || 'null'}`,
+      details: `Updated referralId (ref) for customer ${customer.email} (${appId}) from: ${previousRef || 'null'} to: ${nextRef || 'null'}`,
+    });
+
+    await CustomerRefHistory.create({
+      customerId: String(customer._id),
+      appId,
+      customerName: customerBefore.name,
+      customerEmail: customerBefore.email,
+      previousRef,
+      newRef: nextRef,
+      changedByUserId: auth.user.userId,
+      changedByUserName: auth.user.name,
+      changedByUserEmail: auth.user.email,
+      changeSource: 'single',
     });
 
     return NextResponse.json({
@@ -73,6 +112,7 @@ export async function PATCH(
       data: {
         _id: String(customer._id),
         ref: customer.ref || null,
+        changed: true,
       },
     });
   } catch (error) {

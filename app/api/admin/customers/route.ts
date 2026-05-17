@@ -13,6 +13,15 @@ const querySchema = z.object({
   appId: z.enum(['ghadaq', 'manasik']).optional(),
   search: z.string().trim().optional(),
   isBanned: z.enum(['true', 'false']).optional(),
+  ref: z.string().trim().optional(),
+  page: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 1)),
+  limit: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 20)),
 });
 
 type CustomerDTO = {
@@ -41,6 +50,9 @@ export async function GET(request: NextRequest) {
       appId: request.nextUrl.searchParams.get('appId') || undefined,
       search: request.nextUrl.searchParams.get('search') || undefined,
       isBanned: request.nextUrl.searchParams.get('isBanned') || undefined,
+      ref: request.nextUrl.searchParams.get('ref') || undefined,
+      page: request.nextUrl.searchParams.get('page') || undefined,
+      limit: request.nextUrl.searchParams.get('limit') || undefined,
     });
 
     if (!parsed.success) {
@@ -55,10 +67,14 @@ export async function GET(request: NextRequest) {
       parsed.data.isBanned === undefined
         ? undefined
         : parsed.data.isBanned === 'true';
+    const refFilter = parsed.data.ref || undefined;
+    const page = parsed.data.page || 1;
+    const limit = parsed.data.limit || 20;
+    const skip = (page - 1) * limit;
 
     const appIds: Array<'ghadaq' | 'manasik'> = parsed.data.appId
       ? [parsed.data.appId]
-      : ['ghadaq', 'manasik'];
+      : (['ghadaq', 'manasik'] as const);
 
     const results = await Promise.all(
       appIds.map(async (appId) => {
@@ -86,54 +102,99 @@ export async function GET(request: NextRequest) {
         if (typeof isBannedFilter === 'boolean') {
           filterQuery.isBanned = isBannedFilter;
         }
+        if (refFilter) {
+          if (refFilter === '__none__') {
+            filterQuery.$or = [
+              { ref: { $exists: false } },
+              { ref: null },
+              { ref: '' },
+            ];
+          } else {
+            filterQuery.ref = refFilter;
+          }
+        }
 
-        const customers = await model
-          .find(filterQuery)
-          .sort({ createdAt: -1 })
-          .limit(200)
-          .select(
-            'name email phone registrationIp lastLoginIp country isBanned ref createdAt',
-          )
-          .lean();
+        const [customers, totalCount] = await Promise.all([
+          model
+            .find(filterQuery)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .select(
+              'name email phone registrationIp lastLoginIp country isBanned ref createdAt',
+            )
+            .lean(),
+          model.countDocuments(filterQuery),
+        ]);
 
-        return customers.map(
-          (customer): CustomerDTO => ({
-            _id: String(customer._id),
-            name: typeof customer.name === 'string' ? customer.name : '',
-            email: typeof customer.email === 'string' ? customer.email : '',
-            phone: typeof customer.phone === 'string' ? customer.phone : '',
-            registrationIp:
-              typeof customer.registrationIp === 'string'
-                ? customer.registrationIp
-                : undefined,
-            lastLoginIp:
-              typeof customer.lastLoginIp === 'string'
-                ? customer.lastLoginIp
-                : undefined,
-            country:
-              typeof customer.country === 'string' ? customer.country : '',
-            appId,
-            isBanned: Boolean(customer.isBanned),
-            ref: typeof customer.ref === 'string' ? customer.ref : null,
-            createdAt:
-              customer.createdAt instanceof Date
-                ? customer.createdAt
-                : new Date(0),
-          }),
-        );
+        return {
+          customers: customers.map(
+            (customer): CustomerDTO => ({
+              _id: String(customer._id),
+              name: typeof customer.name === 'string' ? customer.name : '',
+              email: typeof customer.email === 'string' ? customer.email : '',
+              phone: typeof customer.phone === 'string' ? customer.phone : '',
+              registrationIp:
+                typeof customer.registrationIp === 'string'
+                  ? customer.registrationIp
+                  : undefined,
+              lastLoginIp:
+                typeof customer.lastLoginIp === 'string'
+                  ? customer.lastLoginIp
+                  : undefined,
+              country:
+                typeof customer.country === 'string' ? customer.country : '',
+              appId,
+              isBanned: Boolean(customer.isBanned),
+              ref: typeof customer.ref === 'string' ? customer.ref : null,
+              createdAt:
+                customer.createdAt instanceof Date
+                  ? customer.createdAt
+                  : new Date(0),
+            }),
+          ),
+          totalCount,
+        };
       }),
     );
 
-    let customers: CustomerDTO[] = results.flat();
+    let customers: CustomerDTO[] = results.flatMap((r) => r.customers);
+    const filteredTotal = results.reduce((sum, r) => sum + r.totalCount, 0);
 
     customers.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-    // Limit global merged results to 200 to prevent huge payloads
-    customers = customers.slice(0, 200);
+    // Get overall stats (all customers regardless of filters)
+    const statsResults = await Promise.all(
+      (['ghadaq', 'manasik'] as const).map(async (appId) => {
+        const model = getUserModelByAppId(appId) as unknown as AppCustomerModel;
+        const [total, banned] = await Promise.all([
+          model.countDocuments(),
+          model.countDocuments({ isBanned: true }),
+        ]);
+        return { appId, total, banned };
+      }),
+    );
+
+    const stats = {
+      total: statsResults.reduce((sum, r) => sum + r.total, 0),
+      manasik: statsResults.find((r) => r.appId === 'manasik')?.total || 0,
+      ghadaq: statsResults.find((r) => r.appId === 'ghadaq')?.total || 0,
+      banned: statsResults.reduce((sum, r) => sum + r.banned, 0),
+      active: statsResults.reduce((sum, r) => sum + (r.total - r.banned), 0),
+    };
 
     return NextResponse.json({
       success: true,
-      data: { customers },
+      data: {
+        customers,
+        pagination: {
+          page,
+          limit,
+          total: filteredTotal,
+          totalPages: Math.ceil(filteredTotal / limit),
+        },
+        stats,
+      },
     });
   } catch (error) {
     console.error('Error fetching customers:', error);
