@@ -117,6 +117,7 @@ export const checkoutSchema = z
     isUpgrade: z.boolean().optional(),
     fromProductId: z.string().trim().optional(),
     upgradeDiscount: z.coerce.number().min(0).max(100).optional(),
+    recommendProductId: z.string().trim().optional(),
   })
   .strict();
 

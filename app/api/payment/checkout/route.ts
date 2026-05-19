@@ -152,6 +152,7 @@ export async function POST(request: NextRequest) {
       isUpgrade,
       fromProductId,
       upgradeDiscount,
+      recommendProductId,
     } = body;
 
     const orderSource: 'manasik' | 'ghadaq' =
@@ -463,6 +464,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let recommendedProduct = null;
+    let recommendedProductPrice = 0;
+    
+    if (recommendProductId) {
+      recommendedProduct = await Product.findOne({
+        _id: recommendProductId,
+        isDeleted: { $ne: true },
+        isActive: true,
+      });
+
+      if (!recommendedProduct) {
+        return NextResponse.json(
+          { success: false, error: 'Recommended product not found or unavailable' },
+          { status: 404 },
+        );
+      }
+
+      const recSize = recommendedProduct.sizes[0];
+      if (recSize && recSize.isAvailable !== false) {
+        const recCurrencyPrice = recSize.prices?.find(
+          (p: { currencyCode: string; amount: number }) => p.currencyCode === currency.toUpperCase(),
+        );
+        if (recCurrencyPrice) {
+          recommendedProductPrice = recCurrencyPrice.amount;
+        } else if (recommendedProduct.baseCurrency === currency.toUpperCase()) {
+          recommendedProductPrice = recSize.price ?? 0;
+        }
+      }
+    }
+
     const booking = await Booking.findOne({ key: 'global' }).lean();
     const blockedExecutionDates = new Set(
       (booking?.blockedExecutionDates ?? []).filter((value: string) =>
@@ -692,7 +723,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let totalAmount = unitPrice * quantity;
+    let totalAmount = (unitPrice * quantity) + recommendedProductPrice;
 
     // Apply upgrade discount if applicable
     const upgradeDiscountPercent =
@@ -969,22 +1000,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const orderPayload = {
-      items: [
-        {
-          productId: product._id.toString(),
-          productSlug: product.slug,
-          productName: { ar: product.name.ar, en: product.name.en },
-          price: unitPrice,
-          currency: currencyUpper,
-          quantity,
-          sizeIndex: activeSizeIndex,
-          sizeName: {
-            ar: selectedSize?.name?.ar || '',
-            en: selectedSize?.name?.en || '',
-          },
+    const orderItemsPayload = [
+      {
+        productId: product._id.toString(),
+        productSlug: product.slug,
+        productName: { ar: product.name.ar, en: product.name.en },
+        price: unitPrice,
+        currency: currencyUpper,
+        quantity,
+        sizeIndex: activeSizeIndex,
+        sizeName: {
+          ar: selectedSize?.name?.ar || '',
+          en: selectedSize?.name?.en || '',
         },
-      ],
+      },
+    ];
+
+    if (recommendedProduct && recommendedProductPrice > 0) {
+      const recSize = recommendedProduct.sizes[0];
+      orderItemsPayload.push({
+        productId: recommendedProduct._id.toString(),
+        productSlug: recommendedProduct.slug,
+        productName: { ar: recommendedProduct.name.ar, en: recommendedProduct.name.en },
+        price: recommendedProductPrice,
+        currency: currencyUpper,
+        quantity: 1, // Only 1 quantity for recommended product
+        sizeIndex: 0,
+        sizeName: {
+          ar: recSize?.name?.ar || '',
+          en: recSize?.name?.en || '',
+        },
+      });
+    }
+
+    const orderPayload = {
+      items: orderItemsPayload,
       userId: effectiveUserId,
       isGuest: false,
       totalAmount: payAmount,

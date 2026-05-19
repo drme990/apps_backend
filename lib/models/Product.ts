@@ -78,6 +78,10 @@ export interface IProduct {
     ar: string[];
     en: string[];
   } | null;
+  recommendProduct?: {
+    recommend: boolean;
+    product: string | null;
+  } | null;
   workAsSacrifice?: boolean;
   sacrificeCount?: number;
   reservationFields?: IReservationField[];
@@ -204,6 +208,18 @@ const UpgradeFeaturesSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const RecommendProductSchema = new mongoose.Schema(
+  {
+    recommend: { type: Boolean, default: false },
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      default: null,
+    },
+  },
+  { _id: false },
+);
+
 const ProductSchema = new mongoose.Schema<IProduct>(
   {
     name: {
@@ -270,6 +286,10 @@ const ProductSchema = new mongoose.Schema<IProduct>(
       type: UpgradeFeaturesSchema,
       required: false,
       default: null,
+    },
+    recommendProduct: {
+      type: RecommendProductSchema,
+      default: () => ({ recommend: false, product: null }),
     },
     workAsSacrifice: { type: Boolean, default: false },
     sacrificeCount: { type: Number, default: 1, min: 1 },
