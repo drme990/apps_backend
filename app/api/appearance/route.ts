@@ -9,6 +9,12 @@ export async function GET(request: NextRequest) {
     whatsAppDefaultMessage: '',
     bannerText: { ar: '', en: '' },
     documentationAnswer: { ar: '', en: '' },
+    productsBanners: [] as Array<{
+      id: string;
+      imageUrl: string;
+      target: 'ghadaq' | 'manasik' | 'both';
+      link: string;
+    }>,
   };
 
   const normalizeBannerText = (value: unknown): { ar: string; en: string } => {
@@ -23,6 +29,55 @@ export async function GET(request: NextRequest) {
       en: typeof raw?.en === 'string' ? raw.en.trim() : '',
     };
   };
+
+  const normalizeProductsBanners = (
+    value: unknown,
+  ): Array<{
+    id: string;
+    imageUrl: string;
+    target: 'ghadaq' | 'manasik' | 'both';
+    link: string;
+  }> => {
+    if (!Array.isArray(value)) return [];
+
+    return value
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+
+        const raw = item as {
+          id?: unknown;
+          imageUrl?: unknown;
+          target?: unknown;
+          link?: unknown;
+        };
+
+        const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+        const imageUrl =
+          typeof raw.imageUrl === 'string' ? raw.imageUrl.trim() : '';
+        const target =
+          raw.target === 'ghadaq' ||
+          raw.target === 'manasik' ||
+          raw.target === 'both'
+            ? raw.target
+            : 'both';
+        const link = typeof raw.link === 'string' ? raw.link.trim() : '';
+
+        if (!id || !imageUrl) return null;
+
+        return { id, imageUrl, target, link };
+      })
+      .filter(
+        (
+          item,
+        ): item is {
+          id: string;
+          imageUrl: string;
+          target: 'ghadaq' | 'manasik' | 'both';
+          link: string;
+        } => Boolean(item),
+      );
+  };
+
   try {
     await connectDB();
     const project = request.nextUrl.searchParams.get('project') || 'manasik';
@@ -32,7 +87,15 @@ export async function GET(request: NextRequest) {
       whatsAppDefaultMessage?: string;
       bannerText?: unknown;
       documentationAnswer?: unknown;
+      productsBanners?: unknown;
     } | null;
+
+    const sharedAppearance =
+      project !== 'shared'
+        ? ((await Appearance.findOne({ project: 'shared' })
+            .select({ productsBanners: 1 })
+            .lean()) as { productsBanners?: unknown } | null)
+        : null;
 
     if (!appearance) {
       return NextResponse.json({
@@ -50,6 +113,27 @@ export async function GET(request: NextRequest) {
       row2: appearance.worksImages?.row2 ?? [],
     };
 
+    const ownProductsBanners = normalizeProductsBanners(
+      appearance.productsBanners,
+    );
+    const sharedProductsBanners = normalizeProductsBanners(
+      sharedAppearance?.productsBanners,
+    );
+
+    const sourceProductsBanners =
+      project === 'shared'
+        ? ownProductsBanners
+        : sharedProductsBanners.length > 0
+          ? sharedProductsBanners
+          : ownProductsBanners;
+
+    const productsBanners =
+      project === 'shared'
+        ? sourceProductsBanners
+        : sourceProductsBanners.filter(
+            (banner) => banner.target === 'both' || banner.target === project,
+          );
+
     return NextResponse.json({
       success: true,
       data: {
@@ -57,7 +141,10 @@ export async function GET(request: NextRequest) {
         audioReviews: appearance.audioReviews ?? [],
         whatsAppDefaultMessage: appearance.whatsAppDefaultMessage?.trim() || '',
         bannerText: normalizeBannerText(appearance.bannerText),
-        documentationAnswer: normalizeBannerText(appearance.documentationAnswer),
+        documentationAnswer: normalizeBannerText(
+          appearance.documentationAnswer,
+        ),
+        productsBanners,
         // Keep backward compatibility for existing consumers.
         row1: worksImages.row1,
         row2: worksImages.row2,

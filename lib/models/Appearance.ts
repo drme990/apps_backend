@@ -11,6 +11,13 @@ export interface IAudioReview {
   isMain: boolean;
 }
 
+export interface IProductBanner {
+  id: string;
+  imageUrl: string;
+  target: 'ghadaq' | 'manasik' | 'both';
+  link: string;
+}
+
 export interface IAppearance {
   _id?: string;
   project: 'ghadaq' | 'manasik' | 'shared';
@@ -19,6 +26,7 @@ export interface IAppearance {
   whatsAppDefaultMessage?: string;
   bannerText?: { ar: string; en: string };
   documentationAnswer?: { ar: string; en: string };
+  productsBanners?: IProductBanner[];
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -43,6 +51,21 @@ const AudioReviewSchema = new mongoose.Schema<IAudioReview>(
       index: true,
     },
     isMain: { type: Boolean, default: false, index: true },
+  },
+  { _id: false },
+);
+
+const ProductBannerSchema = new mongoose.Schema<IProductBanner>(
+  {
+    id: { type: String, required: true, trim: true },
+    imageUrl: { type: String, required: true, trim: true },
+    target: {
+      type: String,
+      required: true,
+      enum: ['ghadaq', 'manasik', 'both'],
+      index: true,
+    },
+    link: { type: String, default: '', trim: true },
   },
   { _id: false },
 );
@@ -90,6 +113,7 @@ const AppearanceSchema = new mongoose.Schema<IAppearance>(
         default: '',
       },
     },
+    productsBanners: { type: [ProductBannerSchema], default: [] },
   },
   { timestamps: true },
 );
