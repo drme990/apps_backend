@@ -24,6 +24,20 @@ export function getClientIp(request: NextRequest): string {
 }
 
 /**
+ * Extract client country from request headers
+ * Checks Cloudflare and Vercel specific headers
+ */
+export function getClientCountry(request: NextRequest): string | null {
+  const cfCountry = request.headers.get('cf-ipcountry');
+  if (cfCountry) return cfCountry;
+
+  const vercelCountry = request.headers.get('x-vercel-ip-country');
+  if (vercelCountry) return vercelCountry;
+
+  return null;
+}
+
+/**
  * Validate IP address format (IPv4 or IPv6)
  */
 export function isValidIp(ip: string): boolean {

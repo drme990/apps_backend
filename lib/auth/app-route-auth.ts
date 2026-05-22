@@ -25,7 +25,8 @@ import {
   normalizeEmail,
   normalizePhone,
 } from '@/lib/services/partial-payment-guard';
-import { getClientIp, isValidIp } from '@/lib/utils/ip';
+import { validateReferralCode } from '@/lib/services/referral-validation';
+import { getClientIp, getClientCountry, isValidIp } from '@/lib/utils/ip';
 import { isIpBanned } from '@/lib/models/BannedIP';
 
 type RouteApp = 'admin_panel' | 'ghadaq' | 'manasik';
@@ -40,6 +41,7 @@ type AuthUserDoc = {
   phone?: string;
   country?: string;
   ref?: string | null;
+  detectedCountry?: string | null;
   isBanned?: boolean;
   registrationIp?: string;
   lastLoginIp?: string;
@@ -102,8 +104,9 @@ function toPublicUser(user: AuthUserDoc, appId: AppId) {
       ? {
           phone: user.phone || '',
           country: user.country || '',
-          ref: user.ref || null,
+          detectedCountry: user.detectedCountry || null,
           isBanned: Boolean(user.isBanned),
+          ...(user.ref ? { ref: user.ref } : {}),
         }
       : {}),
     ...(appId === 'admin_panel'
@@ -230,6 +233,12 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
     if (isValidIp(clientIp)) {
       user.lastLoginIp = clientIp;
       user.lastLoginAt = new Date();
+      if (!user.detectedCountry) {
+        const country = getClientCountry(request);
+        if (country) {
+          user.detectedCountry = country;
+        }
+      }
       await user.save();
     }
 
@@ -291,7 +300,8 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
         return NextResponse.json(
           {
             success: false,
-            error: 'Your IP address has been banned. Contact support for assistance.',
+            error:
+              'Your IP address has been banned. Contact support for assistance.',
             code: 'IP_BANNED',
           },
           { status: 403 },
@@ -360,7 +370,11 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     } else {
       createPayload.phone = normalizedPhone || '';
       createPayload.country = country || '';
-      createPayload.ref = ref || null;
+
+      const referralValidation = await validateReferralCode(ref);
+      if (referralValidation.valid) {
+        createPayload.ref = ref?.trim() || null;
+      }
     }
 
     const user = await UserModel.create(createPayload);

@@ -8,6 +8,7 @@ import Booking from '@/lib/models/Booking';
 import { getAuthUser } from '@/lib/auth';
 import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
+import { validateReferralCode } from '@/lib/services/referral-validation';
 
 const COUNTRY_HEADER_CANDIDATES = [
   'x-vercel-ip-country',
@@ -412,15 +413,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let resolvedRef = referralId || undefined;
-    const finalUserDoc = await UserModel.findById(effectiveUserId).select('ref').lean(false);
+    let resolvedRef: string | undefined;
+    const referralValidation = await validateReferralCode(referralId);
+    if (referralValidation.valid) {
+      resolvedRef = referralId?.trim() || undefined;
+    }
+    const finalUserDoc = await UserModel.findById(effectiveUserId)
+      .select('ref')
+      .lean(false);
     if (finalUserDoc) {
       if (finalUserDoc.ref) {
         resolvedRef = finalUserDoc.ref;
-      } else if (referralId) {
-        finalUserDoc.ref = referralId;
+      } else if (resolvedRef) {
+        finalUserDoc.ref = resolvedRef;
         await finalUserDoc.save();
-        resolvedRef = referralId;
       }
     }
 
@@ -466,7 +472,7 @@ export async function POST(request: NextRequest) {
 
     let recommendedProduct = null;
     let recommendedProductPrice = 0;
-    
+
     if (recommendProductId) {
       recommendedProduct = await Product.findOne({
         _id: recommendProductId,
@@ -476,7 +482,10 @@ export async function POST(request: NextRequest) {
 
       if (!recommendedProduct) {
         return NextResponse.json(
-          { success: false, error: 'Recommended product not found or unavailable' },
+          {
+            success: false,
+            error: 'Recommended product not found or unavailable',
+          },
           { status: 404 },
         );
       }
@@ -484,7 +493,8 @@ export async function POST(request: NextRequest) {
       const recSize = recommendedProduct.sizes[0];
       if (recSize && recSize.isAvailable !== false) {
         const recCurrencyPrice = recSize.prices?.find(
-          (p: { currencyCode: string; amount: number }) => p.currencyCode === currency.toUpperCase(),
+          (p: { currencyCode: string; amount: number }) =>
+            p.currencyCode === currency.toUpperCase(),
         );
         if (recCurrencyPrice) {
           recommendedProductPrice = recCurrencyPrice.amount;
@@ -723,7 +733,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let totalAmount = (unitPrice * quantity) + recommendedProductPrice;
+    let totalAmount = unitPrice * quantity + recommendedProductPrice;
 
     // Apply upgrade discount if applicable
     const upgradeDiscountPercent =
@@ -1021,7 +1031,10 @@ export async function POST(request: NextRequest) {
       orderItemsPayload.push({
         productId: recommendedProduct._id.toString(),
         productSlug: recommendedProduct.slug,
-        productName: { ar: recommendedProduct.name.ar, en: recommendedProduct.name.en },
+        productName: {
+          ar: recommendedProduct.name.ar,
+          en: recommendedProduct.name.en,
+        },
         price: recommendedProductPrice,
         currency: currencyUpper,
         quantity: 1, // Only 1 quantity for recommended product

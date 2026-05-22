@@ -35,6 +35,8 @@ type CustomerDTO = {
   appId: 'ghadaq' | 'manasik';
   isBanned: boolean;
   ref?: string | null;
+  detectedCountry?: string;
+  lastLoginAt?: Date;
   createdAt: Date;
 };
 
@@ -121,7 +123,7 @@ export async function GET(request: NextRequest) {
             .skip(skip)
             .limit(limit)
             .select(
-              'name email phone registrationIp lastLoginIp country isBanned ref createdAt',
+              'name email phone registrationIp lastLoginIp country isBanned ref detectedCountry lastLoginAt createdAt',
             )
             .lean(),
           model.countDocuments(filterQuery),
@@ -147,6 +149,8 @@ export async function GET(request: NextRequest) {
               appId,
               isBanned: Boolean(customer.isBanned),
               ref: typeof customer.ref === 'string' ? customer.ref : null,
+              detectedCountry: typeof customer.detectedCountry === 'string' ? customer.detectedCountry : undefined,
+              lastLoginAt: customer.lastLoginAt instanceof Date ? customer.lastLoginAt : undefined,
               createdAt:
                 customer.createdAt instanceof Date
                   ? customer.createdAt
