@@ -371,10 +371,18 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       createPayload.phone = normalizedPhone || '';
       createPayload.country = country || '';
 
-      const referralValidation = await validateReferralCode(ref);
-      if (referralValidation.valid) {
-        createPayload.ref = ref?.trim() || null;
+      let resolvedRef: string | null = null;
+      if (ref) {
+        const referralValidation = await validateReferralCode(ref);
+        if (referralValidation.valid) {
+          resolvedRef = ref.trim();
+        }
       }
+      
+      if (!resolvedRef) {
+        resolvedRef = appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+      }
+      createPayload.ref = resolvedRef;
     }
 
     const user = await UserModel.create(createPayload);

@@ -227,9 +227,15 @@ export async function GET(request: NextRequest) {
       const hasIsGuest = typeof order.isGuest === 'boolean';
       const hasUserId = hasOrderUserId(order.userId);
 
+      const normalizedReferralId = 
+        order.referralId === 'default-MNK' || order.referralId === 'default-GHD' 
+          ? undefined 
+          : order.referralId;
+
       return {
         ...order,
         isGuest: hasIsGuest ? order.isGuest : !hasUserId,
+        referralId: normalizedReferralId,
       };
     });
 

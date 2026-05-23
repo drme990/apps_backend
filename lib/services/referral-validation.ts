@@ -18,6 +18,10 @@ export async function validateReferralCode(
     return { valid: false, message: 'Referral code is required' };
   }
 
+  if (referralId === 'default-MNK' || referralId === 'default-GHD') {
+    return { valid: true };
+  }
+
   const referral = await Referral.findOne({ referralId })
     .select('_id referralId')
     .lean()

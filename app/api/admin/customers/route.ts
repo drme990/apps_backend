@@ -148,7 +148,7 @@ export async function GET(request: NextRequest) {
                 typeof customer.country === 'string' ? customer.country : '',
               appId,
               isBanned: Boolean(customer.isBanned),
-              ref: typeof customer.ref === 'string' ? customer.ref : null,
+              ref: typeof customer.ref === 'string' && customer.ref !== 'default-MNK' && customer.ref !== 'default-GHD' ? customer.ref : null,
               detectedCountry: typeof customer.detectedCountry === 'string' ? customer.detectedCountry : undefined,
               lastLoginAt: customer.lastLoginAt instanceof Date ? customer.lastLoginAt : undefined,
               createdAt:

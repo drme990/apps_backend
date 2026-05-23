@@ -418,13 +418,18 @@ export async function POST(request: NextRequest) {
     if (referralValidation.valid) {
       resolvedRef = referralId?.trim() || undefined;
     }
+    
+    if (!resolvedRef) {
+      resolvedRef = checkoutAppId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+    }
+
     const finalUserDoc = await UserModel.findById(effectiveUserId)
       .select('ref')
       .lean(false);
     if (finalUserDoc) {
       if (finalUserDoc.ref) {
         resolvedRef = finalUserDoc.ref;
-      } else if (resolvedRef) {
+      } else {
         finalUserDoc.ref = resolvedRef;
         await finalUserDoc.save();
       }
