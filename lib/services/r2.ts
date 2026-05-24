@@ -19,6 +19,14 @@ const R2_REQUEST_TIMEOUT_MS = 40 * 60 * 1000;
 const R2_SOCKET_TIMEOUT_MS = 40 * 60 * 1000;
 const R2_MAX_ATTEMPTS = 3;
 
+function sanitizeObjectName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9.-]/g, '');
+}
+
+function buildObjectKey(folder: string, name: string): string {
+  return `${folder}/${Date.now()}-${sanitizeObjectName(name)}`;
+}
+
 export const s3Client = new S3Client({
   region: 'auto',
   endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
@@ -78,7 +86,7 @@ export const uploadVideoToR2 = async (
     throw new Error('R2 credentials are missing');
   }
 
-  const key = `${folder}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '')}`;
+  const key = buildObjectKey(folder, file.name);
   const bodyBuffer = Buffer.from(await file.arrayBuffer());
 
   const command = new PutObjectCommand({
@@ -119,6 +127,13 @@ export const uploadVideoToR2 = async (
   };
 };
 
+export const uploadFileToR2 = async (
+  file: File,
+  folder: string = 'products/images',
+): Promise<{ url: string; key: string }> => {
+  return uploadVideoToR2(file, folder);
+};
+
 export const deleteVideoFromR2 = async (key: string): Promise<boolean> => {
   try {
     const command = new DeleteObjectCommand({
@@ -131,6 +146,10 @@ export const deleteVideoFromR2 = async (key: string): Promise<boolean> => {
     console.error('Error deleting from R2:', error);
     return false;
   }
+};
+
+export const deleteFileFromR2 = async (key: string): Promise<boolean> => {
+  return deleteVideoFromR2(key);
 };
 
 export const isR2Url = (url: string): boolean => {

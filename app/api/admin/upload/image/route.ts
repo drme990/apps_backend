@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import {
-  uploadImage,
+  uploadFileToR2,
+  deleteFileFromR2,
+  isR2Url,
+  extractR2Key,
+} from '@/lib/services/r2';
+import {
   deleteImage,
   isCloudinaryUrl,
   extractPublicId,
@@ -23,6 +28,21 @@ const ALLOWED_TYPES = [
 ];
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
+function resolveImageFolder(folder?: string): string {
+  const normalizedFolder = folder?.trim();
+
+  switch (normalizedFolder) {
+    case 'products':
+      return 'products/images';
+    case 'customers':
+      return 'images/customers';
+    case 'website':
+    case 'appearance':
+    default:
+      return 'images/website';
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -37,12 +57,16 @@ export async function POST(request: NextRequest) {
           typeof formData.get('oldUrl') === 'string'
             ? (formData.get('oldUrl') as string)
             : undefined,
+        folder:
+          typeof formData.get('folder') === 'string'
+            ? (formData.get('folder') as string)
+            : undefined,
       },
       uploadImageFormSchema,
     );
     if (!parsed.success) return parsed.response;
 
-    const { file, oldUrl } = parsed.data;
+    const { file, oldUrl, folder } = parsed.data;
 
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
@@ -62,12 +86,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = `data:${file.type};base64,${Buffer.from(arrayBuffer).toString('base64')}`;
-    const result = await uploadImage(base64);
+    const imageFolder = resolveImageFolder(folder);
+    const result = await uploadFileToR2(file, imageFolder);
 
-    // Optionally delete old image
-    if (oldUrl && isCloudinaryUrl(oldUrl)) {
+    // Optionally delete old image after the new upload succeeds.
+    if (oldUrl && isR2Url(oldUrl)) {
+      const key = extractR2Key(oldUrl);
+      if (key && key !== result.key) {
+        await deleteFileFromR2(key);
+      }
+    } else if (oldUrl && isCloudinaryUrl(oldUrl)) {
       const publicId = extractPublicId(oldUrl);
       if (publicId) {
         await deleteImage(publicId);
@@ -77,7 +105,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     captureException(error, {
-      service: 'CloudinaryRoute',
+      service: 'R2ImageRoute',
       operation: 'POST_Upload',
       severity: 'medium',
     });
@@ -102,9 +130,25 @@ export async function DELETE(request: NextRequest) {
 
     const { url } = parsed.data;
 
+    if (isR2Url(url)) {
+      const key = extractR2Key(url);
+      if (!key) {
+        return NextResponse.json(
+          { success: false, error: 'Could not extract object key from URL' },
+          { status: 400 },
+        );
+      }
+
+      await deleteFileFromR2(key);
+      return NextResponse.json({
+        success: true,
+        message: 'Image deleted successfully',
+      });
+    }
+
     if (!isCloudinaryUrl(url)) {
       return NextResponse.json(
-        { success: false, error: 'Not a valid Cloudinary URL' },
+        { success: false, error: 'Not a valid image URL' },
         { status: 400 },
       );
     }
@@ -125,7 +169,7 @@ export async function DELETE(request: NextRequest) {
     });
   } catch (error) {
     captureException(error, {
-      service: 'CloudinaryRoute',
+      service: 'R2ImageRoute',
       operation: 'DELETE_Image',
       severity: 'medium',
     });

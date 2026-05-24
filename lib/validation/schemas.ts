@@ -194,6 +194,7 @@ export const refTrackerEventSchema = z
 export const uploadImageFormSchema = z.object({
   file: z.any(), // File object is checked in route via formData
   oldUrl: z.string().trim().optional(),
+  folder: z.enum(['products', 'customers', 'website', 'appearance']).optional(),
 });
 
 export const uploadImageDeleteSchema = z

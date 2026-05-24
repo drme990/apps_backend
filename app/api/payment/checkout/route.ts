@@ -45,7 +45,7 @@ import {
 } from '@/lib/services/partial-payment-guard';
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
-import { uploadImage } from '@/lib/services/cloudinary';
+import { uploadFileToR2 } from '@/lib/services/r2';
 import { convertCurrency } from '@/lib/services/currency';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
@@ -418,7 +418,7 @@ export async function POST(request: NextRequest) {
     if (referralValidation.valid) {
       resolvedRef = referralId?.trim() || undefined;
     }
-    
+
     if (!resolvedRef) {
       resolvedRef = checkoutAppId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
     }
@@ -668,18 +668,18 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Store reservation pictures as CDN URLs instead of large base64 strings.
+        // Store customer-submitted pictures in Cloudflare R2 instead of large base64 strings.
         if (isDataImage) {
-          const uploaded = await uploadImage(finalValue, 'reservations');
-          if (!uploaded.success || !uploaded.url) {
-            return NextResponse.json(
-              {
-                success: false,
-                error: uploaded.error || 'Failed to upload reservation picture',
-              },
-              { status: 500 },
-            );
-          }
+          const [header, base64Data] = finalValue.split(',');
+          const mimeType =
+            header.match(/data:(.*?);base64/)?.[1] || 'image/png';
+          const imageBuffer = Buffer.from(base64Data || '', 'base64');
+          const uploaded = await uploadFileToR2(
+            new File([imageBuffer], 'reservation-picture', {
+              type: mimeType,
+            }),
+            'images/customers',
+          );
           finalValue = uploaded.url;
         }
       }
