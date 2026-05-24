@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
+import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -126,9 +127,21 @@ export async function PUT(
     }
 
     const changes: string[] = [];
+    const previousStatus = order.status;
+    const previousWhatsappState = order.isWhatsappButtonClicked;
     if (nextStatus !== order.status) {
       order.status = nextStatus;
       changes.push(`status → ${nextStatus}`);
+    }
+
+    const nextWhatsappState = resolveWhatsappButtonState(
+      nextStatus,
+      previousStatus,
+      previousWhatsappState,
+    );
+    if (nextWhatsappState !== previousWhatsappState) {
+      order.isWhatsappButtonClicked = nextWhatsappState;
+      changes.push(`whatsapp → ${nextWhatsappState}`);
     }
 
     if (changes.length === 0) {

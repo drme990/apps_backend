@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import PaymentLink from '@/lib/models/PaymentLink';
 import Order from '@/lib/models/Order';
+import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import {
   createPayment,
   getEasykashCashExpiryHours,
@@ -208,7 +209,13 @@ export async function GET(
           _id: order._id,
           status: { $nin: ['processing', 'partial-paid', 'paid', 'completed'] },
         },
-        { $set: { status: nextOrderStatus } },
+        {
+          $set: {
+            status: nextOrderStatus,
+            isWhatsappButtonClicked:
+              resolveWhatsappButtonState(nextOrderStatus),
+          },
+        },
       );
 
       return NextResponse.redirect(easykashResponse.redirectUrl, {

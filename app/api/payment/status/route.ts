@@ -5,6 +5,10 @@ import Referral from '@/lib/models/Referral';
 import Product from '@/lib/models/Product';
 import { mapEasykashStatusToOrderStatus } from '@/lib/services/easykash';
 import {
+  markWhatsappButtonClicked,
+  resolveWhatsappButtonState,
+} from '@/lib/services/whatsapp-button-state';
+import {
   calculateOrderFinancials,
   getPaymentOrderAmount,
 } from '@/lib/services/order-financials';
@@ -69,6 +73,43 @@ function hasPaidPayments(
   return (payments || []).some((payment) => payment.status === 'paid');
 }
 
+async function findOrderForPaymentStatus(
+  request: NextRequest,
+): Promise<Awaited<ReturnType<typeof Order.findOne>> | null> {
+  const orderNumberParam = request.nextUrl.searchParams.get('orderNumber');
+  const customerReference =
+    request.nextUrl.searchParams.get('customerReference');
+  const orderNumber = normalizeOrderNumber(orderNumberParam);
+
+  let order = orderNumber
+    ? await Order.findOne({ orderNumber }).sort({ createdAt: -1 })
+    : null;
+
+  if (!order && customerReference) {
+    const resolvedOrderId = getOrderIdFromReference(customerReference);
+    if (resolvedOrderId) {
+      order = await Order.findById(resolvedOrderId);
+    }
+
+    if (!order) {
+      const orderNumberFromReference = normalizeOrderNumber(customerReference);
+      if (orderNumberFromReference) {
+        order = await Order.findOne({ orderNumber: orderNumberFromReference })
+          .sort({ createdAt: -1 })
+          .exec();
+      }
+    }
+
+    if (!order) {
+      order = await Order.findOne({ orderNumber: customerReference })
+        .sort({ createdAt: -1 })
+        .exec();
+    }
+  }
+
+  return order;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -90,32 +131,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let order = orderNumber
-      ? await Order.findOne({ orderNumber }).sort({ createdAt: -1 })
-      : null;
-
-    if (!order && customerReference) {
-      const resolvedOrderId = getOrderIdFromReference(customerReference);
-      if (resolvedOrderId) {
-        order = await Order.findById(resolvedOrderId);
-      }
-
-      if (!order) {
-        const orderNumberFromReference =
-          normalizeOrderNumber(customerReference);
-        if (orderNumberFromReference) {
-          order = await Order.findOne({ orderNumber: orderNumberFromReference })
-            .sort({ createdAt: -1 })
-            .exec();
-        }
-      }
-
-      if (!order) {
-        order = await Order.findOne({ orderNumber: customerReference })
-          .sort({ createdAt: -1 })
-          .exec();
-      }
-    }
+    const order = await findOrderForPaymentStatus(request);
 
     if (!order) {
       return NextResponse.json(
@@ -127,6 +143,7 @@ export async function GET(request: NextRequest) {
     // Front-channel fallback sync: update status using gateway redirect params.
     // This protects the user flow when webhook delivery is delayed or unavailable.
     if (gatewayStatus) {
+      const previousStatus = order.status;
       const resolvedOrderId = getOrderIdFromReference(customerReference);
       const resolvedOrderNumber = normalizeOrderNumber(customerReference);
       const matchesCustomerReference =
@@ -185,7 +202,15 @@ export async function GET(request: NextRequest) {
           }
         }
 
-
+        const nextWhatsappState = resolveWhatsappButtonState(
+          order.status,
+          previousStatus,
+          order.isWhatsappButtonClicked,
+        );
+        if (nextWhatsappState !== order.isWhatsappButtonClicked) {
+          order.isWhatsappButtonClicked = nextWhatsappState;
+          shouldSave = true;
+        }
 
         if (matchedPayment) {
           if (providerRefNum) {
@@ -268,6 +293,8 @@ export async function GET(request: NextRequest) {
         couponCode: orderObj.couponCode || null,
         couponDiscount: orderObj.couponDiscount ?? 0,
         isPartialPayment: orderObj.isPartialPayment ?? false,
+        isWhatsappButtonClicked:
+          orderObj.isWhatsappButtonClicked ?? 'no-need-to-click',
         fullAmount: orderObj.fullAmount ?? orderObj.totalAmount,
         paidAmount: orderObj.paidAmount ?? 0,
         remainingAmount: orderObj.remainingAmount ?? 0,
@@ -282,6 +309,62 @@ export async function GET(request: NextRequest) {
     console.error('Error fetching payment status:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to fetch payment status' },
+      { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    await connectDB();
+
+    const body = (await request.json()) as {
+      orderNumber?: string;
+      customerReference?: string;
+    };
+
+    const orderNumber = normalizeOrderNumber(body.orderNumber || null);
+    const customerReference = body.customerReference?.trim() || null;
+
+    const lookupRequest = new NextRequest(request.url, {
+      method: 'GET',
+      headers: request.headers,
+    });
+    if (orderNumber) {
+      lookupRequest.nextUrl.searchParams.set('orderNumber', orderNumber);
+    }
+    if (customerReference) {
+      lookupRequest.nextUrl.searchParams.set(
+        'customerReference',
+        customerReference,
+      );
+    }
+
+    const order = await findOrderForPaymentStatus(lookupRequest);
+    if (!order) {
+      return NextResponse.json(
+        { success: false, error: 'Order not found' },
+        { status: 404 },
+      );
+    }
+
+    const nextWhatsappState = markWhatsappButtonClicked(
+      order.isWhatsappButtonClicked,
+      order.status,
+    );
+    if (nextWhatsappState !== order.isWhatsappButtonClicked) {
+      order.isWhatsappButtonClicked = nextWhatsappState;
+      await order.save();
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: { isWhatsappButtonClicked: order.isWhatsappButtonClicked },
+    });
+  } catch (error) {
+    console.error('Error updating WhatsApp click state:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update WhatsApp click state' },
       { status: 500 },
     );
   }

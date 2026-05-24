@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Order, { type IPayment } from '@/lib/models/Order';
+import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import {
   createPayment,
   getEasykashCashExpiryHours,
@@ -137,6 +138,8 @@ export async function POST(request: NextRequest) {
     }
 
     let { totalPaid, remainingAmount } = calculateOrderFinancials(order);
+    const previousStatus = order.status;
+    const previousWhatsappState = order.isWhatsappButtonClicked;
     const hasPaidPayment = totalPaid > 0;
     const targetStatusForBalance =
       remainingAmount > 0 && hasPaidPayment
@@ -161,6 +164,12 @@ export async function POST(request: NextRequest) {
       if (shouldSyncStatus && targetStatusForBalance) {
         order.status = targetStatusForBalance;
       }
+
+      order.isWhatsappButtonClicked = resolveWhatsappButtonState(
+        order.status,
+        previousStatus,
+        previousWhatsappState,
+      );
 
       await order.save();
     }
@@ -289,6 +298,11 @@ export async function POST(request: NextRequest) {
         } else if (totalPaid > 0) {
           order.status = 'partial-paid';
         }
+        order.isWhatsappButtonClicked = resolveWhatsappButtonState(
+          order.status,
+          previousStatus,
+          previousWhatsappState,
+        );
         await order.save();
 
         if (remainingAmount <= 0) {

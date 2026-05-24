@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type OrderStatus } from '@/lib/models/Order';
+import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { bulkOrderStatusSchema } from '@/lib/validation/schemas';
@@ -59,7 +60,12 @@ export async function PUT(request: NextRequest) {
 
     const result = await Order.updateMany(
       { _id: { $in: orderIds } },
-      { $set: { status: normalizedStatus } },
+      {
+        $set: {
+          status: normalizedStatus,
+          isWhatsappButtonClicked: resolveWhatsappButtonState(normalizedStatus),
+        },
+      },
     );
 
     await logActivity({

@@ -210,6 +210,7 @@ export interface IOrder {
   remainingAmount?: number;
   isPartialPayment?: boolean;
   paymentType?: PaymentType;
+  isWhatsappButtonClicked?: 'clicked' | 'not-clicked' | 'no-need-to-click';
   referralId?: string;
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
@@ -434,6 +435,12 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       type: String,
       enum: ['full', 'half', 'partial'],
       default: 'full',
+      index: true,
+    },
+    isWhatsappButtonClicked: {
+      type: String,
+      enum: ['clicked', 'not-clicked', 'no-need-to-click'],
+      default: 'no-need-to-click',
       index: true,
     },
     referralId: { type: String, trim: true, index: true },

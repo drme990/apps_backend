@@ -11,6 +11,7 @@ import {
   calculateOrderFinancials,
   getPaymentOrderAmount,
 } from '@/lib/services/order-financials';
+import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { trackPurchase } from '@/lib/services/fb-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import WebhookEvent from '@/lib/models/WebhookEvent';
@@ -466,7 +467,6 @@ export async function POST(request: NextRequest) {
         paymentRecord.paymentMethod = resolvedMethod;
       }
 
-
       const { totalPaid, remainingAmount } = calculateOrderFinancials(order);
       order.paidAmount = totalPaid;
       order.remainingAmount = remainingAmount;
@@ -517,6 +517,12 @@ export async function POST(request: NextRequest) {
         order.status = hasPaidPayment ? 'partial-paid' : 'pending';
       }
     }
+
+    order.isWhatsappButtonClicked = resolveWhatsappButtonState(
+      order.status,
+      orderStatusBefore,
+      order.isWhatsappButtonClicked,
+    );
 
     await order.save();
 

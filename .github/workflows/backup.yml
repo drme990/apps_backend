@@ -2,7 +2,7 @@ name: MongoDB Backup
 
 on:
   schedule:
-    - cron: '0 0 */2 * *' # Every 2 days
+    - cron: '0 0 * * *' # Every day at midnight UTC
   workflow_dispatch:
 
 jobs:

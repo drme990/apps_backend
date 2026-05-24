@@ -61,6 +61,7 @@ export async function GET(request: NextRequest) {
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
+    const whatsappState = searchParams.get('whatsappState');
     const viewMode = searchParams.get('view') || 'full';
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
@@ -109,6 +110,9 @@ export async function GET(request: NextRequest) {
       }
     }
     if (source && source !== 'all') query.source = source;
+    if (whatsappState && whatsappState !== 'all') {
+      query.isWhatsappButtonClicked = whatsappState;
+    }
 
     if (search) {
       andConditions.push({
@@ -181,6 +185,7 @@ export async function GET(request: NextRequest) {
       'billingData.phone': 1,
       'billingData.country': 1,
       referralId: 1,
+      isWhatsappButtonClicked: 1,
       remainingAmount: 1,
       source: 1,
       createdAt: 1,
@@ -205,6 +210,7 @@ export async function GET(request: NextRequest) {
       isPartialPayment: 1,
       paymentType: 1,
       referralId: 1,
+      isWhatsappButtonClicked: 1,
       termsAgreedAt: 1,
       source: 1,
       location: 1,
@@ -227,9 +233,9 @@ export async function GET(request: NextRequest) {
       const hasIsGuest = typeof order.isGuest === 'boolean';
       const hasUserId = hasOrderUserId(order.userId);
 
-      const normalizedReferralId = 
-        order.referralId === 'default-MNK' || order.referralId === 'default-GHD' 
-          ? undefined 
+      const normalizedReferralId =
+        order.referralId === 'default-MNK' || order.referralId === 'default-GHD'
+          ? undefined
           : order.referralId;
 
       return {
