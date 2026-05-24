@@ -15,6 +15,10 @@ const bodySchema = z.object({
   ref: z.string().trim().nullable(),
 });
 
+function getDefaultRefForApp(appId: string): string {
+  return appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+}
+
 type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
 export async function PATCH(
@@ -57,7 +61,7 @@ export async function PATCH(
       );
     }
 
-    const nextRef = parsedBody.data.ref || null;
+    const nextRef = parsedBody.data.ref || getDefaultRefForApp(appId);
     const previousRef = customerBefore.ref || null;
 
     if (previousRef === nextRef) {
@@ -91,7 +95,7 @@ export async function PATCH(
       action: 'update',
       resource: 'user',
       resourceId: String(customer._id),
-      details: `Updated referralId (ref) for customer ${customer.email} (${appId}) from: ${previousRef || 'null'} to: ${nextRef || 'null'}`,
+      details: `Updated referralId (ref) for customer ${customer.email} (${appId}) from: ${previousRef || 'null'} to: ${nextRef}`,
     });
 
     await CustomerRefHistory.create({

@@ -3,9 +3,26 @@ import { connectDB } from '../lib/db';
 import Order from '../lib/models/Order';
 import { getUserModelByAppId } from '../lib/auth/app-users';
 
+type AppId = 'manasik' | 'ghadaq';
+
+type BackfillUser = {
+  _id: mongoose.Types.ObjectId;
+  email?: string;
+};
+
+type BackfillUserModel = {
+  find(filter: Record<string, unknown>): {
+    cursor(): AsyncIterable<BackfillUser>;
+  };
+  updateOne(
+    filter: Record<string, unknown>,
+    update: { $set: { ref: string } },
+  ): Promise<unknown>;
+};
+
 /**
  * Backfill user.ref from the OLDEST order
- * that contains a valid referralId.
+ * that contains a valid referralId, falling back to the app default.
  */
 async function migrateUserRefs() {
   console.log('Starting user referral backfill migration...\n');
@@ -14,41 +31,35 @@ async function migrateUserRefs() {
     await connectDB();
     console.log('✓ Connected to MongoDB\n');
 
-    const apps: Array<'manasik' | 'ghadaq'> = ['manasik', 'ghadaq'];
+    const apps: AppId[] = ['manasik', 'ghadaq'];
 
     let totalScanned = 0;
     let totalUpdated = 0;
-    let totalSkipped = 0;
-
     for (const appId of apps) {
       console.log(`\n====================================`);
       console.log(`Processing app: ${appId}`);
       console.log(`====================================\n`);
 
-      const UserModel = getUserModelByAppId(appId) as any;
+      const UserModel = getUserModelByAppId(
+        appId,
+      ) as unknown as BackfillUserModel;
 
       // Users that don't already have ref
       const usersCursor = UserModel.find({
-        $or: [
-          { ref: { $exists: false } },
-          { ref: null },
-          { ref: '' }
-        ]
+        $or: [{ ref: { $exists: false } }, { ref: null }, { ref: '' }],
       }).cursor();
 
       for await (const user of usersCursor) {
         totalScanned++;
 
-        process.stdout.write(
-          `[${totalScanned}] Checking ${user.email || user._id}... `
-        );
+        console.log(`[${totalScanned}] Checking ${user.email || user._id}...`);
 
         /**
          * Load ALL orders oldest -> newest
          * Then pick the FIRST valid referralId
          */
         const orders = await Order.find({
-          userId: user._id
+          userId: user._id,
         })
           .sort({ createdAt: 1 }) // OLDEST FIRST
           .select('referralId createdAt')
@@ -59,35 +70,29 @@ async function migrateUserRefs() {
         for (const order of orders) {
           const referralId = order?.referralId;
 
-          if (
-            typeof referralId === 'string' &&
-            referralId.trim() !== ''
-          ) {
+          if (typeof referralId === 'string' && referralId.trim() !== '') {
             oldestReferralCode = referralId.trim();
             break; // FIRST valid referral from oldest orders
           }
         }
 
         if (!oldestReferralCode) {
-          totalSkipped++;
-          process.stdout.write('No referral found\n');
-          continue;
+          oldestReferralCode =
+            appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
         }
 
         await UserModel.updateOne(
           { _id: user._id },
           {
             $set: {
-              ref: oldestReferralCode
-            }
-          }
+              ref: oldestReferralCode,
+            },
+          },
         );
 
         totalUpdated++;
 
-        process.stdout.write(
-          `Updated with ref: ${oldestReferralCode} ✅\n`
-        );
+        console.log(`Updated with ref: ${oldestReferralCode} ✅`);
       }
     }
 
@@ -96,13 +101,12 @@ async function migrateUserRefs() {
     console.log('====================================');
     console.log(`Users scanned : ${totalScanned}`);
     console.log(`Users updated : ${totalUpdated}`);
-    console.log(`Users skipped : ${totalSkipped}`);
     console.log('====================================\n');
 
     console.log('✓ Migration completed successfully!');
   } catch (error) {
     console.error('\n✗ Migration failed:\n', error);
-    process.exitCode = 1;
+    throw error;
   } finally {
     await mongoose.connection.close();
     console.log('\n✓ MongoDB connection closed');

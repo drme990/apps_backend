@@ -106,11 +106,7 @@ export async function GET(request: NextRequest) {
         }
         if (refFilter) {
           if (refFilter === '__none__') {
-            filterQuery.$or = [
-              { ref: { $exists: false } },
-              { ref: null },
-              { ref: '' },
-            ];
+            filterQuery.$or = [{ ref: 'default-MNK' }, { ref: 'default-GHD' }];
           } else {
             filterQuery.ref = refFilter;
           }
@@ -148,9 +144,15 @@ export async function GET(request: NextRequest) {
                 typeof customer.country === 'string' ? customer.country : '',
               appId,
               isBanned: Boolean(customer.isBanned),
-              ref: typeof customer.ref === 'string' && customer.ref !== 'default-MNK' && customer.ref !== 'default-GHD' ? customer.ref : null,
-              detectedCountry: typeof customer.detectedCountry === 'string' ? customer.detectedCountry : undefined,
-              lastLoginAt: customer.lastLoginAt instanceof Date ? customer.lastLoginAt : undefined,
+              ref: typeof customer.ref === 'string' ? customer.ref : null,
+              detectedCountry:
+                typeof customer.detectedCountry === 'string'
+                  ? customer.detectedCountry
+                  : undefined,
+              lastLoginAt:
+                customer.lastLoginAt instanceof Date
+                  ? customer.lastLoginAt
+                  : undefined,
               createdAt:
                 customer.createdAt instanceof Date
                   ? customer.createdAt

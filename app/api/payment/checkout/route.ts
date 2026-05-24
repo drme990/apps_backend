@@ -141,6 +141,7 @@ export async function POST(request: NextRequest) {
       billingData,
       locale = 'ar',
       couponCode,
+      ref,
       referralId,
       sizeIndex,
       paymentOption = 'full',
@@ -414,9 +415,10 @@ export async function POST(request: NextRequest) {
     }
 
     let resolvedRef: string | undefined;
-    const referralValidation = await validateReferralCode(referralId);
+    const incomingReferralId = referralId ?? ref ?? null;
+    const referralValidation = await validateReferralCode(incomingReferralId);
     if (referralValidation.valid) {
-      resolvedRef = referralId?.trim() || undefined;
+      resolvedRef = incomingReferralId?.trim() || undefined;
     }
 
     if (!resolvedRef) {
@@ -958,7 +960,7 @@ export async function POST(request: NextRequest) {
         if (tokenToSet) setAuthCookie(response, checkoutAppId, tokenToSet);
         return response;
       }
-    } catch (reuseErr) {
+    } catch {
       // Log and continue creating a new order if reuse checks fail unexpectedly
       // (avoid blocking checkout flow on reuse logic issues)
     }

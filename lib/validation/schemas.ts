@@ -48,7 +48,7 @@ export const registerSchema = z
         },
       ),
     country: z.string().trim().optional(),
-    ref: z.string().trim().optional(),
+    ref: z.string().trim().nullable().optional(),
     appId: z.enum(['manasik', 'ghadaq', 'admin_panel']),
   })
   .strict();
@@ -103,7 +103,8 @@ export const checkoutSchema = z
       .strict(),
     locale: z.string().trim().optional(),
     couponCode: z.string().trim().optional(),
-    referralId: z.string().trim().optional(),
+    ref: z.string().trim().nullable().optional(),
+    referralId: z.string().trim().nullable().optional(),
     sizeIndex: z.coerce.number().int().nonnegative().optional(),
     paymentOption: z.enum(['full', 'half', 'custom']).optional(),
     customPaymentAmount: z.coerce.number().positive().optional(),

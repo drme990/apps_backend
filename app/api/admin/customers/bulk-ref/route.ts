@@ -24,6 +24,10 @@ const bodySchema = z.object({
 
 type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
+function getDefaultRefForApp(appId: 'ghadaq' | 'manasik'): string {
+  return appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+}
+
 export async function PATCH(request: NextRequest) {
   try {
     await connectDB();
@@ -38,7 +42,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const nextRef = parsedBody.data.ref || null;
+    const requestedRef = parsedBody.data.ref || null;
 
     const results = await Promise.all(
       parsedBody.data.customers.map(async ({ id, appId }) => {
@@ -55,6 +59,7 @@ export async function PATCH(request: NextRequest) {
         }
 
         const previousRef = customerBefore.ref || null;
+        const nextRef = requestedRef || getDefaultRefForApp(appId);
         if (previousRef === nextRef) {
           return { id, appId, updated: false, reason: 'unchanged' as const };
         }
@@ -89,7 +94,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        ref: nextRef,
+        ref: requestedRef,
         results,
       },
     });
