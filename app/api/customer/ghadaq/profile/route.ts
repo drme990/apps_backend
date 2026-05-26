@@ -4,8 +4,8 @@ import {
   updateProfileForApp,
 } from '@/lib/auth/app-route-auth';
 
-export async function GET() {
-  return getProfileForApp('ghadaq');
+export async function GET(request: NextRequest) {
+  return getProfileForApp('ghadaq', request);
 }
 
 export async function PUT(request: NextRequest) {

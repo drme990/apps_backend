@@ -1,11 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { getAuthUser } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import { getEasykashCashExpiryHours } from '@/lib/services/easykash';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
+import { getClientCountry } from '@/lib/utils/ip';
+import { getUserModelByAppId } from '@/lib/auth/app-users';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await connectDB();
 
@@ -23,6 +25,21 @@ export async function GET() {
     }
 
     const appId = user.appId;
+
+    // Check and save detectedCountry if missing
+    try {
+      const UserModel = getUserModelByAppId(appId);
+      const dbUser = await UserModel.findById(user.userId);
+      if (dbUser && !dbUser.detectedCountry) {
+        const country = getClientCountry(request);
+        if (country) {
+          dbUser.detectedCountry = country;
+          await dbUser.save();
+        }
+      }
+    } catch (e) {
+      console.error('Error auto-detecting country in my-orders:', e);
+    }
 
     // Find orders by userId or by email (for backward compatibility)
     const orders = await Order.find({

@@ -4,8 +4,8 @@ import {
   updateProfileForApp,
 } from '@/lib/auth/app-route-auth';
 
-export async function GET() {
-  return getProfileForApp('manasik');
+export async function GET(request: NextRequest) {
+  return getProfileForApp('manasik', request);
 }
 
 export async function PUT(request: NextRequest) {

@@ -364,6 +364,13 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       registrationIp: isValidIp(clientIp) ? clientIp : undefined,
     };
 
+    if (appId !== 'admin_panel') {
+      const country = getClientCountry(request);
+      if (country) {
+        createPayload.detectedCountry = country;
+      }
+    }
+
     if (appId === 'admin_panel') {
       createPayload.role = 'admin';
       createPayload.allowedPages = [];
@@ -441,7 +448,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
   }
 }
 
-export async function getProfileForApp(app: RouteApp) {
+export async function getProfileForApp(app: RouteApp, request?: NextRequest) {
   try {
     await connectDB();
 
@@ -464,6 +471,14 @@ export async function getProfileForApp(app: RouteApp) {
       );
     }
 
+    if (request && appId !== 'admin_panel' && !user.detectedCountry) {
+      const country = getClientCountry(request);
+      if (country) {
+        user.detectedCountry = country;
+        await user.save();
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: toPublicUser(user, appId),
@@ -477,9 +492,9 @@ export async function getProfileForApp(app: RouteApp) {
   }
 }
 
-export async function getSessionForApp(app: RouteApp) {
+export async function getSessionForApp(app: RouteApp, request?: NextRequest) {
   // Keeping this for auth check uses (e.g. Header), but returning same structure
-  return getProfileForApp(app);
+  return getProfileForApp(app, request);
 }
 
 export async function updateProfileForApp(request: NextRequest, app: RouteApp) {

@@ -9,6 +9,7 @@ import { getAuthUser } from '@/lib/auth';
 import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
 import { validateReferralCode } from '@/lib/services/referral-validation';
+import { getClientCountry } from '@/lib/utils/ip';
 
 const COUNTRY_HEADER_CANDIDATES = [
   'x-vercel-ip-country',
@@ -219,7 +220,7 @@ export async function POST(request: NextRequest) {
 
     if (sessionUser) {
       const authenticatedUser = await UserModel.findById(sessionUser.userId)
-        .select('name email phone country isBanned ref')
+        .select('name email phone country isBanned ref detectedCountry')
         .lean(false);
 
       if (!authenticatedUser) {
@@ -231,6 +232,14 @@ export async function POST(request: NextRequest) {
           },
           { status: 401 },
         );
+      }
+
+      if (!authenticatedUser.detectedCountry) {
+        const country = getClientCountry(request);
+        if (country) {
+          authenticatedUser.detectedCountry = country;
+          await authenticatedUser.save();
+        }
       }
 
       if (authenticatedUser.isBanned) {
@@ -297,7 +306,7 @@ export async function POST(request: NextRequest) {
       const existingEmailUser = await UserModel.findOne({
         email: normalizedInputEmail,
       })
-        .select('+password')
+        .select('+password detectedCountry')
         .lean(false);
       const existingPhoneUser = await UserModel.findOne({
         phone: normalizedInputPhone,
@@ -351,6 +360,12 @@ export async function POST(request: NextRequest) {
         if (!existingEmailUser.country && resolvedBillingCountry) {
           existingEmailUser.country = resolvedBillingCountry;
         }
+        if (!existingEmailUser.detectedCountry) {
+          const country = getClientCountry(request);
+          if (country) {
+            existingEmailUser.detectedCountry = country;
+          }
+        }
         await existingEmailUser.save();
 
         tokenToSet = generateToken({
@@ -378,14 +393,19 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        const newUser = await UserModel.create({
+        const newUserPayload: Record<string, any> = {
           name: billingData.fullName.trim(),
           email: normalizedInputEmail,
           password: normalizedPassword,
           phone: normalizedInputPhone,
           country: resolvedBillingCountry,
           appId: checkoutAppId,
-        });
+        };
+        const country = getClientCountry(request);
+        if (country) {
+          newUserPayload.detectedCountry = country;
+        }
+        const newUser = await UserModel.create(newUserPayload);
 
         tokenToSet = generateToken({
           _id: newUser._id.toString(),
