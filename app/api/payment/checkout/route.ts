@@ -86,6 +86,20 @@ function getPaymentAttemptNumber(order: { payments?: unknown[] }): number {
   return (order.payments?.length ?? 0) + 1;
 }
 
+type CheckoutAppUserDoc = mongoose.Document & {
+  _id: mongoose.Types.ObjectId;
+  email: string;
+  name: string;
+  password?: string;
+  phone?: string;
+  country?: string;
+  appId?: string;
+  isBanned?: boolean;
+  ref?: string;
+  detectedCountry?: string | null;
+  comparePassword(candidatePassword: string): Promise<boolean>;
+};
+
 function setAuthCookie(
   response: NextResponse,
   appId: Exclude<AppId, 'admin_panel'>,
@@ -178,20 +192,7 @@ export async function POST(request: NextRequest) {
 
     const UserModel = getUserModelByAppId(
       checkoutAppId,
-    ) as unknown as mongoose.Model<
-      mongoose.Document & {
-        _id: mongoose.Types.ObjectId;
-        email: string;
-        name: string;
-        password?: string;
-        phone?: string;
-        country?: string;
-        appId?: string;
-        isBanned?: boolean;
-        ref?: string;
-        comparePassword(candidatePassword: string): Promise<boolean>;
-      }
-    >;
+    ) as unknown as mongoose.Model<CheckoutAppUserDoc>;
 
     const normalizedInputEmail = normalizeEmail(billingData.email);
     const normalizedInputPhone = normalizePhone(billingData.phone);

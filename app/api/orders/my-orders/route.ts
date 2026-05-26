@@ -7,6 +7,12 @@ import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { getClientCountry } from '@/lib/utils/ip';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
 
+type DetectedCountryUserDoc = {
+  _id: string;
+  detectedCountry?: string | null;
+  save(): Promise<void>;
+};
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -28,8 +34,14 @@ export async function GET(request: NextRequest) {
 
     // Check and save detectedCountry if missing
     try {
-      const UserModel = getUserModelByAppId(appId);
-      const dbUser = await UserModel.findById(user.userId);
+      const UserModel =
+        appId === 'ghadaq'
+          ? getUserModelByAppId('ghadaq')
+          : getUserModelByAppId('manasik');
+      const typedUserModel = UserModel as unknown as {
+        findById(id: string): Promise<DetectedCountryUserDoc | null>;
+      };
+      const dbUser = await typedUserModel.findById(user.userId);
       if (dbUser && !dbUser.detectedCountry) {
         const country = getClientCountry(request);
         if (country) {
