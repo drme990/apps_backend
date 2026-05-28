@@ -63,6 +63,7 @@ export async function PUT(request: NextRequest) {
       {
         $set: {
           status: normalizedStatus,
+          statusUpdateTime: new Date(),
           isWhatsappButtonClicked: resolveWhatsappButtonState(normalizedStatus),
         },
       },

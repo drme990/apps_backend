@@ -471,6 +471,7 @@ export async function POST(request: NextRequest) {
       order.paidAmount = totalPaid;
       order.remainingAmount = remainingAmount;
       order.status = remainingAmount <= 0 ? 'paid' : 'partial-paid';
+      order.statusUpdateTime = new Date();
     } else if (
       normalizedStatus === 'FAILED' ||
       normalizedStatus === 'EXPIRED' ||
@@ -494,16 +495,19 @@ export async function POST(request: NextRequest) {
           order.status === 'partial-paid')
       ) {
         order.status = 'failed';
+        order.statusUpdateTime = new Date();
       } else if (
         totalPaid > 0 &&
         order.status !== 'paid' &&
         order.status !== 'completed'
       ) {
         order.status = 'partial-paid';
+        order.statusUpdateTime = new Date();
       }
     } else if (normalizedStatus === 'REFUNDED') {
       if (paymentRecord) paymentRecord.status = 'expired';
       order.status = 'refunded';
+      order.statusUpdateTime = new Date();
     } else if (normalizedStatus === 'PENDING' || normalizedStatus === 'NEW') {
       if (paymentRecord && paymentRecord.status !== 'paid') {
         paymentRecord.status = 'pending';
@@ -515,6 +519,7 @@ export async function POST(request: NextRequest) {
 
       if (order.status !== 'paid' && order.status !== 'completed') {
         order.status = hasPaidPayment ? 'partial-paid' : 'pending';
+        order.statusUpdateTime = new Date();
       }
     }
 

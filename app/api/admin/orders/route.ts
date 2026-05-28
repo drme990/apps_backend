@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (Object.keys(updatedAtFilter).length > 0) {
-      query.updatedAt = updatedAtFilter;
+      query.statusUpdateTime = updatedAtFilter;
     }
 
     if (andConditions.length > 0) {
@@ -190,6 +190,7 @@ export async function GET(request: NextRequest) {
       source: 1,
       createdAt: 1,
       updatedAt: 1,
+      statusUpdateTime: 1,
     };
 
     const fullProjection = {
@@ -217,12 +218,13 @@ export async function GET(request: NextRequest) {
       locale: 1,
       createdAt: 1,
       updatedAt: 1,
+      statusUpdateTime: 1,
     };
 
     const [orders, total] = await Promise.all([
       Order.find(query)
         .select(viewMode === 'table' ? tableProjection : fullProjection)
-        .sort({ updatedAt: -1 })
+        .sort({ statusUpdateTime: -1, updatedAt: -1 })
         .skip(skip)
         .limit(maxLimit)
         .lean(),

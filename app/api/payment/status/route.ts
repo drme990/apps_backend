@@ -73,6 +73,10 @@ function hasPaidPayments(
   return (payments || []).some((payment) => payment.status === 'paid');
 }
 
+function touchStatusUpdateTime(order: { statusUpdateTime?: Date }): void {
+  order.statusUpdateTime = new Date();
+}
+
 async function findOrderForPaymentStatus(
   request: NextRequest,
 ): Promise<Awaited<ReturnType<typeof Order.findOne>> | null> {
@@ -186,6 +190,7 @@ export async function GET(request: NextRequest) {
 
             if (order.status !== targetStatus) {
               order.status = targetStatus;
+              touchStatusUpdateTime(order);
               shouldSave = true;
             }
           }
@@ -198,6 +203,7 @@ export async function GET(request: NextRequest) {
 
           if (shouldUpdateStatus) {
             order.status = mappedStatus;
+            touchStatusUpdateTime(order);
             shouldSave = true;
           }
         }

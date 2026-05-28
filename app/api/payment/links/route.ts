@@ -27,6 +27,10 @@ function generatePaymentId(): string {
   return `pay_${randomBytes(12).toString('hex')}`;
 }
 
+function touchStatusUpdateTime(order: { statusUpdateTime?: Date }): void {
+  order.statusUpdateTime = new Date();
+}
+
 function isCustomerReferenceAlreadyUsedError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 
@@ -163,6 +167,7 @@ export async function POST(request: NextRequest) {
 
       if (shouldSyncStatus && targetStatusForBalance) {
         order.status = targetStatusForBalance;
+        touchStatusUpdateTime(order);
       }
 
       order.isWhatsappButtonClicked = resolveWhatsappButtonState(
@@ -298,6 +303,8 @@ export async function POST(request: NextRequest) {
         } else if (totalPaid > 0) {
           order.status = 'partial-paid';
         }
+        touchStatusUpdateTime(order);
+        touchStatusUpdateTime(order);
         order.isWhatsappButtonClicked = resolveWhatsappButtonState(
           order.status,
           previousStatus,

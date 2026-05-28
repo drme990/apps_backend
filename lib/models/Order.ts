@@ -220,6 +220,7 @@ export interface IOrder {
   latestClientIp?: string;
   deviceFingerprint?: string;
   locale?: string;
+  statusUpdateTime: Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -383,6 +384,56 @@ function inferPaymentType(order: {
   return 'partial';
 }
 
+function extractNextStatus(
+  update: Record<string, unknown> | undefined,
+): string | null {
+  if (!update) return null;
+
+  const directStatus = update.status;
+  if (typeof directStatus === 'string' && directStatus.trim()) {
+    return directStatus.trim();
+  }
+
+  const setUpdate = update.$set;
+  if (setUpdate && typeof setUpdate === 'object') {
+    const setStatus = (setUpdate as Record<string, unknown>).status;
+    if (typeof setStatus === 'string' && setStatus.trim()) {
+      return setStatus.trim();
+    }
+  }
+
+  const setOnInsert = update.$setOnInsert;
+  if (setOnInsert && typeof setOnInsert === 'object') {
+    const insertStatus = (setOnInsert as Record<string, unknown>).status;
+    if (typeof insertStatus === 'string' && insertStatus.trim()) {
+      return insertStatus.trim();
+    }
+  }
+
+  return null;
+}
+
+function touchStatusUpdateTime(
+  update: Record<string, unknown> | undefined,
+): void {
+  const nextStatus = extractNextStatus(update);
+  if (!nextStatus || !update) return;
+
+  const now = new Date();
+
+  if (update.$set && typeof update.$set === 'object') {
+    (update.$set as Record<string, unknown>).statusUpdateTime = now;
+    return;
+  }
+
+  if (update.$setOnInsert && typeof update.$setOnInsert === 'object') {
+    (update.$setOnInsert as Record<string, unknown>).statusUpdateTime = now;
+    return;
+  }
+
+  update.statusUpdateTime = now;
+}
+
 const OrderSchema = new mongoose.Schema<IOrder>(
   {
     orderNumber: { type: String, required: true, unique: true, index: true },
@@ -444,6 +495,12 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       index: true,
     },
     referralId: { type: String, trim: true, index: true },
+    statusUpdateTime: {
+      type: Date,
+      required: true,
+      default: () => new Date(),
+      index: true,
+    },
     termsAgreedAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
     payments: { type: [PaymentSchema], default: [] },
@@ -475,6 +532,10 @@ OrderSchema.pre('validate', async function () {
 });
 
 OrderSchema.pre('save', function () {
+  if (this.isNew || this.isModified('status')) {
+    this.statusUpdateTime = new Date();
+  }
+
   this.paymentType = inferPaymentType(this);
   this.isPartialPayment = this.paymentType !== 'full';
 
@@ -491,9 +552,17 @@ OrderSchema.pre('save', function () {
   if (normalizedFingerprint) this.deviceFingerprint = normalizedFingerprint;
 });
 
+OrderSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function () {
+  const update = this.getUpdate() as Record<string, unknown> | undefined;
+  touchStatusUpdateTime(update);
+});
+
 OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ statusUpdateTime: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
+OrderSchema.index({ status: 1, statusUpdateTime: -1 });
 OrderSchema.index({ source: 1, status: 1, createdAt: -1 });
+OrderSchema.index({ source: 1, status: 1, statusUpdateTime: -1 });
 OrderSchema.index({ 'billingData.email': 1, source: 1 });
 OrderSchema.index({ source: 1, status: 1, paymentType: 1, createdAt: -1 });
 OrderSchema.index({

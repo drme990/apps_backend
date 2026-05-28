@@ -8,6 +8,10 @@ import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
 
+function touchStatusUpdateTime(order: { statusUpdateTime?: Date }): void {
+  order.statusUpdateTime = new Date();
+}
+
 const ALLOWED_ORDER_STATUSES = new Set([
   'pending',
   'processing',
@@ -131,6 +135,7 @@ export async function PUT(
     const previousWhatsappState = order.isWhatsappButtonClicked;
     if (nextStatus !== order.status) {
       order.status = nextStatus;
+      touchStatusUpdateTime(order);
       changes.push(`status → ${nextStatus}`);
     }
 
