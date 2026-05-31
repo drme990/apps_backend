@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
+import Coupon from '@/lib/models/Coupon';
 import Country from '@/lib/models/Country';
 import CronLog from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
 import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
+import { syncCouponCurrencyPrices } from '@/lib/services/exchange-price-sync';
 
 export async function POST() {
   const startTime = Date.now();
@@ -30,11 +32,17 @@ export async function POST() {
         message: 'No active countries found, skipping price update',
         updatedCount: 0,
         totalProducts: 0,
+        totalCoupons: 0,
+        updatedCouponCount: 0,
       });
     }
 
-    const products = await Product.find({});
+    const [products, coupons] = await Promise.all([
+      Product.find({}),
+      Coupon.find({}),
+    ]);
     let updatedCount = 0;
+    let updatedCouponCount = 0;
 
     for (const product of products) {
       let modified = false;
@@ -118,6 +126,19 @@ export async function POST() {
       }
     }
 
+    for (const coupon of coupons) {
+      const syncResult = await syncCouponCurrencyPrices(
+        coupon,
+        targetCurrencies,
+        roundingMap,
+      );
+
+      if (syncResult.modified) {
+        await coupon.save();
+        updatedCouponCount++;
+      }
+    }
+
     const duration = Date.now() - startTime;
 
     await CronLog.create({
@@ -126,15 +147,19 @@ export async function POST() {
       source: 'manual',
       totalProducts: products.length,
       updatedCount,
+      totalCoupons: coupons.length,
+      updatedCouponCount,
       targetCurrencies,
       duration,
     });
 
     return NextResponse.json({
       success: true,
-      message: `Updated ${updatedCount} products`,
+      message: `Updated ${updatedCount} products and synced ${updatedCouponCount} coupons`,
       totalProducts: products.length,
       updatedCount,
+      totalCoupons: coupons.length,
+      updatedCouponCount,
       targetCurrencies,
       duration,
     });
@@ -148,6 +173,8 @@ export async function POST() {
         source: 'manual',
         totalProducts: 0,
         updatedCount: 0,
+        totalCoupons: 0,
+        updatedCouponCount: 0,
         targetCurrencies: [],
         errorMessage: error instanceof Error ? error.message : 'Unknown error',
         duration: Date.now() - startTime,

@@ -6,6 +6,79 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { couponUpdateSchema } from '@/lib/validation/schemas';
 
+function normalizeCouponPayload<T extends Record<string, unknown>>(body: T): T {
+  const normalized: Record<string, unknown> = { ...body };
+
+  if (typeof normalized.code === 'string') {
+    normalized.code = normalized.code.trim().toUpperCase();
+  }
+
+  if (Array.isArray(normalized.fixedPrices)) {
+    normalized.fixedPrices = normalized.fixedPrices
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => {
+        const entry = item as { currencyCode?: unknown; amount?: unknown };
+        return {
+          currencyCode: String(entry.currencyCode || '')
+            .trim()
+            .toUpperCase(),
+          amount: Number(entry.amount || 0),
+        };
+      })
+      .filter((item) => item.currencyCode && item.amount >= 0);
+  }
+
+  if (Array.isArray(normalized.maxDiscountPrices)) {
+    normalized.maxDiscountPrices = normalized.maxDiscountPrices
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => {
+        const entry = item as { currencyCode?: unknown; amount?: unknown };
+        return {
+          currencyCode: String(entry.currencyCode || '')
+            .trim()
+            .toUpperCase(),
+          amount: Number(entry.amount || 0),
+        };
+      })
+      .filter((item) => item.currencyCode && item.amount >= 0);
+  }
+
+  if (Array.isArray(normalized.allowedCountries)) {
+    normalized.allowedCountries = [
+      ...new Set(
+        normalized.allowedCountries
+          .map((code) =>
+            String(code || '')
+              .trim()
+              .toUpperCase(),
+          )
+          .filter((code) => /^[A-Z]{2}$/.test(code)),
+      ),
+    ];
+  }
+
+  if (normalized.type === 'fixed' || normalized.fixedPrices) {
+    const firstFixedPrice = (
+      normalized.fixedPrices as Array<{ amount: number }> | undefined
+    )?.[0];
+    if (firstFixedPrice) {
+      normalized.value = Number(firstFixedPrice.amount || 0);
+    }
+  }
+
+  if (
+    (normalized.maxDiscountPrices as Array<{ amount: number }> | undefined)
+      ?.length
+  ) {
+    normalized.maxDiscountAmount = Number(
+      (normalized.maxDiscountPrices as Array<{ amount: number }>)[0].amount ||
+        0,
+    );
+  }
+
+  return normalized as T;
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -46,7 +119,9 @@ export async function PUT(
     const parsed = await parseJsonBody(request, couponUpdateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
-    const coupon = await Coupon.findByIdAndUpdate(id, body, {
+    const payload = normalizeCouponPayload(body);
+
+    const coupon = await Coupon.findByIdAndUpdate(id, payload, {
       new: true,
       runValidators: true,
     });

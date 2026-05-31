@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
+import { getAuthUser } from '@/lib/auth';
+import { getUserModelByAppId } from '@/lib/auth/app-users';
 import { validateCoupon } from '@/lib/services/coupon';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -22,7 +24,38 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return parsed.response;
     const { code, orderAmount, currency, productId } = parsed.data;
 
-    const result = await validateCoupon(code, orderAmount, currency, productId);
+    let detectedCountry: string | null = null;
+    const authUser =
+      (await getAuthUser('ghadaq')) || (await getAuthUser('manasik'));
+    if (
+      authUser &&
+      (authUser.appId === 'ghadaq' || authUser.appId === 'manasik')
+    ) {
+      const UserModel = getUserModelByAppId(authUser.appId);
+      const typedUserModel = UserModel as unknown as {
+        findById(id: string): {
+          select(fields: string): {
+            lean(): Promise<{ detectedCountry?: string | null } | null>;
+          };
+        };
+      };
+      const user = await typedUserModel
+        .findById(authUser.userId)
+        .select('detectedCountry')
+        .lean();
+      detectedCountry =
+        user && typeof user.detectedCountry === 'string'
+          ? user.detectedCountry
+          : null;
+    }
+
+    const result = await validateCoupon(
+      code,
+      orderAmount,
+      currency,
+      productId,
+      detectedCountry,
+    );
 
     if (!result.valid) {
       return NextResponse.json(

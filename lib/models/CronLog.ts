@@ -7,6 +7,8 @@ export interface ICronLog {
   source: 'cron' | 'manual';
   totalProducts: number;
   updatedCount: number;
+  totalCoupons?: number;
+  updatedCouponCount?: number;
   targetCurrencies: string[];
   errorMessage?: string;
   duration: number;

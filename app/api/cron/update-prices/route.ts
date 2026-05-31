@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
+import Coupon from '@/lib/models/Coupon';
 import Country from '@/lib/models/Country';
 import CronLog from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
 import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
+import { syncCouponCurrencyPrices } from '@/lib/services/exchange-price-sync';
 
 export async function GET(request: Request) {
   // Verify the request is from Vercel Cron
@@ -35,11 +37,16 @@ export async function GET(request: Request) {
         success: true,
         message: 'No active countries found, skipping price update',
         updated: 0,
+        updatedCouponCount: 0,
       });
     }
 
-    const products = await Product.find({});
+    const [products, coupons] = await Promise.all([
+      Product.find({}),
+      Coupon.find({}),
+    ]);
     let updatedCount = 0;
+    let updatedCouponCount = 0;
 
     for (const product of products) {
       let modified = false;
@@ -123,8 +130,21 @@ export async function GET(request: Request) {
       }
     }
 
+    for (const coupon of coupons) {
+      const syncResult = await syncCouponCurrencyPrices(
+        coupon,
+        targetCurrencies,
+        roundingMap,
+      );
+
+      if (syncResult.modified) {
+        await coupon.save();
+        updatedCouponCount++;
+      }
+    }
+
     console.log(
-      `[Cron] Updated prices for ${updatedCount}/${products.length} products with ${targetCurrencies.length} currencies`,
+      `[Cron] Updated prices for ${updatedCount}/${products.length} products and synced ${updatedCouponCount}/${coupons.length} coupons with ${targetCurrencies.length} currencies`,
     );
 
     await CronLog.create({
@@ -133,15 +153,19 @@ export async function GET(request: Request) {
       source: 'cron',
       totalProducts: products.length,
       updatedCount,
+      totalCoupons: coupons.length,
+      updatedCouponCount,
       targetCurrencies,
       duration: Date.now() - startTime,
     });
 
     return NextResponse.json({
       success: true,
-      message: `Updated ${updatedCount} products`,
+      message: `Updated ${updatedCount} products and synced ${updatedCouponCount} coupons`,
       totalProducts: products.length,
       updatedCount,
+      totalCoupons: coupons.length,
+      updatedCouponCount,
       targetCurrencies,
     });
   } catch (error) {
@@ -154,6 +178,8 @@ export async function GET(request: Request) {
         source: 'cron',
         totalProducts: 0,
         updatedCount: 0,
+        totalCoupons: 0,
+        updatedCouponCount: 0,
         targetCurrencies: [],
         errorMessage: error instanceof Error ? error.message : 'Unknown error',
         duration: Date.now() - startTime,

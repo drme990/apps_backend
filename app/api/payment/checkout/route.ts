@@ -222,6 +222,7 @@ export async function POST(request: NextRequest) {
     let resolvedBillingEmail = normalizedInputEmail;
     let resolvedBillingPhone = normalizedInputPhone;
     let resolvedBillingCountry = billingData.country?.trim() || '';
+    let resolvedDetectedCountry: string | null = null;
 
     if (sessionUser) {
       const authenticatedUser = await UserModel.findById(sessionUser.userId)
@@ -246,6 +247,7 @@ export async function POST(request: NextRequest) {
           await authenticatedUser.save();
         }
       }
+      resolvedDetectedCountry = authenticatedUser.detectedCountry || null;
 
       if (authenticatedUser.isBanned) {
         return NextResponse.json(
@@ -371,6 +373,7 @@ export async function POST(request: NextRequest) {
             existingEmailUser.detectedCountry = country;
           }
         }
+        resolvedDetectedCountry = existingEmailUser.detectedCountry || null;
         await existingEmailUser.save();
 
         tokenToSet = generateToken({
@@ -411,6 +414,10 @@ export async function POST(request: NextRequest) {
           newUserPayload.detectedCountry = country;
         }
         const newUser = await UserModel.create(newUserPayload);
+        resolvedDetectedCountry =
+          typeof newUser.detectedCountry === 'string'
+            ? newUser.detectedCountry
+            : null;
 
         tokenToSet = generateToken({
           _id: newUser._id.toString(),
@@ -451,9 +458,12 @@ export async function POST(request: NextRequest) {
     }
 
     const finalUserDoc = await UserModel.findById(effectiveUserId)
-      .select('ref')
+      .select('ref detectedCountry')
       .lean(false);
     if (finalUserDoc) {
+      if (typeof finalUserDoc.detectedCountry === 'string') {
+        resolvedDetectedCountry = finalUserDoc.detectedCountry;
+      }
       if (finalUserDoc.ref) {
         resolvedRef = finalUserDoc.ref;
       } else {
@@ -787,6 +797,7 @@ export async function POST(request: NextRequest) {
         totalAmount,
         currencyUpper,
         productId,
+        resolvedDetectedCountry,
       );
       if (!couponResult.valid) {
         return NextResponse.json(

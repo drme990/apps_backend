@@ -13,9 +13,16 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJsonBody(request, couponValidationSchema);
     if (!parsed.success) return parsed.response;
-    const { code, orderAmount, currency, productId } = parsed.data;
+    const { code, orderAmount, currency, productId, detectedCountry } =
+      parsed.data;
 
-    const result = await validateCoupon(code, orderAmount, currency, productId);
+    const result = await validateCoupon(
+      code,
+      orderAmount,
+      currency,
+      productId,
+      detectedCountry,
+    );
 
     if (!result.valid) {
       return NextResponse.json(

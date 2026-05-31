@@ -6,6 +6,77 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { couponCreateSchema } from '@/lib/validation/schemas';
 
+function normalizeCouponPayload<T extends Record<string, unknown>>(body: T): T {
+  const normalized: Record<string, unknown> = { ...body };
+
+  if (typeof normalized.code === 'string') {
+    normalized.code = normalized.code.trim().toUpperCase();
+  }
+
+  const fixedPrices = Array.isArray(normalized.fixedPrices)
+    ? normalized.fixedPrices
+    : [];
+  normalized.fixedPrices = fixedPrices
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const entry = item as { currencyCode?: unknown; amount?: unknown };
+      return {
+        currencyCode: String(entry.currencyCode || '')
+          .trim()
+          .toUpperCase(),
+        amount: Number(entry.amount || 0),
+      };
+    })
+    .filter((item) => item.currencyCode && item.amount >= 0);
+
+  const maxDiscountPrices = Array.isArray(normalized.maxDiscountPrices)
+    ? normalized.maxDiscountPrices
+    : [];
+  normalized.maxDiscountPrices = maxDiscountPrices
+    .filter((item) => item && typeof item === 'object')
+    .map((item) => {
+      const entry = item as { currencyCode?: unknown; amount?: unknown };
+      return {
+        currencyCode: String(entry.currencyCode || '')
+          .trim()
+          .toUpperCase(),
+        amount: Number(entry.amount || 0),
+      };
+    })
+    .filter((item) => item.currencyCode && item.amount >= 0);
+
+  const allowedCountries = Array.isArray(normalized.allowedCountries)
+    ? normalized.allowedCountries
+    : [];
+  normalized.allowedCountries = [
+    ...new Set(
+      allowedCountries
+        .map((code) =>
+          String(code || '')
+            .trim()
+            .toUpperCase(),
+        )
+        .filter((code) => /^[A-Z]{2}$/.test(code)),
+    ),
+  ];
+
+  if (normalized.type === 'fixed') {
+    const firstFixedPrice = (
+      normalized.fixedPrices as Array<{ amount: number }>
+    )[0];
+    normalized.value = Number(firstFixedPrice?.amount || 0);
+  }
+
+  if ((normalized.maxDiscountPrices as Array<{ amount: number }>).length) {
+    normalized.maxDiscountAmount = Number(
+      (normalized.maxDiscountPrices as Array<{ amount: number }>)[0].amount ||
+        0,
+    );
+  }
+
+  return normalized as T;
+}
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -68,8 +139,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const payload = normalizeCouponPayload(body);
+
     const coupon = await Coupon.create({
-      ...body,
+      ...payload,
       createdBy: auth.user.userId,
     });
 
@@ -80,7 +153,7 @@ export async function POST(request: NextRequest) {
       action: 'create',
       resource: 'coupon',
       resourceId: coupon._id.toString(),
-      details: `Created coupon: ${coupon.code} (${coupon.type}: ${coupon.value})`,
+      details: `Created coupon: ${coupon.code} (${coupon.type})`,
     });
 
     return NextResponse.json({ success: true, data: coupon }, { status: 201 });

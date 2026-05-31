@@ -73,6 +73,11 @@ export const couponValidationSchema = z
     orderAmount: z.coerce.number().positive(),
     currency: z.string().trim().min(1),
     productId: z.string().trim().min(1).optional(),
+    detectedCountry: z
+      .string()
+      .trim()
+      .regex(/^[A-Z]{2}$/)
+      .optional(),
   })
   .strict();
 
@@ -323,7 +328,35 @@ export const couponCreateSchema = z
   .object({
     code: z.string().trim().min(1),
     type: z.enum(['percentage', 'fixed']),
-    value: z.coerce.number().positive(),
+    value: z.coerce.number().positive().optional(),
+    fixedPrices: z
+      .array(
+        z
+          .object({
+            currencyCode: z.string().trim().min(1),
+            amount: z.coerce.number().nonnegative(),
+          })
+          .strict(),
+      )
+      .optional(),
+    maxDiscountPrices: z
+      .array(
+        z
+          .object({
+            currencyCode: z.string().trim().min(1),
+            amount: z.coerce.number().nonnegative(),
+          })
+          .strict(),
+      )
+      .optional(),
+    allowedCountries: z
+      .array(
+        z
+          .string()
+          .trim()
+          .regex(/^[A-Z]{2}$/),
+      )
+      .optional(),
     maxUses: z.coerce.number().nonnegative().optional(),
     validFrom: z.string().optional(),
     validUntil: z.string().optional(),
@@ -333,13 +366,61 @@ export const couponCreateSchema = z
     description_ar: z.string().optional(),
     description_en: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.type === 'percentage') {
+      if (typeof payload.value !== 'number' || payload.value <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'value is required for percentage coupons',
+          path: ['value'],
+        });
+      }
+      return;
+    }
+
+    if (!payload.fixedPrices || payload.fixedPrices.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fixedPrices is required for fixed coupons',
+        path: ['fixedPrices'],
+      });
+    }
+  });
 
 export const couponUpdateSchema = z
   .object({
     code: z.string().trim().min(1).optional(),
     type: z.enum(['percentage', 'fixed']).optional(),
     value: z.coerce.number().positive().optional(),
+    fixedPrices: z
+      .array(
+        z
+          .object({
+            currencyCode: z.string().trim().min(1),
+            amount: z.coerce.number().nonnegative(),
+          })
+          .strict(),
+      )
+      .optional(),
+    maxDiscountPrices: z
+      .array(
+        z
+          .object({
+            currencyCode: z.string().trim().min(1),
+            amount: z.coerce.number().nonnegative(),
+          })
+          .strict(),
+      )
+      .optional(),
+    allowedCountries: z
+      .array(
+        z
+          .string()
+          .trim()
+          .regex(/^[A-Z]{2}$/),
+      )
+      .optional(),
     maxUses: z.coerce.number().nonnegative().optional(),
     validFrom: z.string().optional(),
     validUntil: z.string().optional(),
