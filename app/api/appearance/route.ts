@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
       id: string;
       imageUrl: string;
       target: 'ghadaq' | 'manasik' | 'both';
+      language: 'ar' | 'en' | 'shared';
       link: string;
     }>,
   };
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest) {
     id: string;
     imageUrl: string;
     target: 'ghadaq' | 'manasik' | 'both';
+    language: 'ar' | 'en' | 'shared';
     link: string;
   }> => {
     if (!Array.isArray(value)) return [];
@@ -48,6 +50,7 @@ export async function GET(request: NextRequest) {
           id?: unknown;
           imageUrl?: unknown;
           target?: unknown;
+          language?: unknown;
           link?: unknown;
         };
 
@@ -60,11 +63,17 @@ export async function GET(request: NextRequest) {
           raw.target === 'both'
             ? raw.target
             : 'both';
+        const language =
+          raw.language === 'ar' ||
+          raw.language === 'en' ||
+          raw.language === 'shared'
+            ? raw.language
+            : 'shared';
         const link = typeof raw.link === 'string' ? raw.link.trim() : '';
 
         if (!id || !imageUrl) return null;
 
-        return { id, imageUrl, target, link };
+        return { id, imageUrl, target, language, link };
       })
       .filter(
         (
@@ -73,6 +82,7 @@ export async function GET(request: NextRequest) {
           id: string;
           imageUrl: string;
           target: 'ghadaq' | 'manasik' | 'both';
+          language: 'ar' | 'en' | 'shared';
           link: string;
         } => Boolean(item),
       );

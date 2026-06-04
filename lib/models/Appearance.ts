@@ -15,6 +15,7 @@ export interface IProductBanner {
   id: string;
   imageUrl: string;
   target: 'ghadaq' | 'manasik' | 'both';
+  language: 'ar' | 'en' | 'shared';
   link: string;
 }
 
@@ -63,6 +64,13 @@ const ProductBannerSchema = new mongoose.Schema<IProductBanner>(
       type: String,
       required: true,
       enum: ['ghadaq', 'manasik', 'both'],
+      index: true,
+    },
+    language: {
+      type: String,
+      required: true,
+      enum: ['ar', 'en', 'shared'],
+      default: 'shared',
       index: true,
     },
     link: { type: String, default: '', trim: true },
