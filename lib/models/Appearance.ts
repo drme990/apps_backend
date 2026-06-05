@@ -14,9 +14,17 @@ export interface IAudioReview {
 export interface IProductBanner {
   id: string;
   imageUrl: string;
-  target: 'ghadaq' | 'manasik' | 'both';
+  platform: 'ghadaq' | 'manasik' | 'shared';
   language: 'ar' | 'en' | 'shared';
   link: string;
+}
+
+export interface IFAQ {
+  id: string;
+  question: { ar: string; en: string };
+  answer: { ar: string; en: string };
+  platform: 'ghadaq' | 'manasik' | 'shared';
+  showOnProductDetails: boolean;
 }
 
 export interface IAppearance {
@@ -28,6 +36,7 @@ export interface IAppearance {
   bannerText?: { ar: string; en: string };
   documentationAnswer?: { ar: string; en: string };
   productsBanners?: IProductBanner[];
+  faqs?: IFAQ[];
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -60,10 +69,10 @@ const ProductBannerSchema = new mongoose.Schema<IProductBanner>(
   {
     id: { type: String, required: true, trim: true },
     imageUrl: { type: String, required: true, trim: true },
-    target: {
+    platform: {
       type: String,
       required: true,
-      enum: ['ghadaq', 'manasik', 'both'],
+      enum: ['ghadaq', 'manasik', 'shared'],
       index: true,
     },
     language: {
@@ -74,6 +83,29 @@ const ProductBannerSchema = new mongoose.Schema<IProductBanner>(
       index: true,
     },
     link: { type: String, default: '', trim: true },
+  },
+  { _id: false },
+);
+
+const FAQSchema = new mongoose.Schema<IFAQ>(
+  {
+    id: { type: String, required: true, trim: true },
+    question: {
+      ar: { type: String, required: true, trim: true },
+      en: { type: String, required: true, trim: true },
+    },
+    answer: {
+      ar: { type: String, required: true, trim: true },
+      en: { type: String, required: true, trim: true },
+    },
+    platform: {
+      type: String,
+      required: true,
+      enum: ['ghadaq', 'manasik', 'shared'],
+      default: 'shared',
+      index: true,
+    },
+    showOnProductDetails: { type: Boolean, default: false },
   },
   { _id: false },
 );
@@ -122,6 +154,7 @@ const AppearanceSchema = new mongoose.Schema<IAppearance>(
       },
     },
     productsBanners: { type: [ProductBannerSchema], default: [] },
+    faqs: { type: [FAQSchema], default: [] },
   },
   { timestamps: true },
 );

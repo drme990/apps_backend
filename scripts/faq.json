@@ -1,0 +1,238 @@
+{
+    "manasik": {
+      "en" : {
+          "question1": {
+            "question": "Are you a certified foundation?",
+            "answer": "Yes, Manasik Foundation is certified by Meta with the blue badge, and this certification comes after verifying identity documents and reviewing activity and executions."
+          },
+          "question2": {
+            "question": "Are you a charity or for-profit entity?",
+            "answer": "We are a commercial entity that executes rituals and charitable services by proxy with (very small) profit margins to cover administrative expenses and ensure business continuity. We adhere to Islamic rulings and announce costs clearly without any ambiguity."
+          },
+          "question3": {
+            "question": "How is execution done by legal proxy?",
+            "answer": "You authorize us to perform the ritual on your behalf. The intention and naming are in your name, and execution is done as if you were present yourself."
+          },
+          "question4": {
+            "question": "Who executes the work?",
+            "answer": "A trained team of: Scholars for slaughter, Performers for Umrah and Hajj by proxy, Specialized workers for wells and water connections. Each person specialized in their work."
+          },
+          "question5": {
+            "question": "Is execution compliant with Islamic requirements?",
+            "answer": "Yes. We adhere to Islamic requirements in slaughter, timing, naming, and method of execution."
+          },
+          "question6": {
+            "question": "Is there documentation?",
+            "answer": "Yes, documentation includes all stages as if you were with us. Aqiqah/Vows/Charity: slaughter video in your name + kitchen, preparation and distribution video + photos. Umrah by proxy: video of all Umrah rituals from start to finish. Wells and water connections: execution documentation + beneficiary family data after execution."
+          },
+          "question7": {
+            "question": "When do I receive documentation for Aqiqah, vows, charity, or Umrah by proxy?",
+            "answer": "Documentation reaches you within 24 hours. In cases of pressure or emergencies: maximum two days."
+          },
+          "question8": {
+            "question": "When do I receive documentation for water connection or well?",
+            "answer": "Connections and wells take longer, from two weeks to two months depending on execution nature."
+          },
+          "question9": {
+            "question": "What are the best Aqiqahs, vows, and charities?",
+            "answer": "The best is what brings greatest benefit and kindness, and what aligns with Sunnah, like the male ram. Because the Prophet ﷺ slaughtered a ram for Hassan and Hussein, and it was the ransom of Prophet Ismail peace be upon him."
+          },
+          "question10": {
+            "question": "What are the weights of sacrificial animals?",
+            "answer": "In Tanzania and Malawi, dealing is by head not weight. Therefore estimation is better based on number of beneficiaries (approximate numbers): Ram: reaches 36 people, Sheep: reaches 32 people, Large sheep: reaches 45 people, Goat: reaches 18 people, Young goat: reaches 22 people, Calf: reaches 180 people. Dividing the animal into small pieces can increase the number but meals become non-filling, and satiety and kindness are our priority at Manasik Foundation."
+          },
+          "question11": {
+            "question": "For whom is Umrah and Hajj by proxy permissible?",
+            "answer": "Permissible for the deceased, and permissible for the living who are permanently unable with no hope of recovery. Not permissible for the living who can perform it themselves."
+          },
+          "question12": {
+            "question": "What is the Islamic evidence for permissibility of Umrah and Hajj by proxy?",
+            "answer": "This is established in authentic Sunnah from Abdullah ibn Abbas may Allah be pleased with them: that a woman from Khath'am said: O Messenger of Allah, Allah's obligation on His servants regarding Hajj has come upon my father as an old man unable to stay on the mount, should I perform Hajj on his behalf? The Prophet ﷺ said: Perform Hajj on his behalf. Narrated by Bukhari and Muslim. Majority of scholars agreed on its permissibility, and they analogized Umrah to Hajj in permissibility of deputization. Most famous who issued fatwa on this: Ibn Baz, Ibn Uthaymeen, An-Nawawi, Ibn Qudamah, Ash-Shafi'i, and Ahmad ibn Hanbal"
+          },
+          "question13": {
+            "question": "Does the reward of Umrah or Hajj by proxy reach the deceased?",
+            "answer": "Yes, the reward reaches the deceased without dispute, and they benefit from it God willing."
+          },
+          "question14": {
+            "question": "Is it permissible to perform Umrah or Hajj by proxy more than once for the same person?",
+            "answer": "Yes, it is permissible to repeat it as long as the inability continues or in case of death."
+          }
+      },
+      "ar": {
+          "question1": {
+            "question": "هل أنتم مؤسسة موثّقة؟",
+            "answer": "أيوه مؤسسة مناسك موثّقة من Meta بالعلامة الزرقاء، وده توثيق بيتم بعد فحص أوراق الهوية ومراجعة النشاط والتنفيذات."
+          },
+          "question2": {
+            "question": "هل أنتم جهة خيرية أم ربحية؟",
+            "answer": "نحن جهة تجارية تنفذ الشعائر والخدمات الخيرية بالوكالة بهوامش ربح (بسيطة جدا) لتغطية المصاريف الإدارية وضمان استمرار العمل. نلتزم بالأحكام الشرعية ونُعلن التكلفة بوضوح دون أي التباس."
+          },
+          "question3": {
+            "question": "كيف يتم التنفيذ بالوكالة الشرعية؟",
+            "answer": "أنت بتوكّلنا نؤدي الشعيرة عنك. النية والتسمية بتكون باسمك، والتنفيذ بيتم كما لو كنت حاضر بنفسك."
+          },
+          "question4": {
+            "question": "مين اللي بينفّذ العمل؟",
+            "answer": "فريق مُدرّب من: مشايخ للذبح مؤدّين لعمرة وحج البدل عمال مختصين بالآبار ووصلات المياه كل شخص مختص بعمله."
+          },
+          "question5": {
+            "question": "هل التنفيذ مطابق للشروط الشرعية؟",
+            "answer": "نعم. نلتزم بالشروط الشرعية في الذبح، والتوقيت، والتسمية، وطريقة التنفيذ."
+          },
+          "question6": {
+            "question": "هل في توثيق؟",
+            "answer": "أيوه، التوثيق بيشمل كل المراحل كأنك موجود معانا. العقيقة / النذر / الصدقة: فيديو ذبح باسمك + فيديو للمطبخ والتحضير والتوزيع + صور عمرة البدل: فيديو لكل مناسك العمرة من البداية للنهاية الآبار ووصلات المياه: توثيق التنفيذ + بيانات الأسرة المستفيدة بعد التنفيذ"
+          },
+          "question7": {
+            "question": "متى أستلم توثيق العقيقة أو النذر أو الصدقة أو عمرة البدل؟",
+            "answer": "التوثيق بيصلك خلال 24 ساعة. وفي حالات الضغط أو الطوارئ: حد أقصى يومين."
+          },
+          "question8": {
+            "question": "متى أستلم توثيق وصلة الماء أو البئر؟",
+            "answer": "الوصلات والآبار بتستغرق وقت أطول، من أسبوعين إلى شهرين حسب طبيعة التنفيذ."
+          },
+          "question9": {
+            "question": "ما هي أفضل العقائق والنذور والصدقات؟",
+            "answer": "الأفضل ما كان أكبر نفعًا وأكثر إحسانًا، وما وافق السنة، مثل الكبش الذكر. لأن النبي ﷺ ذبح الكبش عن الحسن والحسين، وكان فداء سيدنا إسماعيل عليه السلام."
+          },
+          "question10": {
+            "question": "ما هي أوزان الذبائح؟",
+            "answer": "التعامل في تنزانيا ومالاوي بيكون بالرأس مش بالوزن. ولذلك يكون التقدير أفضل حسب عدد المستفيدين (أرقام تقريبية): الكبش: يصل إلى 36 فرد الخروف: يصل إلى 32 فرد الخروف الكبير: يصل إلى 45 فرد الماعز: يصل إلى 18 فرد الجدي: يصل إلى 22 فرد العجل: يصل إلى 180 فرد تقسيم الذبيحة لقطع صغيرة ممكن يزوّد العدد لكن الوجبات تكون وجبات غير مُشبِعة، والإشباع والإحسان هو أولويتنا في مؤسسة مناسك."
+          },
+          "question11": {
+            "question": "عن مَن تجوز عمرة وحج البدل؟",
+            "answer": "تجوز عن الميت، وتجوز عن الحي العاجز عجزًا دائمًا لا يُرجى زواله. ولا تجوز عن الحي القادر على أدائها بنفسه."
+          },
+          "question12": {
+            "question": "ما الدليل الشرعي على جواز عمرة وحج البدل؟",
+            "answer": "ثبت ذلك في السنة الصحيحة عن عبد الله بن عباس رضي الله عنهما: أن امرأة من خَثْعَم قالت: يا رسولَ الله، إن فريضةَ اللهِ على عبادِه في الحجِّ أدركتْ أبي شيخًا كبيرًا لا يستطيع أن يثبتَ على الراحلة، أفأحُجُّ عنه؟ قال النبي ﷺ: «حُجِّي عنه» رواه البخاري ومسلم وأجمع على جوازه جمهور العلماء، وقاسوا العمرة على الحج في جواز النيابة. أشهر من أفتى بذلك : ابن باز وابن عثيمين والنووي وابن قدامة والشافعي وأحمد بن حنبل"
+          },
+          "question13": {
+            "question": "هل يصل ثواب عمرة أو حج البدل إلى الميت؟",
+            "answer": "نعم، يصل الثواب إلى الميت بلا خلاف، وينتفع به إن شاء الله."
+          },
+          "question14": {
+            "question": "هل يجوز أداء عمرة أو حج البدل أكثر من مرة لنفس الشخص؟",
+            "answer": "نعم، يجوز تكرارها طالما العجز قائم أو في حالة الوفاة."
+          }
+      }
+      },
+    "ghadaq":{
+      "en": {
+          "question1": {
+          "question": "Are you a certified foundation?",
+          "answer": "Yes, Ghadaq Association is certified by Meta with the blue badge, and this certification comes after verifying identity documents and reviewing activity and executions."
+          },
+          "question2": {
+          "question": "Are you a charity or for-profit entity?",
+          "answer": "We are a commercial entity that executes rituals and charitable services by proxy with (very small) profit margins to cover administrative expenses and ensure business continuity. We adhere to Islamic rulings and announce costs clearly without any ambiguity."
+          },
+          "question3": {
+          "question": "How is execution done by legal proxy?",
+          "answer": "You authorize us to perform the ritual on your behalf. The intention and naming are in your name, and execution is done as if you were present yourself."
+          },
+          "question4": {
+          "question": "Who executes the work?",
+          "answer": "A trained team of: Scholars for slaughter, Performers for Umrah and Hajj by proxy, Specialized workers for wells and water connections. Each person specialized in their work."
+          },
+          "question5": {
+          "question": "Is execution compliant with Islamic requirements?",
+          "answer": "Yes. We adhere to Islamic requirements in slaughter, timing, naming, and method of execution."
+          },
+          "question6": {
+          "question": "Is there documentation?",
+          "answer": "Yes, documentation includes all stages as if you were with us. Aqiqah/Vows/Charity: slaughter video in your name + kitchen, preparation and distribution video + photos. Umrah by proxy: video of all Umrah rituals from start to finish. Wells and water connections: execution documentation + beneficiary family data after execution."
+          },
+          "question7": {
+          "question": "When do I receive documentation for Aqiqah, vows, charity, or Umrah by proxy?",
+          "answer": "Documentation reaches you within 24 hours. In cases of pressure or emergencies: maximum two days."
+          },
+          "question8": {
+          "question": "When do I receive documentation for water connection or well?",
+          "answer": "Connections and wells take longer, from two weeks to two months depending on execution nature."
+          },
+          "question9": {
+          "question": "What are the best Aqiqahs, vows, and charities?",
+          "answer": "The best is what brings greatest benefit and kindness, and what aligns with Sunnah, like the male ram. Because the Prophet ﷺ slaughtered a ram for Hassan and Hussein, and it was the ransom of Prophet Ismail peace be upon him."
+          },
+          "question10": {
+          "question": "What are the weights of sacrificial animals?",
+          "answer": "In Tanzania and Malawi, dealing is by head not weight. Therefore estimation is better based on number of beneficiaries (approximate numbers): Ram: reaches 36 people, Sheep: reaches 32 people, Large sheep: reaches 45 people, Goat: reaches 18 people, Young goat: reaches 22 people, Calf: reaches 180 people. Dividing the animal into small pieces can increase the number but meals become non-filling, and satiety and kindness are our priority at Ghadaq Association."
+          },
+          "question11": {
+          "question": "For whom is Umrah and Hajj by proxy permissible?",
+          "answer": "Permissible for the deceased, and permissible for the living who are permanently unable with no hope of recovery. Not permissible for the living who can perform it themselves."
+          },
+          "question12": {
+          "question": "What is the Islamic evidence for permissibility of Umrah and Hajj by proxy?",
+          "answer": "This is established in authentic Sunnah from Abdullah ibn Abbas may Allah be pleased with them: that a woman from Khath'am said: O Messenger of Allah, Allah's obligation on His servants regarding Hajj has come upon my father as an old man unable to stay on the mount, should I perform Hajj on his behalf? The Prophet ﷺ said: Perform Hajj on his behalf. Narrated by Bukhari and Muslim. Majority of scholars agreed on its permissibility, and they analogized Umrah to Hajj in permissibility of deputization. Most famous who issued fatwa on this: Ibn Baz, Ibn Uthaymeen, An-Nawawi, Ibn Qudamah, Ash-Shafi'i, and Ahmad ibn Hanbal"
+          },
+          "question13": {
+          "question": "Does the reward of Umrah or Hajj by proxy reach the deceased?",
+          "answer": "Yes, the reward reaches the deceased without dispute, and they benefit from it God willing."
+          },
+          "question14": {
+          "question": "Is it permissible to perform Umrah or Hajj by proxy more than once for the same person?",
+          "answer": "Yes, it is permissible to repeat it as long as the inability continues or in case of death."
+          }
+      },
+      "ar": {
+          "question1": {
+          "question": "هل أنتم مؤسسة موثّقة؟",
+          "answer": "أيوه مؤسسة غدق موثّقة من Meta بالعلامة الزرقاء، وده توثيق بيتم بعد فحص أوراق الهوية ومراجعة النشاط والتنفيذات."
+          },
+          "question2": {
+          "question": "هل أنتم جهة خيرية أم ربحية؟",
+          "answer": "نحن جهة تجارية تنفذ الشعائر والخدمات الخيرية بالوكالة بهوامش ربح (بسيطة جدا) لتغطية المصاريف الإدارية وضمان استمرار العمل. نلتزم بالأحكام الشرعية ونُعلن التكلفة بوضوح دون أي التباس."
+          },
+          "question3": {
+          "question": "كيف يتم التنفيذ بالوكالة الشرعية؟",
+          "answer": "أنت بتوكّلنا نؤدي الشعيرة عنك. النية والتسمية بتكون باسمك، والتنفيذ بيتم كما لو كنت حاضر بنفسك."
+          },
+          "question4": {
+          "question": "مين اللي بينفّذ العمل؟",
+          "answer": "فريق مُدرّب من: مشايخ للذبح مؤدّين لعمرة وحج البدل عمال مختصين بالآبار ووصلات المياه كل شخص مختص بعمله."
+          },
+          "question5": {
+          "question": "هل التنفيذ مطابق للشروط الشرعية؟",
+          "answer": "نعم. نلتزم بالشروط الشرعية في الذبح، والتوقيت، والتسمية، وطريقة التنفيذ."
+          },
+          "question6": {
+          "question": "هل في توثيق؟",
+          "answer": "أيوه، التوثيق بيشمل كل المراحل كأنك موجود معانا. العقيقة / النذر / الصدقة: فيديو ذبح باسمك + فيديو للمطبخ والتحضير والتوزيع + صور عمرة البدل: فيديو لكل مناسك العمرة من البداية للنهاية الآبار ووصلات المياه: توثيق التنفيذ + بيانات الأسرة المستفيدة بعد التنفيذ"
+          },
+          "question7": {
+          "question": "متى أستلم توثيق العقيقة أو النذر أو الصدقة أو عمرة البدل؟",
+          "answer": "التوثيق بيصلك خلال 24 ساعة. وفي حالات الضغط أو الطوارئ: حد أقصى يومين."
+          },
+          "question8": {
+          "question": "متى أستلم توثيق وصلة الماء أو البئر؟",
+          "answer": "الوصلات والآبار بتستغرق وقت أطول، من أسبوعين إلى شهرين حسب طبيعة التنفيذ."
+          },
+          "question9": {
+          "question": "ما هي أفضل العقائق والنذور والصدقات؟",
+          "answer": "الأفضل ما كان أكبر نفعًا وأكثر إحسانًا، وما وافق السنة، مثل الكبش الذكر. لأن النبي ﷺ ذبح الكبش عن الحسن والحسين، وكان فداء سيدنا إسماعيل عليه السلام."
+          },
+          "question10": {
+          "question": "ما هي أوزان الذبائح؟",
+          "answer": "التعامل في تنزانيا ومالاوي بيكون بالرأس مش بالوزن. ولذلك يكون التقدير أفضل حسب عدد المستفيدين (أرقام تقريبية): الكبش: يصل إلى 36 فرد الخروف: يصل إلى 32 فرد الخروف الكبير: يصل إلى 45 فرد الماعز: يصل إلى 18 فرد الجدي: يصل إلى 22 فرد العجل: يصل إلى 180 فرد تقسيم الذبيحة لقطع صغيرة ممكن يزوّد العدد لكن الوجبات تكون وجبات غير مُشبِعة، والإشباع والإحسان هو أولويتنا في مؤسسة غدق."
+          },
+          "question11": {
+          "question": "عن مَن تجوز عمرة وحج البدل؟",
+          "answer": "تجوز عن الميت، وتجوز عن الحي العاجز عجزًا دائمًا لا يُرجى زواله. ولا تجوز عن الحي القادر على أدائها بنفسه."
+          },
+          "question12": {
+          "question": "ما الدليل الشرعي على جواز عمرة وحج البدل؟",
+          "answer": "ثبت ذلك في السنة الصحيحة عن عبد الله بن عباس رضي الله عنهما: أن امرأة من خَثْعَم قالت: يا رسولَ الله، إن فريضةَ اللهِ على عبادِه في الحجِّ أدركتْ أبي شيخًا كبيرًا لا يستطيع أن يثبتَ على الراحلة، أفأحُجُّ عنه؟ قال النبي ﷺ: «حُجِّي عنه» رواه البخاري ومسلم وأجمع على جوازه جمهور العلماء، وقاسوا العمرة على الحج في جواز النيابة. أشهر من أفتى بذلك : ابن باز وابن عثيمين والنووي وابن قدامة والشافعي وأحمد بن حنبل"
+          },
+          "question13": {
+          "question": "هل يصل ثواب عمرة أو حج البدل إلى الميت؟",
+          "answer": "نعم، يصل الثواب إلى الميت بلا خلاف، وينتفع به إن شاء الله."
+          },
+          "question14": {
+          "question": "هل يجوز أداء عمرة أو حج البدل أكثر من مرة لنفس الشخص؟",
+          "answer": "نعم، يجوز تكرارها طالما العجز قائم أو في حالة الوفاة."
+          }
+      }
+    }
+}
