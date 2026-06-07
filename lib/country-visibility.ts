@@ -38,6 +38,185 @@ function normalizeVisibilityOptions(
   };
 }
 
+// Country name to ISO code mapping (all countries from seed-countries.ts)
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  // Other
+  'other': 'OT',
+  
+  // Middle East & North Africa
+  'egypt': 'EG',
+  'saudi arabia': 'SA',
+  'saudi': 'SA',
+  'kuwait': 'KW',
+  'qatar': 'QA',
+  'united arab emirates': 'AE',
+  'uae': 'AE',
+  'bahrain': 'BH',
+  'jordan': 'JO',
+  'iraq': 'IQ',
+  'oman': 'OM',
+  'yemen': 'YE',
+  'lebanon': 'LB',
+  'syria': 'SY',
+  'palestine': 'PS',
+  'morocco': 'MA',
+  'tunisia': 'TN',
+  'algeria': 'DZ',
+  'malawi': 'MW',
+  'libya': 'LY',
+  'sudan': 'SD',
+  'mauritania': 'MR',
+  'djibouti': 'DJ',
+  'comoros': 'KM',
+  
+  // Turkey & Central Asia
+  'turkey': 'TR',
+  'azerbaijan': 'AZ',
+  'kazakhstan': 'KZ',
+  'uzbekistan': 'UZ',
+  'turkmenistan': 'TM',
+  'kyrgyzstan': 'KG',
+  'tajikistan': 'TJ',
+  'georgia': 'GE',
+  'armenia': 'AM',
+  
+  // South & Southeast Asia
+  'india': 'IN',
+  'pakistan': 'PK',
+  'bangladesh': 'BD',
+  'afghanistan': 'AF',
+  'sri lanka': 'LK',
+  'nepal': 'NP',
+  'maldives': 'MV',
+  'indonesia': 'ID',
+  'malaysia': 'MY',
+  'thailand': 'TH',
+  'philippines': 'PH',
+  'vietnam': 'VN',
+  'myanmar': 'MM',
+  'cambodia': 'KH',
+  'singapore': 'SG',
+  'brunei': 'BN',
+  
+  // East Asia
+  'china': 'CN',
+  'japan': 'JP',
+  'south korea': 'KR',
+  'mongolia': 'MN',
+  
+  // Europe
+  'united states': 'US',
+  'usa': 'US',
+  'united kingdom': 'GB',
+  'uk': 'GB',
+  'germany': 'DE',
+  'france': 'FR',
+  'italy': 'IT',
+  'spain': 'ES',
+  'netherlands': 'NL',
+  'belgium': 'BE',
+  'austria': 'AT',
+  'greece': 'GR',
+  'portugal': 'PT',
+  'ireland': 'IE',
+  'finland': 'FI',
+  'sweden': 'SE',
+  'norway': 'NO',
+  'denmark': 'DK',
+  'switzerland': 'CH',
+  'poland': 'PL',
+  'czech republic': 'CZ',
+  'czechia': 'CZ',
+  'hungary': 'HU',
+  'romania': 'RO',
+  'bulgaria': 'BG',
+  'croatia': 'HR',
+  'serbia': 'RS',
+  'bosnia and herzegovina': 'BA',
+  'albania': 'AL',
+  'kosovo': 'XK',
+  'north macedonia': 'MK',
+  'macedonia': 'MK',
+  'montenegro': 'ME',
+  'slovenia': 'SI',
+  'slovakia': 'SK',
+  'lithuania': 'LT',
+  'latvia': 'LV',
+  'estonia': 'EE',
+  'russia': 'RU',
+  'ukraine': 'UA',
+  'belarus': 'BY',
+  'moldova': 'MD',
+  'iceland': 'IS',
+  'cyprus': 'CY',
+  'malta': 'MT',
+  'luxembourg': 'LU',
+  
+  // Africa
+  'nigeria': 'NG',
+  'south africa': 'ZA',
+  'kenya': 'KE',
+  'ghana': 'GH',
+  'tanzania': 'TZ',
+  'ethiopia': 'ET',
+  'somalia': 'SO',
+  'senegal': 'SN',
+  'cameroon': 'CM',
+  'ivory coast': 'CI',
+  'cote divoire': 'CI',
+  'uganda': 'UG',
+  'rwanda': 'RW',
+  'mali': 'ML',
+  'niger': 'NE',
+  'chad': 'TD',
+  'madagascar': 'MG',
+  'mozambique': 'MZ',
+  'zambia': 'ZM',
+  'zimbabwe': 'ZW',
+  'burkina faso': 'BF',
+  'guinea': 'GN',
+  'botswana': 'BW',
+  'namibia': 'NA',
+  'mauritius': 'MU',
+  
+  // Americas
+  'canada': 'CA',
+  'mexico': 'MX',
+  'brazil': 'BR',
+  'argentina': 'AR',
+  'colombia': 'CO',
+  'chile': 'CL',
+  'peru': 'PE',
+  'venezuela': 'VE',
+  'ecuador': 'EC',
+  'guyana': 'GY',
+  'suriname': 'SR',
+  'trinidad and tobago': 'TT',
+  
+  // Oceania
+  'australia': 'AU',
+  'new zealand': 'NZ',
+  'fiji': 'FJ',
+  'papua new guinea': 'PG',
+};
+
+export function countryNameToCode(countryName: string): string | null {
+  if (!countryName || typeof countryName !== 'string') return null;
+  
+  const normalized = countryName.trim().toLowerCase();
+  
+  // If it's already a 2-letter code, return it
+  if (/^[a-z]{2}$/.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+  
+  // Look up in the mapping
+  const code = COUNTRY_NAME_TO_CODE[normalized];
+  if (code) return code;
+  
+  return null;
+}
+
 export function normalizeCountryVisibilityMap(
   raw: unknown,
 ): CountryVisibilityMap {

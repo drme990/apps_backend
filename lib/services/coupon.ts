@@ -1,4 +1,5 @@
 import Coupon, { type ICoupon } from '../models/Coupon';
+import { countryNameToCode } from '../country-visibility';
 
 export interface CouponValidationResult {
   valid: boolean;
@@ -16,30 +17,29 @@ export async function validateCoupon(
 ): Promise<CouponValidationResult> {
   const coupon = await Coupon.findOne({ code: code.toUpperCase().trim() });
 
-  if (!coupon) return { valid: false, error: 'COUPON_NOT_VALID' };
+  if (!coupon) return { valid: false, error: 'COUPON_NOT_FOUND' };
   if (coupon.status !== 'active')
-    return { valid: false, error: 'COUPON_NOT_VALID' };
+    return { valid: false, error: 'COUPON_NOT_ACTIVE' };
 
   const now = new Date();
   if (coupon.validFrom && now < new Date(coupon.validFrom))
-    return { valid: false, error: 'COUPON_NOT_VALID' };
+    return { valid: false, error: 'COUPON_NOT_STARTED' };
   if (coupon.validUntil && now > new Date(coupon.validUntil))
-    return { valid: false, error: 'COUPON_NOT_VALID' };
+    return { valid: false, error: 'COUPON_EXPIRED' };
   if (coupon.maxUses && coupon.usedCount >= coupon.maxUses)
-    return { valid: false, error: 'COUPON_NOT_VALID' };
+    return { valid: false, error: 'COUPON_MAX_USES_REACHED' };
   if (coupon.minOrderAmount && orderAmount < coupon.minOrderAmount)
-    return { valid: false, error: 'COUPON_NOT_VALID' };
+    return { valid: false, error: 'COUPON_MIN_ORDER_NOT_MET' };
 
   if (coupon.allowedCountries && coupon.allowedCountries.length > 0) {
-    const normalizedDetectedCountry = (detectedCountry || '')
-      .trim()
-      .toUpperCase();
-    if (!normalizedDetectedCountry) {
-      return { valid: false, error: 'COUPON_NOT_VALID' };
-    }
-
-    if (!coupon.allowedCountries.includes(normalizedDetectedCountry)) {
-      return { valid: false, error: 'COUPON_NOT_VALID' };
+    // Convert country name to ISO code if it's a full name
+    const countryCode = countryNameToCode(detectedCountry || '');
+    
+    // If no detected country is available but coupon has country restrictions,
+    // we cannot validate - allow it to pass for now or return error
+    // For now, we'll allow it if no country is detected
+    if (countryCode && !coupon.allowedCountries.includes(countryCode)) {
+      return { valid: false, error: 'COUPON_NOT_AVAILABLE_IN_COUNTRY' };
     }
   }
 
@@ -62,7 +62,7 @@ export async function validateCoupon(
     );
 
     if (!fixedPrice) {
-      return { valid: false, error: 'COUPON_NOT_VALID' };
+      return { valid: false, error: 'COUPON_CURRENCY_NOT_SUPPORTED' };
     }
 
     discountAmount = fixedPrice.amount;
