@@ -2,6 +2,10 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  DeleteObjectsCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
@@ -200,6 +204,198 @@ export const generatePresignedUploadUrl = async (
     };
   } catch (error) {
     console.error('Error generating presigned URL:', error);
+    throw error;
+  }
+};
+
+export interface R2Object {
+  key: string;
+  size: number;
+  lastModified: Date;
+  etag: string;
+  isFolder: boolean;
+}
+
+export interface R2FolderStructure {
+  folders: string[];
+  files: R2Object[];
+}
+
+/**
+ * List objects in R2 bucket with optional prefix (folder)
+ */
+export const listR2Objects = async (
+  prefix: string = '',
+  delimiter: string = '/',
+): Promise<R2FolderStructure> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
+  // Ensure prefix ends with / if it's not empty (for proper folder listing)
+  const normalizedPrefix = prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix;
+
+  const command = new ListObjectsV2Command({
+    Bucket: bucketName,
+    Prefix: normalizedPrefix,
+    Delimiter: delimiter,
+  });
+
+  try {
+    const response = await s3Client.send(command);
+    
+    const folders: string[] = [];
+    const files: R2Object[] = [];
+
+    // Extract folders (CommonPrefixes)
+    if (response.CommonPrefixes) {
+      for (const commonPrefix of response.CommonPrefixes) {
+        if (commonPrefix.Prefix) {
+          // Remove trailing slash and prefix to get folder name
+          const folderName = commonPrefix.Prefix
+            .replace(normalizedPrefix, '')
+            .replace(/\/$/, '');
+          if (folderName) {
+            folders.push(folderName);
+          }
+        }
+      }
+    }
+
+    // Extract files (Contents)
+    if (response.Contents) {
+      for (const object of response.Contents) {
+        if (object.Key && object.Key !== normalizedPrefix) {
+          files.push({
+            key: object.Key,
+            size: object.Size || 0,
+            lastModified: object.LastModified || new Date(),
+            etag: object.ETag || '',
+            isFolder: false,
+          });
+        }
+      }
+    }
+
+    return { folders, files };
+  } catch (error) {
+    console.error('Error listing R2 objects:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get object metadata
+ */
+export const getR2ObjectMetadata = async (key: string): Promise<{
+  size: number;
+  lastModified: Date;
+  contentType: string;
+}> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
+  const command = new HeadObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  try {
+    const response = await s3Client.send(command);
+    return {
+      size: response.ContentLength || 0,
+      lastModified: response.LastModified || new Date(),
+      contentType: response.ContentType || 'application/octet-stream',
+    };
+  } catch (error) {
+    console.error('Error getting R2 object metadata:', error);
+    throw error;
+  }
+};
+
+/**
+ * Generate a presigned URL for downloading an object
+ */
+export const generatePresignedDownloadUrl = async (
+  key: string,
+  expiresIn: number = 3600, // URL expires in 1 hour by default
+): Promise<string> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  try {
+    return await getSignedUrl(s3Client as any, command, { expiresIn });
+  } catch (error) {
+    console.error('Error generating presigned download URL:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete multiple objects from R2
+ */
+export const deleteMultipleR2Objects = async (keys: string[]): Promise<{ deleted: string[]; failed: string[] }> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
+  if (keys.length === 0) {
+    return { deleted: [], failed: [] };
+  }
+
+  const command = new DeleteObjectsCommand({
+    Bucket: bucketName,
+    Delete: {
+      Objects: keys.map((key) => ({ Key: key })),
+      Quiet: false,
+    },
+  });
+
+  try {
+    const response = await s3Client.send(command);
+    const deleted = response.Deleted?.map((item) => item.Key!) || [];
+    const failed = response.Errors?.map((item) => item.Key!) || [];
+    return { deleted, failed };
+  } catch (error) {
+    console.error('Error deleting multiple R2 objects:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete all objects in a folder (recursive)
+ */
+export const deleteR2Folder = async (prefix: string): Promise<number> => {
+  if (!accountId || !accessKeyId || !secretAccessKey) {
+    throw new Error('R2 credentials are missing');
+  }
+
+  // First, list all objects with the prefix
+  const listCommand = new ListObjectsV2Command({
+    Bucket: bucketName,
+    Prefix: prefix,
+  });
+
+  try {
+    const listResponse = await s3Client.send(listCommand);
+    const keys = listResponse.Contents?.map((obj) => obj.Key!).filter(Boolean) || [];
+
+    if (keys.length === 0) {
+      return 0;
+    }
+
+    // Delete all objects
+    const deleteResult = await deleteMultipleR2Objects(keys);
+    return deleteResult.deleted.length;
+  } catch (error) {
+    console.error('Error deleting R2 folder:', error);
     throw error;
   }
 };
