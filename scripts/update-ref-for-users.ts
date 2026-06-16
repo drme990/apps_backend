@@ -78,7 +78,7 @@ async function migrateUserRefs() {
 
         if (!oldestReferralCode) {
           oldestReferralCode =
-            appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+            appId === 'ghadaq' ? 'GHD-D' : 'MNK-D';
         }
 
         await UserModel.updateOne(

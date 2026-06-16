@@ -494,6 +494,7 @@ export const appearanceUpdateSchema = z.record(z.string(), z.any()); // Allowed 
 export const orderStatusUpdateSchema = z
   .object({
     status: z.string().trim().min(1),
+    cancellationReason: z.string().trim().optional(),
   })
   .strict();
 
@@ -512,3 +513,31 @@ export const autoPriceSchema = z
 
 export const productCreateSchema = z.record(z.string(), z.any()); // Too complex to strict type without full model
 export const productUpdateSchema = z.record(z.string(), z.any());
+
+export const categoryCreateSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    categoryNumber: z.coerce.number().int().positive(),
+    color: z
+      .string()
+      .trim()
+      .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Color must be a valid hex color'),
+    products: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict();
+
+export const categoryUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    categoryNumber: z.coerce.number().int().positive().optional(),
+    color: z
+      .string()
+      .trim()
+      .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Color must be a valid hex color')
+      .optional(),
+    products: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict()
+  .refine((payload) => Object.keys(payload).length > 0, {
+    message: 'At least one field must be provided',
+  });

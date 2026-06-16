@@ -454,7 +454,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!resolvedRef) {
-      resolvedRef = checkoutAppId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+      resolvedRef = checkoutAppId === 'ghadaq' ? 'GHD-D' : 'MNK-D';
     }
 
     const finalUserDoc = await UserModel.findById(effectiveUserId)

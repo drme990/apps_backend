@@ -108,7 +108,7 @@ export async function PUT(
     const { id } = await params;
     const parsed = await parseJsonBody(request, orderStatusUpdateSchema);
     if (!parsed.success) return parsed.response;
-    const { status } = parsed.data;
+    const { status, cancellationReason } = parsed.data;
     const rawStatus =
       typeof status === 'string' ? status.toLowerCase().trim() : '';
     const normalizedStatus = STATUS_ALIASES[rawStatus] || rawStatus;
@@ -137,6 +137,18 @@ export async function PUT(
       order.status = nextStatus;
       touchStatusUpdateTime(order);
       changes.push(`status → ${nextStatus}`);
+    }
+
+    if (
+      nextStatus === 'cancelled' &&
+      typeof cancellationReason === 'string' &&
+      cancellationReason.trim().length > 0
+    ) {
+      order.cancellationReason = cancellationReason.trim();
+      changes.push(`cancellationReason → ${cancellationReason.trim()}`);
+    } else if (nextStatus !== 'cancelled' && order.cancellationReason) {
+      order.cancellationReason = undefined;
+      changes.push('cancellationReason → cleared');
     }
 
     const nextWhatsappState = resolveWhatsappButtonState(

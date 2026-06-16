@@ -18,7 +18,7 @@ export async function validateReferralCode(
     return { valid: false, message: 'Referral code is required' };
   }
 
-  if (referralId === 'default-MNK' || referralId === 'default-GHD') {
+  if (referralId === 'MNK-D' || referralId === 'GHD-D') {
     return { valid: true };
   }
 

@@ -25,7 +25,7 @@ const bodySchema = z.object({
 type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
 function getDefaultRefForApp(appId: 'ghadaq' | 'manasik'): string {
-  return appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+  return appId === 'ghadaq' ? 'GHD-D' : 'MNK-D';
 }
 
 export async function PATCH(request: NextRequest) {

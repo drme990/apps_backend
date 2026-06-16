@@ -77,11 +77,11 @@ export async function GET(request: NextRequest) {
     if (referralId && referralId !== 'all') {
       if (
         referralId === 'default' ||
-        referralId === 'default-MNK' ||
-        referralId === 'default-GHD'
+        referralId === 'MNK-D' ||
+        referralId === 'GHD-D'
       ) {
         const sourceCondition =
-          referralId === 'default-MNK'
+          referralId === 'MNK-D'
             ? {
                 $or: [
                   { source: 'manasik' },
@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
                   { source: '' },
                 ],
               }
-            : referralId === 'default-GHD'
+            : referralId === 'GHD-D'
               ? { source: 'ghadaq' }
               : null;
 
@@ -236,7 +236,7 @@ export async function GET(request: NextRequest) {
       const hasUserId = hasOrderUserId(order.userId);
 
       const normalizedReferralId =
-        order.referralId === 'default-MNK' || order.referralId === 'default-GHD'
+        order.referralId === 'MNK-D' || order.referralId === 'GHD-D'
           ? undefined
           : order.referralId;
 

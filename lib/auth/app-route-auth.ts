@@ -387,7 +387,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       }
       
       if (!resolvedRef) {
-        resolvedRef = appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+        resolvedRef = appId === 'ghadaq' ? 'GHD-D' : 'MNK-D';
       }
       createPayload.ref = resolvedRef;
     }

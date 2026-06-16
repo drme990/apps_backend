@@ -15,6 +15,7 @@ export const ADMIN_ALLOWED_PAGES = [
   'booking',
   'coupons',
   'countries',
+  'categories',
   'admins',
   'referrals',
   'refTracker',

@@ -1,86 +1,61 @@
 import mongoose from 'mongoose';
 import OrderSequence from '@/lib/models/OrderSequence';
+import Category from '@/lib/models/Categories';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function getOrderPrefix(source: 'manasik' | 'ghadaq' | undefined): string {
+function getMonthKey(): string {
   const now = new Date();
-  const tag = source === 'ghadaq' ? 'GHD' : 'MNK';
-  return `${tag}-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-async function getMaxExistingSequence(prefix: string): Promise<number> {
-  const OrderModel = mongoose.models.Order as
-    | mongoose.Model<IOrder>
-    | undefined;
-  if (!OrderModel) return 0;
-
-  const escapedPrefix = escapeRegex(prefix);
-  const [result] = await OrderModel.aggregate<{ maxSeq?: number }>([
-    {
-      $match: {
-        orderNumber: {
-          $regex: `^${escapedPrefix}-\\d+$`,
-          $options: 'i',
-        },
-      },
-    },
-    {
-      $project: {
-        seq: {
-          $toInt: {
-            $arrayElemAt: [{ $split: ['$orderNumber', '-'] }, 2],
-          },
-        },
-      },
-    },
-    {
-      $group: {
-        _id: null,
-        maxSeq: { $max: '$seq' },
-      },
-    },
-  ]).exec();
-
-  return Number(result?.maxSeq || 0);
+function getDailyDateStamp(): string {
+  const now = new Date();
+  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}}`;
 }
 
-async function allocateOrderNumber(
-  source: 'manasik' | 'ghadaq' | undefined,
-): Promise<string> {
-  const prefix = getOrderPrefix(source);
+async function getCategoryNumberForProduct(
+  productId: mongoose.Types.ObjectId | string | undefined,
+): Promise<number> {
+  if (!productId) return 9999;
+  try {
+    const category = await Category.findOne({ products: productId })
+      .select('categoryNumber')
+      .lean();
+    return category?.categoryNumber ?? 9999;
+  } catch {
+    return 9999;
+  }
+}
+
+async function allocateOrderNumber(opts: {
+  ref: string;
+  categoryNumber: number;
+  source: 'manasik' | 'ghadaq' | undefined;
+}): Promise<string> {
+  const { ref, categoryNumber } = opts;
+  const monthKey = getMonthKey();
+  const dateStamp = getDailyDateStamp();
   const maxRetries = 5;
 
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
-    const maxExisting = await getMaxExistingSequence(prefix);
-
     try {
-      // Keep sequence aligned with existing orders (migration/backfill safety).
+      // Ensure sequence document exists for this month (resets every month).
       await OrderSequence.updateOne(
-        { _id: prefix, seq: { $lt: maxExisting } },
-        { $set: { seq: maxExisting } },
-      ).exec();
-
-      // Ensure sequence document exists for this month prefix.
-      await OrderSequence.updateOne(
-        { _id: prefix },
-        { $setOnInsert: { seq: maxExisting } },
+        { _id: monthKey },
+        { $setOnInsert: { seq: 0 } },
         { upsert: true },
       ).exec();
 
       // Atomically allocate the next sequence number.
       const counter = await OrderSequence.findOneAndUpdate(
-        { _id: prefix },
+        { _id: monthKey },
         { $inc: { seq: 1 } },
         { new: true },
       ).lean();
 
       const nextSeq = Number(counter?.seq || 0);
       if (nextSeq > 0) {
-        return `${prefix}-${String(nextSeq).padStart(5, '0')}`;
+        return `${ref}-${dateStamp}-${categoryNumber}-${String(nextSeq).padStart(4, '0')}`;
       }
     } catch (error) {
       const code = (error as { code?: unknown })?.code;
@@ -92,7 +67,7 @@ async function allocateOrderNumber(
     }
   }
 
-  throw new Error(`Failed to allocate order number for prefix ${prefix}`);
+  throw new Error(`Failed to allocate order number for month ${monthKey}`);
 }
 
 export type OrderStatus =
@@ -212,6 +187,7 @@ export interface IOrder {
   paymentType?: PaymentType;
   isWhatsappButtonClicked?: 'clicked' | 'not-clicked' | 'no-need-to-click';
   referralId?: string;
+  cancellationReason?: string;
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
   payments?: IPayment[];
@@ -495,6 +471,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       index: true,
     },
     referralId: { type: String, trim: true, index: true },
+    cancellationReason: { type: String, trim: true },
     statusUpdateTime: {
       type: Date,
       required: true,
@@ -527,7 +504,14 @@ const OrderSchema = new mongoose.Schema<IOrder>(
 // Generate order number before validation
 OrderSchema.pre('validate', async function () {
   if (!this.orderNumber) {
-    this.orderNumber = await allocateOrderNumber(this.source);
+    const ref = this.referralId || (this.source === 'ghadaq' ? 'GHD-D' : 'MNK-D');
+    const productId = this.items?.[0]?.productId;
+    const categoryNumber = await getCategoryNumberForProduct(productId);
+    this.orderNumber = await allocateOrderNumber({
+      ref,
+      categoryNumber,
+      source: this.source,
+    });
   }
 });
 

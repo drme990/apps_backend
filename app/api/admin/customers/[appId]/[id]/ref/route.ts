@@ -16,7 +16,7 @@ const bodySchema = z.object({
 });
 
 function getDefaultRefForApp(appId: string): string {
-  return appId === 'ghadaq' ? 'default-GHD' : 'default-MNK';
+  return appId === 'ghadaq' ? 'GHD-D' : 'MNK-D';
 }
 
 type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;

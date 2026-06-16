@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
         }
         if (refFilter) {
           if (refFilter === '__none__') {
-            filterQuery.$or = [{ ref: 'default-MNK' }, { ref: 'default-GHD' }];
+            filterQuery.$or = [{ ref: 'MNK-D' }, { ref: 'GHD-D' }];
           } else {
             filterQuery.ref = refFilter;
           }
