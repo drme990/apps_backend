@@ -8,6 +8,7 @@ export interface IUser {
   password: string;
   role: 'admin' | 'super_admin';
   allowedPages?: string[];
+  ref?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -70,6 +71,11 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'payments',
       ],
       default: [],
+    },
+    ref: {
+      type: String,
+      trim: true,
+      default: '',
     },
   },
   { timestamps: true, collection: 'users_admin_panel' },

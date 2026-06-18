@@ -23,10 +23,13 @@ function normalizeAdminAllowedPages(
 }
 
 function hasAdminPageAccess(
-  page: AdminAllowedPage,
+  page: AdminAllowedPage | AdminAllowedPage[],
   pages: Array<AdminAllowedPage | 'users'>,
 ): boolean {
-  return pages.includes(page) || (page === 'admins' && pages.includes('users'));
+  const targetPages = Array.isArray(page) ? page : [page];
+  return targetPages.some(
+    (p) => pages.includes(p) || (p === 'admins' && pages.includes('users')),
+  );
 }
 
 function forbiddenResponse() {
@@ -84,7 +87,7 @@ export async function requireAppAuth(
 }
 
 export async function requireAdminPageAccess(
-  page: AdminAllowedPage,
+  page: AdminAllowedPage | AdminAllowedPage[],
 ): Promise<{ user: TokenPayload } | { error: NextResponse }> {
   const auth = await requireAuth();
   if ('error' in auth) return auth;

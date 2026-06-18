@@ -3,10 +3,18 @@ import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client } from '@/lib/services/r2';
 import JSZip from 'jszip';
 
+async function streamToBuffer(stream: AsyncIterable<Uint8Array>): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { keys } = body;
+    const { keys, folderName } = body;
 
     if (!keys || !Array.isArray(keys) || keys.length === 0) {
       return NextResponse.json(
@@ -16,41 +24,60 @@ export async function POST(request: NextRequest) {
     }
 
     const zip = new JSZip();
+    const bucket = process.env.R2_BUCKET_NAME || 'media';
 
-    // Download each file and add to zip
-    for (const key of keys) {
-      try {
-        const command = new GetObjectCommand({
-          Bucket: process.env.R2_BUCKET_NAME || 'media',
-          Key: key,
-        });
-
+    // Fetch all files in parallel
+    const results = await Promise.allSettled(
+      keys.map(async (key: string) => {
+        const command = new GetObjectCommand({ Bucket: bucket, Key: key });
         const response = await s3Client.send(command);
-        
-        if (response.Body) {
-          const fileName = key.split('/').pop() || key;
-          // Convert stream to buffer
-          const chunks: Buffer[] = [];
-          for await (const chunk of response.Body as any) {
-            chunks.push(Buffer.from(chunk));
-          }
-          const buffer = Buffer.concat(chunks);
-          zip.file(fileName, buffer);
-        }
-      } catch (error) {
-        console.error(`Error downloading file ${key}:`, error);
-        // Continue with other files even if one fails
+
+        if (!response.Body) throw new Error(`Empty body for key: ${key}`);
+
+        const buffer = await streamToBuffer(response.Body as AsyncIterable<Uint8Array>);
+
+        // Preserve relative path inside zip (strip leading folder prefix if all share one)
+        const zipPath = key.split('/').pop() || key;
+        return { zipPath, buffer };
+      })
+    );
+
+    let addedCount = 0;
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        zip.file(result.value.zipPath, result.value.buffer);
+        addedCount++;
+      } else {
+        console.error('Error fetching file for bulk download:', result.reason);
       }
     }
 
-    // Generate the zip file
-    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+    if (addedCount === 0) {
+      return NextResponse.json(
+        { success: false, error: 'All files failed to download' },
+        { status: 500 }
+      );
+    }
 
-    // Return the zip file as response
+    const zipBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const now = new Date()
+      .toISOString()
+      .replace('T', '_')
+      .replace(/:/g, '-')
+      .split('.')[0];
+    const safeName = (folderName || 'download').replace(/[^a-zA-Z0-9-_]/g, '_');
+    const filename = `${safeName}-${now}.zip`;
+
     return new NextResponse(new Uint8Array(zipBuffer), {
       headers: {
         'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="download-${Date.now()}.zip"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': String(zipBuffer.byteLength),
       },
     });
   } catch (error) {

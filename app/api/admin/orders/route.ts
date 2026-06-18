@@ -83,13 +83,13 @@ export async function GET(request: NextRequest) {
         const sourceCondition =
           referralId === 'MNK-D'
             ? {
-                $or: [
-                  { source: 'manasik' },
-                  { source: { $exists: false } },
-                  { source: null },
-                  { source: '' },
-                ],
-              }
+              $or: [
+                { source: 'manasik' },
+                { source: { $exists: false } },
+                { source: null },
+                { source: '' },
+              ],
+            }
             : referralId === 'GHD-D'
               ? { source: 'ghadaq' }
               : null;
@@ -99,6 +99,7 @@ export async function GET(request: NextRequest) {
             { referralId: { $exists: false } },
             { referralId: null },
             { referralId: '' },
+            { referralId: referralId },
           ],
         });
 

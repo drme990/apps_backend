@@ -23,6 +23,9 @@ export const ADMIN_ALLOWED_PAGES = [
   'appearance',
   'exchange',
   'payments',
+  'suppliers',
+  'crm',
+  'accounts'
 ] as const;
 
 export type AdminAllowedPage = (typeof ADMIN_ALLOWED_PAGES)[number];

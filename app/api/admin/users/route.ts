@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJsonBody(request, userCreateSchema);
     if (!parsed.success) return parsed.response;
-    const { name, email, password, role, allowedPages } = parsed.data;
+    const { name, email, password, role, allowedPages, ref } = parsed.data;
 
     const existingUser = await User.findOne({ email: email?.toLowerCase() });
     if (existingUser) {
@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
       password,
       role: role || 'admin',
       allowedPages: allowedPages || [],
+      ref: ref || '',
     });
 
     await logActivity({
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest) {
       action: 'create',
       resource: 'user',
       resourceId: user._id.toString(),
-      details: `Created user: ${user.name} (${user.email}) with role: ${user.role}`,
+      details: `Created user: ${user.name} (${user.email}) with role: ${user.role}${user.ref ? ` ref: ${user.ref}` : ''}`,
     });
 
     return NextResponse.json(
@@ -75,6 +76,7 @@ export async function POST(request: NextRequest) {
           email: user.email,
           role: user.role,
           allowedPages: user.allowedPages,
+          ref: user.ref,
         },
       },
       { status: 201 },

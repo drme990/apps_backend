@@ -23,7 +23,7 @@ export async function PATCH(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('customers');
+    const auth = await requireAdminPageAccess(['customers', 'orders']);
     if ('error' in auth) return auth.error;
 
     const parsedBody = bodySchema.safeParse(await request.json());

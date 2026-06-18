@@ -32,6 +32,7 @@ export async function GET(
         email: user.email,
         role: user.role,
         allowedPages: user.allowedPages,
+        ref: user.ref,
         createdAt: user.createdAt,
       },
     });
@@ -81,12 +82,13 @@ export async function PUT(
 
     const parsed = await parseJsonBody(request, userUpdateSchema);
     if (!parsed.success) return parsed.response;
-    const { name, email, password, role, allowedPages } = parsed.data;
+    const { name, email, password, role, allowedPages, ref } = parsed.data;
     if (name) targetUser.name = name;
     if (email) targetUser.email = email;
     if (password) targetUser.password = password;
     if (role) targetUser.role = role;
     if (allowedPages !== undefined) targetUser.allowedPages = allowedPages;
+    if (ref !== undefined) targetUser.ref = ref;
 
     await targetUser.save();
 
@@ -108,6 +110,7 @@ export async function PUT(
         email: targetUser.email,
         role: targetUser.role,
         allowedPages: targetUser.allowedPages,
+        ref: targetUser.ref,
       },
     });
   } catch (error) {

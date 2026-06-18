@@ -216,6 +216,7 @@ export const userCreateSchema = z
     password: z.string().min(6),
     role: z.enum(['admin', 'super_admin']).optional(),
     allowedPages: z.array(z.string().trim().min(1)).optional(),
+    ref: z.string().trim().optional(),
   })
   .strict();
 
@@ -226,6 +227,7 @@ export const userUpdateSchema = z
     password: z.string().min(6).optional(),
     role: z.enum(['admin', 'super_admin']).optional(),
     allowedPages: z.array(z.string().trim().min(1)).optional(),
+    ref: z.string().trim().optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {
@@ -536,6 +538,116 @@ export const categoryUpdateSchema = z
       .regex(/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/, 'Color must be a valid hex color')
       .optional(),
     products: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict()
+  .refine((payload) => Object.keys(payload).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+export const supplierCreateSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    phone: z.string().trim().optional(),
+    email: z.string().trim().email().optional().or(z.literal('')),
+    address: z.string().trim().optional(),
+    notes: z.string().trim().optional(),
+    status: z.enum(['active', 'inactive']).optional(),
+  })
+  .strict();
+
+export const supplierUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    phone: z.string().trim().optional(),
+    email: z.string().trim().email().optional().or(z.literal('')),
+    address: z.string().trim().optional(),
+    notes: z.string().trim().optional(),
+    status: z.enum(['active', 'inactive']).optional(),
+  })
+  .strict()
+  .refine((payload) => Object.keys(payload).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+export const supplierOrderItemSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    quantity: z.coerce.number().int().positive(),
+    unitPrice: z.coerce.number().nonnegative(),
+    total: z.coerce.number().nonnegative(),
+  })
+  .strict();
+
+export const supplierOrderCreateSchema = z
+  .object({
+    items: z.array(supplierOrderItemSchema).min(1),
+    orderDate: z.string().datetime().optional(),
+    notes: z.string().trim().optional(),
+    status: z.enum(['pending', 'received', 'cancelled']).optional(),
+  })
+  .strict();
+
+export const supplierOrderUpdateSchema = z
+  .object({
+    items: z.array(supplierOrderItemSchema).min(1).optional(),
+    orderDate: z.string().datetime().optional(),
+    notes: z.string().trim().optional(),
+    status: z.enum(['pending', 'received', 'cancelled']).optional(),
+  })
+  .strict()
+  .refine((payload) => Object.keys(payload).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+export const supplierPayoutCreateSchema = z
+  .object({
+    amount: z.coerce.number().positive(),
+    accountId: z.string().trim().optional(),
+    date: z.string().datetime().optional(),
+    notes: z.string().trim().optional(),
+  })
+  .strict();
+
+export const supplierPayoutUpdateSchema = z
+  .object({
+    amount: z.coerce.number().positive().optional(),
+    accountId: z.string().trim().optional(),
+    date: z.string().datetime().optional(),
+    notes: z.string().trim().optional(),
+  })
+  .strict()
+  .refine((payload) => Object.keys(payload).length > 0, {
+    message: 'At least one field must be provided',
+  });
+
+const accountTypeEnum = z.enum([
+  'bank_account',
+  'digital_wallet',
+  'online_bank',
+  'cash',
+  'credit_card',
+  'other',
+]);
+
+export const accountCreateSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    type: accountTypeEnum,
+    currency: z.string().trim().min(1).max(10).toUpperCase(),
+    balance: z.coerce.number().default(0),
+    notes: z.string().trim().optional(),
+    isActive: z.boolean().default(true),
+  })
+  .strict();
+
+export const accountUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    type: accountTypeEnum.optional(),
+    currency: z.string().trim().min(1).max(10).toUpperCase().optional(),
+    balance: z.coerce.number().optional(),
+    notes: z.string().trim().optional(),
+    isActive: z.boolean().optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {
