@@ -17,6 +17,7 @@ const createTierSchema = z.object({
   mainCurrency: z.string().trim().min(1).max(10).toUpperCase(),
   baseAmount: z.number().min(0),
   minimumAmounts: z.array(minimumAmountSchema).default([]),
+  minimumOrders: z.number().min(0).default(0),
 });
 
 export async function GET() {

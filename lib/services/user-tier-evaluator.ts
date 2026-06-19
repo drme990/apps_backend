@@ -1,43 +1,50 @@
 /**
  * User Tier Evaluation Service
  *
- * Evaluates which tier a user belongs to based on their lifetime paid spending
- * across all their orders (both sources: manasik, ghadaq).
+ * Evaluates which tier a user belongs to based on:
+ * 1. Lifetime paid spending per currency (OR condition)
+ * 2. Lifetime paid order count (OR condition)
  *
- * Tiers are sorted by sortOrder ASC. The highest tier the user qualifies for
- * (i.e., their spending meets the tier's minimumAmount for their order currency)
- * is assigned.
+ * A user qualifies for a tier if they meet EITHER:
+ * - The spending threshold for ANY currency, OR
+ * - The minimum paid order count
  *
- * "Qualifies" means: for each order, we look up the tier's minimumAmount for
- * that order's currency. If the user's total spending in that currency meets or
- * exceeds the threshold, they qualify.
+ * Tiers are sorted by baseAmount DESC. The highest qualifying tier is assigned.
  *
- * Because users can have orders in multiple currencies, we use the following
- * strategy: for each tier, we check if the user's total spending in ANY single
- * currency meets or exceeds the tier's threshold for that currency.
+ * Performance:
+ * - Single-user evaluation: one Order query per user (fast, used on payment webhooks).
+ * - Bulk evaluation: one aggregation query pre-computes ALL user stats, then
+ *   batches through users. No N+1 Order queries.
  */
 
 import Order from '@/lib/models/Order';
 import UserTier, { IUserTier } from '@/lib/models/UserTier';
 import { getUserModelByAppId, type AppId } from '@/lib/auth/app-users';
 
+const PAID_STATUSES = ['paid', 'partial-paid', 'completed'];
+
 type SpendingMap = Record<string, number>;
 
-/**
- * Returns lifetime paid spending per currency for a user across all sources.
- */
-async function getUserLifetimeSpending(userId: string): Promise<SpendingMap> {
-  const paidStatuses = ['paid', 'partial-paid', 'completed'];
+interface UserLifetimeStats {
+  spending: SpendingMap;
+  orderCount: number;
+}
 
+/**
+ * Returns lifetime paid spending per currency + total paid order count
+ * for a single user across all sources.
+ */
+async function getUserLifetimeStats(userId: string): Promise<UserLifetimeStats> {
   const orders = await Order.find({
     userId,
-    status: { $in: paidStatuses },
+    status: { $in: PAID_STATUSES },
     isGuest: false,
   })
     .select('paidAmount totalAmount currency')
     .lean();
 
   const spending: SpendingMap = {};
+  let orderCount = 0;
 
   for (const order of orders) {
     const currency = (order.currency || '').toUpperCase();
@@ -51,32 +58,50 @@ async function getUserLifetimeSpending(userId: string): Promise<SpendingMap> {
           : 0;
 
     spending[currency] = (spending[currency] || 0) + paid;
+    orderCount++;
   }
 
-  return spending;
+  return { spending, orderCount };
 }
 
 /**
- * Determines the best tier for a user given their spending map and a list of tiers.
- * Tiers must be sorted by baseAmount DESC (highest threshold first).
- * The FIRST qualifying tier is the highest (best) one the user qualifies for.
- * Returns the best qualifying tier, or null if none qualify.
+ * Checks if a user qualifies for a given tier.
+ * Qualifies if spending in ANY currency meets the threshold OR
+ * if total paid order count meets minimumOrders.
  */
-function pickBestTier(
-  spending: SpendingMap,
-  tiers: IUserTier[],
-): IUserTier | null {
-  for (const tier of tiers) {
-    for (const minAmount of tier.minimumAmounts) {
-      const currency = minAmount.currencyCode.toUpperCase();
-      const userSpent = spending[currency] || 0;
+function userQualifiesForTier(
+  stats: UserLifetimeStats,
+  tier: IUserTier,
+): boolean {
+  if (tier.minimumOrders > 0 && stats.orderCount >= tier.minimumOrders) {
+    return true;
+  }
 
-      if (userSpent >= minAmount.amount) {
-        return tier;
-      }
+  for (const minAmount of tier.minimumAmounts) {
+    const currency = minAmount.currencyCode.toUpperCase();
+    const userSpent = stats.spending[currency] || 0;
+    if (userSpent >= minAmount.amount) {
+      return true;
     }
   }
 
+  return false;
+}
+
+/**
+ * Determines the best tier for a user.
+ * Tiers must be sorted by baseAmount DESC (highest threshold first).
+ * The FIRST qualifying tier is the highest (best) one.
+ */
+function pickBestTier(
+  stats: UserLifetimeStats,
+  tiers: IUserTier[],
+): IUserTier | null {
+  for (const tier of tiers) {
+    if (userQualifiesForTier(stats, tier)) {
+      return tier;
+    }
+  }
   return null;
 }
 
@@ -89,15 +114,15 @@ export async function evaluateAndUpdateUserTier(
   appId: Exclude<AppId, 'admin_panel'>,
 ): Promise<void> {
   try {
-    const [tiers, spending] = await Promise.all([
+    const [tiers, stats] = await Promise.all([
       UserTier.find().sort({ baseAmount: -1 }).lean(),
-      getUserLifetimeSpending(userId),
+      getUserLifetimeStats(userId),
     ]);
 
-    const bestTier = pickBestTier(spending, tiers);
+    const bestTier = pickBestTier(stats, tiers);
 
     const UserModel = getUserModelByAppId(appId);
-    await (UserModel as any).findByIdAndUpdate(userId, {
+    await (UserModel as unknown as { findByIdAndUpdate: (...args: unknown[]) => Promise<unknown> }).findByIdAndUpdate(userId, {
       $set: { tier: bestTier ? String(bestTier._id) : null },
     });
   } catch (error) {
@@ -108,10 +133,90 @@ export async function evaluateAndUpdateUserTier(
   }
 }
 
+/* ─── Bulk Evaluation (Performance-Optimized) ─────────────────────────── */
+
+/** Pre-computed stats for every userId from the orders collection. */
+interface PrecomputedUserStats {
+  spending: SpendingMap;
+  orderCount: number;
+}
+
+/**
+ * Runs a single MongoDB aggregation to compute lifetime stats
+ * (spending per currency + order count) for ALL non-guest users
+ * with paid/partial-paid/completed orders.
+ */
+async function getAllUserStats(): Promise<Map<string, PrecomputedUserStats>> {
+  const pipeline = [
+    {
+      $match: {
+        status: { $in: PAID_STATUSES },
+        isGuest: false,
+        userId: { $exists: true, $ne: null },
+      },
+    },
+    {
+      $group: {
+        _id: {
+          userId: '$userId',
+          currency: { $toUpper: { $ifNull: ['$currency', ''] } },
+        },
+        spent: {
+          $sum: {
+            $cond: [
+              { $gt: ['$paidAmount', 0] },
+              '$paidAmount',
+              { $ifNull: ['$totalAmount', 0] },
+            ],
+          },
+        },
+        orders: { $sum: 1 },
+      },
+    },
+    {
+      $group: {
+        _id: '$_id.userId',
+        currencies: {
+          $push: {
+            currency: '$_id.currency',
+            spent: '$spent',
+            orders: '$orders',
+          },
+        },
+      },
+    },
+  ];
+
+  const rows = await Order.aggregate(pipeline);
+
+  const map = new Map<string, PrecomputedUserStats>();
+
+  for (const row of rows) {
+    const userId = String(row._id);
+    const spending: SpendingMap = {};
+    let orderCount = 0;
+
+    for (const entry of row.currencies as Array<{
+      currency: string;
+      spent: number;
+      orders: number;
+    }>) {
+      if (entry.currency) {
+        spending[entry.currency] = entry.spent;
+      }
+      orderCount += entry.orders;
+    }
+
+    map.set(userId, { spending, orderCount });
+  }
+
+  return map;
+}
+
 /**
  * Bulk-evaluates and updates tiers for ALL users across all sources.
- * Used when admin saves/edits/deletes a tier and clicks "Apply".
- * Processes in batches to avoid memory issues.
+ * Uses a single aggregation for order stats, then processes users in
+ * batches. No N+1 Order queries.
  */
 export async function bulkEvaluateAllUserTiers(): Promise<{
   processed: number;
@@ -120,39 +225,46 @@ export async function bulkEvaluateAllUserTiers(): Promise<{
   const BATCH_SIZE = 100;
   const APP_IDS: Array<Exclude<AppId, 'admin_panel'>> = ['manasik', 'ghadaq'];
 
-  const tiers = await UserTier.find().sort({ baseAmount: -1 }).lean();
+  const [tiers, allUserStats] = await Promise.all([
+    UserTier.find().sort({ baseAmount: -1 }).lean(),
+    getAllUserStats(),
+  ]);
 
   let processed = 0;
   let errors = 0;
 
   for (const appId of APP_IDS) {
     const UserModel = getUserModelByAppId(appId);
-    const total = await (UserModel as any).countDocuments();
+    const total = await (UserModel as unknown as { countDocuments: () => Promise<number> }).countDocuments();
     let skip = 0;
 
     while (skip < total) {
-      const users = await (UserModel as any)
-        .find()
+      const users = await (UserModel as unknown as { find: () => { select: (f: string) => { skip: (n: number) => { limit: (n: number) => { lean: () => Promise<Array<{ _id: unknown }>> } } } } }).find()
         .select('_id')
         .skip(skip)
         .limit(BATCH_SIZE)
         .lean();
 
-      await Promise.all(
-        users.map(async (user: { _id: unknown }) => {
-          const userId = String(user._id);
-          try {
-            const spending = await getUserLifetimeSpending(userId);
-            const bestTier = pickBestTier(spending, tiers);
-            await (UserModel as any).findByIdAndUpdate(userId, {
-              $set: { tier: bestTier ? String(bestTier._id) : null },
-            });
-            processed++;
-          } catch {
-            errors++;
-          }
-        }),
-      );
+      const updates = users.map((user) => {
+        const userId = String(user._id);
+        const stats = allUserStats.get(userId) ?? { spending: {}, orderCount: 0 };
+        const bestTier = pickBestTier(stats, tiers);
+        return {
+          updateOne: {
+            filter: { _id: userId },
+            update: { $set: { tier: bestTier ? String(bestTier._id) : null } },
+          },
+        };
+      });
+
+      if (updates.length > 0) {
+        try {
+          await (UserModel as unknown as { bulkWrite: (ops: unknown[]) => Promise<unknown> }).bulkWrite(updates);
+          processed += updates.length;
+        } catch {
+          errors += updates.length;
+        }
+      }
 
       skip += BATCH_SIZE;
     }

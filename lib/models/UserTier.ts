@@ -11,6 +11,7 @@ export interface IUserTier {
   name: string;
   color: string;
   minimumAmounts: ITierMinimumAmount[];
+  minimumOrders: number;
   mainCurrency: string;
   baseAmount: number;
   createdAt?: Date;
@@ -33,6 +34,7 @@ const UserTierSchema = new mongoose.Schema<IUserTier>(
     minimumAmounts: { type: [TierMinimumAmountSchema], default: [] },
     mainCurrency: { type: String, required: true, trim: true, uppercase: true },
     baseAmount: { type: Number, required: true, min: 0 },
+    minimumOrders: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true },
 );

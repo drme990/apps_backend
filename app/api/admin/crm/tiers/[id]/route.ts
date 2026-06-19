@@ -17,6 +17,7 @@ const updateTierSchema = z.object({
   mainCurrency: z.string().trim().min(1).max(10).toUpperCase().optional(),
   baseAmount: z.number().min(0).optional(),
   minimumAmounts: z.array(minimumAmountSchema).optional(),
+  minimumOrders: z.number().min(0).optional(),
 });
 
 export async function PUT(
