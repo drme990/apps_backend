@@ -3,6 +3,16 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 
+/**
+ * Execution orders API
+ *
+ * Returns all orders whose effective execution date matches the requested date.
+ * Effective execution date is determined by:
+ * - reservationData.executionDate.value (first 10 chars extracted to handle ISO/datetime)
+ * - OR createdAt + 1 day if no executionDate is specified
+ *
+ * Only includes orders with status: paid, partial-paid.
+ */
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -20,49 +30,71 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const matchStage: Record<string, unknown> = {};
+    // Only paid / partially paid orders should appear in execution
+    const PAID_STATUSES = ['paid', 'partial-paid'];
+
+    const matchStage: Record<string, unknown> = {
+      status: { $in: PAID_STATUSES },
+    };
     if (source && source !== 'all') {
       matchStage.source = source;
     }
 
-    // Build aggregation that computes effective execution date per order:
-    // - If reservationData contains executionDate, use its value
-    // - Otherwise use createdAt + 1 day
+    // Aggregation pipeline
     const pipeline: any[] = [
+      // 1. Base filter: paid statuses + source
       { $match: matchStage },
+
+      // 2. Safely extract executionDate.value from reservationData using $reduce.
+      //    Returns the value string if found, otherwise '' (never null/undefined).
       {
         $addFields: {
-          executionDateEntry: {
-            $arrayElemAt: [
+          executionDateValue: {
+            $ifNull: [
               {
-                $filter: {
+                $reduce: {
                   input: { $ifNull: ['$reservationData', []] },
-                  as: 'rd',
-                  cond: { $eq: ['$$rd.key', 'executionDate'] },
+                  initialValue: '',
+                  in: {
+                    $cond: [
+                      { $eq: ['$$this.key', 'executionDate'] },
+                      '$$this.value',
+                      '$$value',
+                    ],
+                  },
                 },
               },
-              0,
+              '',
             ],
           },
         },
       },
+
+      // 3. Compute effectiveExecutionDate
+      //    - If executionDateValue is not empty, take first 10 chars
+      //    - Otherwise default to createdAt + 1 day (UTC)
       {
         $addFields: {
           effectiveExecutionDate: {
             $cond: [
-              { $ne: ['$executionDateEntry.value', null] },
-              '$executionDateEntry.value',
+              { $eq: ['$executionDateValue', ''] },
               {
                 $dateToString: {
                   format: '%Y-%m-%d',
                   date: { $add: ['$createdAt', 86400000] },
+                  timezone: 'UTC',
                 },
               },
+              { $substr: ['$executionDateValue', 0, 10] },
             ],
           },
         },
       },
+
+      // 4. Filter by the requested execution date
       { $match: { effectiveExecutionDate: date } },
+
+      // 5. Project only needed fields
       {
         $project: {
           _id: 1,
@@ -80,6 +112,8 @@ export async function GET(request: NextRequest) {
           effectiveExecutionDate: 1,
         },
       },
+
+      // 6. Sort newest first
       { $sort: { createdAt: -1 } },
     ];
 
@@ -126,8 +160,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (stats.totalItems > 0) {
-      const products = Array.from(productMap.values())
-        .sort((a, b) => b.quantity - a.quantity);
+      const products = Array.from(productMap.values()).sort(
+        (a, b) => b.quantity - a.quantity,
+      );
 
       stats.byProduct = products.map((p) => ({
         productName: p.productName,
