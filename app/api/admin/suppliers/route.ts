@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Supplier from '@/lib/models/Supplier';
-import SupplierOrder from '@/lib/models/SupplierOrder';
-import SupplierPayout from '@/lib/models/SupplierPayout';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { supplierCreateSchema } from '@/lib/validation/schemas';
@@ -39,38 +36,9 @@ export async function GET(request: NextRequest) {
       Supplier.countDocuments(filter),
     ]);
 
-    // Compute balance for each supplier
-    const supplierIds = suppliers.map((s) => s._id.toString());
-    const supplierObjectIds = supplierIds.map((id) => new mongoose.Types.ObjectId(id));
-    const [ordersAgg, payoutsAgg] = await Promise.all([
-      SupplierOrder.aggregate([
-        { $match: { supplierId: { $in: supplierObjectIds }, status: { $ne: 'cancelled' } } },
-        { $group: { _id: '$supplierId', total: { $sum: '$totalAmount' } } },
-      ]),
-      SupplierPayout.aggregate([
-        { $match: { supplierId: { $in: supplierObjectIds } } },
-        { $group: { _id: '$supplierId', total: { $sum: '$amount' } } },
-      ]),
-    ]);
-
-    const orderMap = new Map(ordersAgg.map((o) => [o._id.toString(), o.total]));
-    const payoutMap = new Map(payoutsAgg.map((p) => [p._id.toString(), p.total]));
-
-    const enriched = suppliers.map((s) => {
-      const id = s._id.toString();
-      const totalOrders = orderMap.get(id) || 0;
-      const totalPayouts = payoutMap.get(id) || 0;
-      return {
-        ...s,
-        totalOrders,
-        totalPayouts,
-        balance: totalOrders - totalPayouts,
-      };
-    });
-
     return NextResponse.json({
       success: true,
-      data: { suppliers: enriched, total, page, limit },
+      data: { suppliers, total, page, limit },
     });
   } catch (error) {
     console.error('Error fetching suppliers:', error);

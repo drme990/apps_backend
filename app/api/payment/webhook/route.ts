@@ -18,6 +18,7 @@ import WebhookEvent from '@/lib/models/WebhookEvent';
 import TerminalLog from '@/lib/models/TerminalLog';
 import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
+import { evaluateAndUpdateUserTier } from '@/lib/services/user-tier-evaluator';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -48,14 +49,14 @@ function shouldBypassSignatureValidationForTesting(
 
 type ParsedPaymentReference =
   | {
-      kind: 'order';
-      orderId: string;
-      paymentLinkId: string;
-    }
+    kind: 'order';
+    orderId: string;
+    paymentLinkId: string;
+  }
   | {
-      kind: 'custom';
-      paymentLinkId: string;
-    }
+    kind: 'custom';
+    paymentLinkId: string;
+  }
   | null;
 
 function parsePaymentReference(
@@ -318,7 +319,7 @@ export async function POST(request: NextRequest) {
       if (!order && OBJECT_ID_REGEX.test(customerRefStr)) {
         order = await Order.findById(customerRefStr).exec();
       }
-    } catch {}
+    } catch { }
 
     const baseOrderReference = customerRefStr.replace(
       ORDER_ATTEMPT_SUFFIX_REGEX,
@@ -352,17 +353,17 @@ export async function POST(request: NextRequest) {
     if (!paymentRecord && isSuccessfulPayment) {
       const fallbackAmount = hasWebhookAmount
         ? Number(
-            linkedPaymentLink?.amountRequested ||
-              order.remainingAmount ||
-              order.totalAmount ||
-              0,
-          )
+          linkedPaymentLink?.amountRequested ||
+          order.remainingAmount ||
+          order.totalAmount ||
+          0,
+        )
         : Number(
-            linkedPaymentLink?.amountRequested ||
-              order.remainingAmount ||
-              order.totalAmount ||
-              0,
-          );
+          linkedPaymentLink?.amountRequested ||
+          order.remainingAmount ||
+          order.totalAmount ||
+          0,
+        );
       const fallbackCurrency = (
         order.currency ||
         linkedPaymentLink?.currencyCode ||
@@ -390,10 +391,10 @@ export async function POST(request: NextRequest) {
     const expectedGatewayAmount = Number(paymentRecord?.gatewayAmount || 0);
     const expectedOrderAmount = Number(
       paymentRecord?.orderAmount ||
-        paymentRecord?.amount ||
-        linkedPaymentLink?.amountRequested ||
-        order.totalAmount ||
-        0,
+      paymentRecord?.amount ||
+      linkedPaymentLink?.amountRequested ||
+      order.totalAmount ||
+      0,
     );
     const expectedAmountForWarning =
       expectedGatewayAmount > 0 ? expectedGatewayAmount : expectedOrderAmount;
@@ -455,7 +456,7 @@ export async function POST(request: NextRequest) {
           paymentRecord.gatewayCurrency =
             paymentRecord.gatewayCurrency ||
             (paymentRecord.currency &&
-            paymentRecord.currency.toUpperCase() !==
+              paymentRecord.currency.toUpperCase() !==
               String(order.currency || '').toUpperCase()
               ? paymentRecord.currency.toUpperCase()
               : undefined) ||
@@ -566,10 +567,14 @@ export async function POST(request: NextRequest) {
             country: order.billingData?.country || order.location,
             external_id: order._id.toString(),
           },
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
-      sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => {});
+      sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
+
+      if (order.userId && order.source && (order.source === 'manasik' || order.source === 'ghadaq')) {
+        evaluateAndUpdateUserTier(String(order.userId), order.source).catch(() => { });
+      }
     }
     auditPayload.validationStage = 'processed';
     auditPayload.result = 'success';

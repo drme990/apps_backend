@@ -3,10 +3,11 @@ import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Supplier from '@/lib/models/Supplier';
-import SupplierPayout from '@/lib/models/SupplierPayout';
+import Transaction from '@/lib/models/Transaction';
+import '@/lib/models/Account';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
-import { supplierPayoutCreateSchema } from '@/lib/validation/schemas';
+import { transactionCreateSchema } from '@/lib/validation/schemas';
 
 export async function GET(
   request: NextRequest,
@@ -31,41 +32,41 @@ export async function GET(
     const limit = Math.max(1, Math.min(100, parseInt(searchParams.get('limit') || '20', 10)));
     const skip = (page - 1) * limit;
 
-    const [rawPayouts, total] = await Promise.all([
-      SupplierPayout.find({ supplierId: id })
+    const [rawTransactions, total] = await Promise.all([
+      Transaction.find({ source: 'supplier', sourceId: id })
         .sort({ date: -1 })
         .skip(skip)
         .limit(limit)
         .populate('accountId', 'name currency type')
         .lean(),
-      SupplierPayout.countDocuments({ supplierId: id }),
+      Transaction.countDocuments({ source: 'supplier', sourceId: id }),
     ]);
 
-    const payouts = rawPayouts.map((p) => {
+    const transactions = rawTransactions.map((t) => {
       const account =
-        p.accountId && typeof p.accountId === 'object'
+        t.accountId && typeof t.accountId === 'object'
           ? {
-            _id: String((p.accountId as unknown as { _id: mongoose.Types.ObjectId })._id),
-            name: (p.accountId as unknown as { name: string }).name,
-            currency: (p.accountId as unknown as { currency: string }).currency,
-            type: (p.accountId as unknown as { type: string }).type,
+            _id: String((t.accountId as unknown as { _id: mongoose.Types.ObjectId })._id),
+            name: (t.accountId as unknown as { name: string }).name,
+            currency: (t.accountId as unknown as { currency: string }).currency,
+            type: (t.accountId as unknown as { type: string }).type,
           }
           : undefined;
       return {
-        ...p,
-        accountId: account ? account._id : p.accountId ? String(p.accountId) : undefined,
+        ...t,
+        accountId: account ? account._id : t.accountId ? String(t.accountId) : undefined,
         account,
       };
     });
 
     return NextResponse.json({
       success: true,
-      data: { payouts, total, page, limit },
+      data: { transactions, total, page, limit },
     });
   } catch (error) {
-    console.error('Error fetching supplier payouts:', error);
+    console.error('Error fetching supplier transactions:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch supplier payouts' },
+      { success: false, error: 'Failed to fetch supplier transactions' },
       { status: 500 },
     );
   }
@@ -89,36 +90,46 @@ export async function POST(
       );
     }
 
-    const parsed = await parseJsonBody(request, supplierPayoutCreateSchema);
+    const parsed = await parseJsonBody(request, transactionCreateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
 
-    const payout = (await SupplierPayout.create({
-      supplierId: id,
-      amount: body.amount,
+    const transaction = await Transaction.create({
+      source: 'supplier',
+      sourceId: id,
       accountId: body.accountId ? new mongoose.Types.ObjectId(body.accountId) : null,
+      type: 'debit',
+      amount: body.amount,
       date: body.date ? new Date(body.date) : new Date(),
+      paymentMethod: body.paymentMethod,
+      referenceNumber: body.referenceNumber,
+      linkedOrderId: body.linkedOrderId ? new mongoose.Types.ObjectId(body.linkedOrderId) : null,
       notes: body.notes,
-    } as unknown as Record<string, unknown>)) as mongoose.Document & { _id: mongoose.Types.ObjectId; toObject: () => Record<string, unknown> };
+      attachment: body.attachment,
+    } as unknown as Record<string, unknown>);
+
+    await Supplier.findByIdAndUpdate(id, {
+      $inc: { balance: body.amount, totalPayouts: body.amount },
+    });
 
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
       userEmail: auth.user.email,
       action: 'create',
-      resource: 'supplierPayout',
-      resourceId: payout._id.toString(),
-      details: `Created payout for supplier ${supplier.name}: ${body.amount}`,
+      resource: 'supplier',
+      resourceId: transaction._id.toString(),
+      details: `Created payment for supplier ${supplier.name}: ${body.amount}`,
     });
 
     return NextResponse.json(
-      { success: true, data: payout.toObject() },
+      { success: true, data: transaction.toObject() },
       { status: 201 },
     );
   } catch (error) {
-    console.error('Error creating supplier payout:', error);
+    console.error('Error creating supplier transaction:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to create supplier payout' },
+      { success: false, error: 'Failed to create supplier transaction' },
       { status: 500 },
     );
   }

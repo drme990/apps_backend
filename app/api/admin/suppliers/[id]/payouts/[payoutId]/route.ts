@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Supplier from '@/lib/models/Supplier';
-import SupplierPayout from '@/lib/models/SupplierPayout';
+import Transaction from '@/lib/models/Transaction';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
-import { supplierPayoutUpdateSchema } from '@/lib/validation/schemas';
+import { transactionUpdateSchema } from '@/lib/validation/schemas';
 
 export async function PUT(
   request: NextRequest,
@@ -25,27 +26,41 @@ export async function PUT(
       );
     }
 
-    const parsed = await parseJsonBody(request, supplierPayoutUpdateSchema);
+    const parsed = await parseJsonBody(request, transactionUpdateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
 
+    const oldTransaction = await Transaction.findOne({ _id: payoutId, source: 'supplier', sourceId: id }).lean();
+    const oldAmount = oldTransaction?.amount || 0;
+
     const updateData: Record<string, unknown> = {};
     if (body.amount !== undefined) updateData.amount = body.amount;
-    if (body.accountId !== undefined) updateData.accountId = body.accountId || null;
+    if (body.accountId !== undefined) updateData.accountId = body.accountId ? new mongoose.Types.ObjectId(body.accountId) : null;
     if (body.date) updateData.date = new Date(body.date);
+    if (body.paymentMethod !== undefined) updateData.paymentMethod = body.paymentMethod;
+    if (body.referenceNumber !== undefined) updateData.referenceNumber = body.referenceNumber;
+    if (body.linkedOrderId !== undefined) updateData.linkedOrderId = body.linkedOrderId ? new mongoose.Types.ObjectId(body.linkedOrderId) : null;
     if (body.notes !== undefined) updateData.notes = body.notes;
+    if (body.attachment !== undefined) updateData.attachment = body.attachment;
 
-    const payout = await SupplierPayout.findOneAndUpdate(
-      { _id: payoutId, supplierId: id },
+    const transaction = await Transaction.findOneAndUpdate(
+      { _id: payoutId, source: 'supplier', sourceId: id },
       updateData,
       { new: true, runValidators: true },
     ).lean();
 
-    if (!payout) {
+    if (!transaction) {
       return NextResponse.json(
-        { success: false, error: 'Payout not found' },
+        { success: false, error: 'Transaction not found' },
         { status: 404 },
       );
+    }
+
+    const delta = (transaction.amount || 0) - oldAmount;
+    if (delta !== 0) {
+      await Supplier.findByIdAndUpdate(id, {
+        $inc: { balance: delta, totalPayouts: delta },
+      });
     }
 
     await logActivity({
@@ -53,16 +68,16 @@ export async function PUT(
       userName: auth.user.name,
       userEmail: auth.user.email,
       action: 'update',
-      resource: 'supplierPayout',
+      resource: 'supplier',
       resourceId: payoutId,
-      details: `Updated payout for supplier ${supplier.name}`,
+      details: `Updated payment for supplier ${supplier.name}`,
     });
 
-    return NextResponse.json({ success: true, data: payout });
+    return NextResponse.json({ success: true, data: transaction });
   } catch (error) {
-    console.error('Error updating supplier payout:', error);
+    console.error('Error updating supplier transaction:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to update supplier payout' },
+      { success: false, error: 'Failed to update supplier transaction' },
       { status: 500 },
     );
   }
@@ -86,29 +101,33 @@ export async function DELETE(
       );
     }
 
-    const payout = await SupplierPayout.findOneAndDelete({ _id: payoutId, supplierId: id }).lean();
-    if (!payout) {
+    const transaction = await Transaction.findOneAndDelete({ _id: payoutId, source: 'supplier', sourceId: id }).lean();
+    if (!transaction) {
       return NextResponse.json(
-        { success: false, error: 'Payout not found' },
+        { success: false, error: 'Transaction not found' },
         { status: 404 },
       );
     }
+
+    await Supplier.findByIdAndUpdate(id, {
+      $inc: { balance: -(transaction.amount || 0), totalPayouts: -(transaction.amount || 0) },
+    });
 
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
       userEmail: auth.user.email,
       action: 'delete',
-      resource: 'supplierPayout',
+      resource: 'supplier',
       resourceId: payoutId,
-      details: `Deleted payout for supplier ${supplier.name}`,
+      details: `Deleted payment for supplier ${supplier.name}`,
     });
 
-    return NextResponse.json({ success: true, message: 'Payout deleted successfully' });
+    return NextResponse.json({ success: true, message: 'Transaction deleted successfully' });
   } catch (error) {
-    console.error('Error deleting supplier payout:', error);
+    console.error('Error deleting supplier transaction:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to delete supplier payout' },
+      { success: false, error: 'Failed to delete supplier transaction' },
       { status: 500 },
     );
   }

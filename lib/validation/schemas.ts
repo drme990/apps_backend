@@ -599,21 +599,29 @@ export const supplierOrderUpdateSchema = z
     message: 'At least one field must be provided',
   });
 
-export const supplierPayoutCreateSchema = z
+export const transactionCreateSchema = z
   .object({
     amount: z.coerce.number().positive(),
-    accountId: z.string().trim().optional(),
+    accountId: z.string().trim().min(1),
     date: z.string().datetime().optional(),
+    paymentMethod: z.string().trim().optional(),
+    referenceNumber: z.string().trim().optional(),
+    linkedOrderId: z.string().trim().optional(),
     notes: z.string().trim().optional(),
+    attachment: z.string().trim().optional(),
   })
   .strict();
 
-export const supplierPayoutUpdateSchema = z
+export const transactionUpdateSchema = z
   .object({
     amount: z.coerce.number().positive().optional(),
     accountId: z.string().trim().optional(),
     date: z.string().datetime().optional(),
+    paymentMethod: z.string().trim().optional(),
+    referenceNumber: z.string().trim().optional(),
+    linkedOrderId: z.string().trim().optional(),
     notes: z.string().trim().optional(),
+    attachment: z.string().trim().optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {
@@ -634,6 +642,7 @@ export const accountCreateSchema = z
     name: z.string().trim().min(1),
     type: accountTypeEnum,
     currency: z.string().trim().min(1).max(10).toUpperCase(),
+    openingBalance: z.coerce.number().default(0),
     balance: z.coerce.number().default(0),
     notes: z.string().trim().optional(),
     isActive: z.boolean().default(true),
@@ -645,6 +654,7 @@ export const accountUpdateSchema = z
     name: z.string().trim().min(1).optional(),
     type: accountTypeEnum.optional(),
     currency: z.string().trim().min(1).max(10).toUpperCase().optional(),
+    openingBalance: z.coerce.number().optional(),
     balance: z.coerce.number().optional(),
     notes: z.string().trim().optional(),
     isActive: z.boolean().optional(),

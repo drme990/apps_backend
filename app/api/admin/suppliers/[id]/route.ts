@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Supplier from '@/lib/models/Supplier';
 import SupplierOrder from '@/lib/models/SupplierOrder';
-import SupplierPayout from '@/lib/models/SupplierPayout';
+import Transaction from '@/lib/models/Transaction';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { supplierUpdateSchema } from '@/lib/validation/schemas';
@@ -27,29 +26,9 @@ export async function GET(
       );
     }
 
-    const supplierObjectId = new mongoose.Types.ObjectId(id);
-    const [ordersAgg, payoutsAgg] = await Promise.all([
-      SupplierOrder.aggregate([
-        { $match: { supplierId: supplierObjectId, status: { $ne: 'cancelled' } } },
-        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
-      ]),
-      SupplierPayout.aggregate([
-        { $match: { supplierId: supplierObjectId } },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
-      ]),
-    ]);
-
-    const totalOrders = ordersAgg[0]?.total || 0;
-    const totalPayouts = payoutsAgg[0]?.total || 0;
-
     return NextResponse.json({
       success: true,
-      data: {
-        ...supplier,
-        totalOrders,
-        totalPayouts,
-        balance: totalOrders - totalPayouts,
-      },
+      data: supplier,
     });
   } catch (error) {
     console.error('Error fetching supplier:', error);
@@ -125,10 +104,10 @@ export async function DELETE(
       );
     }
 
-    // Cascade delete orders and payouts
+    // Cascade delete orders and transactions
     await Promise.all([
       SupplierOrder.deleteMany({ supplierId: id }),
-      SupplierPayout.deleteMany({ supplierId: id }),
+      Transaction.deleteMany({ source: 'supplier', sourceId: id }),
     ]);
 
     await logActivity({

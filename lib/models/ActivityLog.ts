@@ -7,16 +7,21 @@ export interface IActivityLog {
   userEmail: string;
   action: 'create' | 'update' | 'delete' | 'login' | 'logout';
   resource:
-    | 'product'
-    | 'user'
-    | 'auth'
-    | 'country'
-    | 'order'
-    | 'coupon'
-    | 'referral'
-    | 'appearance'
-    | 'upload'
-    | 'exchange';
+  | 'product'
+  | 'user'
+  | 'auth'
+  | 'country'
+  | 'order'
+  | 'coupon'
+  | 'referral'
+  | 'appearance'
+  | 'upload'
+  | 'exchange'
+  | 'userTier'
+  | 'account'
+  | 'booking'
+  | 'category'
+  | 'supplier';
   resourceId?: string;
   details: string;
   metadata?: mongoose.Schema.Types.Mixed;
@@ -52,6 +57,11 @@ const ActivityLogSchema = new mongoose.Schema<IActivityLog>(
         'appearance',
         'upload',
         'exchange',
+        'userTier',
+        'account',
+        'booking',
+        'category',
+        'supplier',
       ],
       index: true,
     },

@@ -85,12 +85,16 @@ export async function POST(
       status: body.status || 'pending',
     });
 
+    await Supplier.findByIdAndUpdate(id, {
+      $inc: { balance: -totalAmount, totalOrders: totalAmount },
+    });
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
       userEmail: auth.user.email,
       action: 'create',
-      resource: 'supplierOrder',
+      resource: 'supplier',
       resourceId: order._id.toString(),
       details: `Created order for supplier ${supplier.name}: ${totalAmount}`,
     });

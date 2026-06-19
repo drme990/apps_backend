@@ -29,6 +29,9 @@ export async function PUT(
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
 
+    const oldOrder = await SupplierOrder.findOne({ _id: orderId, supplierId: id }).lean();
+    const oldTotal = oldOrder?.totalAmount || 0;
+
     const updateData: Record<string, unknown> = {};
     if (body.items) {
       updateData.items = body.items;
@@ -51,12 +54,19 @@ export async function PUT(
       );
     }
 
+    const delta = (order.totalAmount || 0) - oldTotal;
+    if (delta !== 0) {
+      await Supplier.findByIdAndUpdate(id, {
+        $inc: { balance: -delta, totalOrders: delta },
+      });
+    }
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
       userEmail: auth.user.email,
       action: 'update',
-      resource: 'supplierOrder',
+      resource: 'supplier',
       resourceId: orderId,
       details: `Updated order for supplier ${supplier.name}`,
     });
@@ -97,12 +107,16 @@ export async function DELETE(
       );
     }
 
+    await Supplier.findByIdAndUpdate(id, {
+      $inc: { balance: (order.totalAmount || 0), totalOrders: -(order.totalAmount || 0) },
+    });
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
       userEmail: auth.user.email,
       action: 'delete',
-      resource: 'supplierOrder',
+      resource: 'supplier',
       resourceId: orderId,
       details: `Deleted order for supplier ${supplier.name}`,
     });

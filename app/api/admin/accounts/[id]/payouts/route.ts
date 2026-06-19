@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Account from '@/lib/models/Account';
-import SupplierPayout from '@/lib/models/SupplierPayout';
+import Transaction from '@/lib/models/Transaction';
+import Supplier from '@/lib/models/Supplier';
 import mongoose from 'mongoose';
 
 export async function GET(
@@ -30,43 +31,56 @@ export async function GET(
 
     const accountObjectId = new mongoose.Types.ObjectId(id);
 
-    const [payouts, total] = await Promise.all([
-      SupplierPayout.find({ accountId: accountObjectId })
+    const [transactions, total] = await Promise.all([
+      Transaction.find({ accountId: accountObjectId })
         .sort({ date: -1 })
         .skip(skip)
         .limit(limit)
-        .populate('supplierId', 'name')
         .lean(),
-      SupplierPayout.countDocuments({ accountId: accountObjectId }),
+      Transaction.countDocuments({ accountId: accountObjectId }),
     ]);
 
-    const normalizedPayouts = payouts.map((p) => {
-      const supplier =
-        p.supplierId && typeof p.supplierId === 'object'
-          ? {
-              _id: String((p.supplierId as unknown as { _id: mongoose.Types.ObjectId })._id),
-              name: (p.supplierId as unknown as { name: string }).name,
-            }
-          : undefined;
+    // Manual population: sourceId is polymorphic (no ref in schema)
+    const supplierIds = transactions
+      .filter((tx) => tx.source === 'supplier' && tx.sourceId)
+      .map((tx) => String(tx.sourceId));
+
+    const suppliers = supplierIds.length
+      ? await Supplier.find({ _id: { $in: supplierIds } }).select('name').lean()
+      : [];
+
+    const supplierMap = new Map(
+      suppliers.map((s) => [String(s._id), s.name as string]),
+    );
+
+    const normalizedTransactions = transactions.map((tx) => {
+      let sourceEntity: { _id: string; name: string } | undefined;
+
+      if (tx.source === 'supplier' && tx.sourceId) {
+        const name = supplierMap.get(String(tx.sourceId));
+        if (name) {
+          sourceEntity = { _id: String(tx.sourceId), name };
+        }
+      }
 
       return {
-        ...p,
-        supplierId: supplier ? supplier._id : p.supplierId ? String(p.supplierId) : undefined,
-        supplier,
+        ...tx,
+        sourceId: tx.sourceId ? String(tx.sourceId) : undefined,
+        sourceEntity,
       };
     });
 
     return NextResponse.json({
       success: true,
       data: {
-        payouts: normalizedPayouts,
+        transactions: normalizedTransactions,
         pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
       },
     });
   } catch (error) {
-    console.error('Error fetching account payouts:', error);
+    console.error('Error fetching account transactions:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch account payouts' },
+      { success: false, error: 'Failed to fetch account transactions' },
       { status: 500 },
     );
   }

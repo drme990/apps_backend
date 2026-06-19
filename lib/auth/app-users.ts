@@ -48,6 +48,7 @@ export interface IBaseAppUser {
   lastLoginAt?: Date;
   ref?: string | null;
   detectedCountry?: string;
+  tier?: mongoose.Types.ObjectId | string | null;
 }
 
 export interface IBaseAppUserMethods {
@@ -103,6 +104,7 @@ function buildBaseAppUserModel(
       lastLoginAt: { type: Date },
       ref: { type: String, trim: true, default: null },
       detectedCountry: { type: String, trim: true },
+      tier: { type: mongoose.Schema.Types.ObjectId, ref: 'UserTier', default: null, index: true },
     },
     { timestamps: true, collection },
   );

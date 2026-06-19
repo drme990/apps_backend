@@ -13,6 +13,7 @@ export interface IAccount {
   name: string;
   type: AccountType;
   currency: string;
+  openingBalance: number;
   balance: number;
   notes?: string;
   isActive: boolean;
@@ -29,6 +30,7 @@ const AccountSchema = new mongoose.Schema<IAccount>(
       enum: ['bank_account', 'digital_wallet', 'online_bank', 'cash', 'credit_card', 'other'],
     },
     currency: { type: String, required: true, trim: true, uppercase: true },
+    openingBalance: { type: Number, required: true, default: 0 },
     balance: { type: Number, required: true, default: 0 },
     notes: { type: String, trim: true },
     isActive: { type: Boolean, default: true },

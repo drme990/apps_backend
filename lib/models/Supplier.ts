@@ -7,6 +7,9 @@ export interface ISupplier {
   email?: string;
   address?: string;
   notes?: string;
+  balance: number;
+  totalOrders: number;
+  totalPayouts: number;
   status: 'active' | 'inactive';
   createdAt?: Date;
   updatedAt?: Date;
@@ -19,6 +22,9 @@ const SupplierSchema = new mongoose.Schema<ISupplier>(
     email: { type: String, trim: true, lowercase: true },
     address: { type: String, trim: true },
     notes: { type: String, trim: true },
+    balance: { type: Number, default: 0 },
+    totalOrders: { type: Number, default: 0 },
+    totalPayouts: { type: Number, default: 0 },
     status: {
       type: String,
       enum: ['active', 'inactive'],
