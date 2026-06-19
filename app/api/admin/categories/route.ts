@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Category from '@/lib/models/Categories';
+import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { categoryCreateSchema } from '@/lib/validation/schemas';
@@ -46,6 +47,13 @@ export async function POST(request: NextRequest) {
     }
 
     const category = await Category.create(body);
+
+    if (body.products && body.products.length > 0) {
+      await Product.updateMany(
+        { _id: { $in: body.products } },
+        { categoryId: category._id, categoryName: category.name },
+      );
+    }
 
     await logActivity({
       userId: auth.user.userId,

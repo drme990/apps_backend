@@ -30,21 +30,21 @@ export interface IPartialPayment {
 
 export interface IReservationField {
   key:
-    | 'intention'
-    | 'sacrificeFor'
-    | 'gender'
-    | 'isAlive'
-    | 'shortDuaa'
-    | 'photo'
-    | 'executionDate';
+  | 'intention'
+  | 'sacrificeFor'
+  | 'gender'
+  | 'isAlive'
+  | 'shortDuaa'
+  | 'photo'
+  | 'executionDate';
   type:
-    | 'text'
-    | 'textarea'
-    | 'number'
-    | 'date'
-    | 'select'
-    | 'radio'
-    | 'picture';
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'date'
+  | 'select'
+  | 'radio'
+  | 'picture';
   label: { ar: string; en: string };
   required: boolean;
   maxLength?: number;
@@ -95,6 +95,8 @@ export interface IProduct {
   } | null;
   createdAt?: Date;
   updatedAt?: Date;
+  categoryId?: string | null;
+  categoryName?: string | null;
 }
 
 const CurrencyPriceSchema = new mongoose.Schema(
@@ -295,6 +297,13 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     sacrificeCount: { type: Number, default: 1, min: 1 },
     reservationFields: { type: [ReservationFieldSchema], default: [] },
     displayOrder: { type: Number, default: 0 },
+    categoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      default: null,
+      index: true,
+    },
+    categoryName: { type: String, default: null, trim: true },
     isDeleted: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date, default: null },
     deletedBy: {

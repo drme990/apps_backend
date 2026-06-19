@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Category from '@/lib/models/Categories';
+import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { categoryUpdateSchema } from '@/lib/validation/schemas';
@@ -78,7 +79,7 @@ export async function PUT(
     }
 
     const category = await Category.findByIdAndUpdate(id, body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     })
       .populate('products', '_id name slug')
@@ -88,6 +89,27 @@ export async function PUT(
       return NextResponse.json(
         { success: false, error: 'Category not found' },
         { status: 404 },
+      );
+    }
+
+    const currentProductIds: string[] = [];
+    if (category.products && Array.isArray(category.products)) {
+      for (const p of category.products) {
+        if (p && typeof p === 'object' && '_id' in p) {
+          currentProductIds.push(String(p._id));
+        }
+      }
+    }
+
+    await Product.updateMany(
+      { categoryId: id, _id: { $nin: currentProductIds } },
+      { categoryId: null, categoryName: null },
+    );
+
+    if (currentProductIds.length > 0) {
+      await Product.updateMany(
+        { _id: { $in: currentProductIds } },
+        { categoryId: category._id, categoryName: category.name },
       );
     }
 
@@ -121,6 +143,12 @@ export async function DELETE(
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
+
+    await Product.updateMany(
+      { categoryId: id },
+      { categoryId: null, categoryName: null },
+    );
+
     const category = await Category.findByIdAndDelete(id).lean();
 
     if (!category) {

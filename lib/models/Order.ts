@@ -564,6 +564,7 @@ OrderSchema.index({
   createdAt: -1,
 });
 OrderSchema.index({ source: 1, status: 1, isPartialPayment: 1, createdAt: -1 });
+OrderSchema.index({ 'items.productId': 1 });
 
 if (process.env.NODE_ENV !== 'production' && mongoose.models.Order) {
   mongoose.deleteModel('Order');
