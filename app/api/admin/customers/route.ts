@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import type { Model } from 'mongoose';
+import mongoose, { type Model } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import {
@@ -14,6 +14,7 @@ const querySchema = z.object({
   search: z.string().trim().optional(),
   isBanned: z.enum(['true', 'false']).optional(),
   ref: z.string().trim().optional(),
+  tier: z.string().trim().optional(),
   page: z
     .string()
     .optional()
@@ -38,6 +39,7 @@ type CustomerDTO = {
   detectedCountry?: string;
   lastLoginAt?: Date;
   createdAt: Date;
+  tier?: string | null;
 };
 
 type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
@@ -53,6 +55,7 @@ export async function GET(request: NextRequest) {
       search: request.nextUrl.searchParams.get('search') || undefined,
       isBanned: request.nextUrl.searchParams.get('isBanned') || undefined,
       ref: request.nextUrl.searchParams.get('ref') || undefined,
+      tier: request.nextUrl.searchParams.get('tier') || undefined,
       page: request.nextUrl.searchParams.get('page') || undefined,
       limit: request.nextUrl.searchParams.get('limit') || undefined,
     });
@@ -70,6 +73,7 @@ export async function GET(request: NextRequest) {
         ? undefined
         : parsed.data.isBanned === 'true';
     const refFilter = parsed.data.ref || undefined;
+    const tierFilter = parsed.data.tier || undefined;
     const page = parsed.data.page || 1;
     const limit = parsed.data.limit || 20;
     const skip = (page - 1) * limit;
@@ -104,12 +108,36 @@ export async function GET(request: NextRequest) {
         if (typeof isBannedFilter === 'boolean') {
           filterQuery.isBanned = isBannedFilter;
         }
+
+        const andConditions: Record<string, unknown>[] = [];
+
         if (refFilter) {
           if (refFilter === '__none__') {
-            filterQuery.$or = [{ ref: 'MNK-D' }, { ref: 'GHD-D' }];
+            andConditions.push({ $or: [{ ref: 'MNK-D' }, { ref: 'GHD-D' }] });
           } else {
             filterQuery.ref = refFilter;
           }
+        }
+
+        if (tierFilter) {
+          if (tierFilter === '__none__') {
+            andConditions.push({
+              $or: [{ tier: { $exists: false } }, { tier: null }],
+            });
+          } else {
+            try {
+              const tierOid = new mongoose.Types.ObjectId(tierFilter);
+              andConditions.push({
+                $or: [{ tier: tierOid }, { tier: tierFilter }],
+              });
+            } catch {
+              filterQuery.tier = tierFilter;
+            }
+          }
+        }
+
+        if (andConditions.length > 0) {
+          filterQuery.$and = andConditions;
         }
 
         const [customers, totalCount] = await Promise.all([
@@ -119,7 +147,7 @@ export async function GET(request: NextRequest) {
             .skip(skip)
             .limit(limit)
             .select(
-              'name email phone registrationIp lastLoginIp country isBanned ref detectedCountry lastLoginAt createdAt',
+              'name email phone registrationIp lastLoginIp country isBanned ref detectedCountry lastLoginAt createdAt tier',
             )
             .lean(),
           model.countDocuments(filterQuery),
@@ -157,6 +185,7 @@ export async function GET(request: NextRequest) {
                 customer.createdAt instanceof Date
                   ? customer.createdAt
                   : new Date(0),
+              tier: customer.tier ? String(customer.tier) : null,
             }),
           ),
           totalCount,
