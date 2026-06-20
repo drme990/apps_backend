@@ -71,13 +71,13 @@ export async function GET(request: NextRequest) {
         const sourceCondition =
           referralId === 'MNK-D'
             ? {
-                $or: [
-                  { source: 'manasik' },
-                  { source: { $exists: false } },
-                  { source: null },
-                  { source: '' },
-                ],
-              }
+              $or: [
+                { source: 'manasik' },
+                { source: { $exists: false } },
+                { source: null },
+                { source: '' },
+              ],
+            }
             : referralId === 'GHD-D'
               ? { source: 'ghadaq' }
               : null;
@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
       query.$and = andConditions;
     }
 
-    const pipeline = [
+    const pipeline: any[] = [
       { $match: query },
       { $unwind: '$items' },
       {
@@ -170,41 +170,76 @@ export async function GET(request: NextRequest) {
       {
         $addFields: {
           categoryId: { $arrayElemAt: ['$productInfo.categoryId', 0] },
-          categoryName: { $arrayElemAt: ['$productInfo.categoryName', 0] },
-        },
-      },
-      {
-        $group: {
-          _id: { $ifNull: ['$categoryId', '__uncategorized__'] },
-          totalItems: { $sum: '$items.quantity' },
-          categoryName: {
-            $first: { $ifNull: ['$categoryName', 'Uncategorized'] },
-          },
         },
       },
       {
         $lookup: {
           from: 'categories',
-          let: { catId: '$_id' },
+          let: { catId: '$categoryId' },
           pipeline: [
             { $match: { $expr: { $eq: ['$_id', '$$catId'] } } },
-            { $project: { color: 1 } },
+            { $project: { name: 1, categoryNumber: 1, color: 1 } },
           ],
           as: 'categoryInfo',
         },
       },
       {
         $addFields: {
+          categoryName: { $arrayElemAt: ['$categoryInfo.name', 0] },
+          categoryNumber: {
+            $ifNull: [
+              { $arrayElemAt: ['$categoryInfo.categoryNumber', 0] },
+              9999,
+            ],
+          },
           color: { $arrayElemAt: ['$categoryInfo.color', 0] },
         },
       },
+      // Group by category + product to get per-product counts
+      {
+        $group: {
+          _id: {
+            categoryId: { $ifNull: ['$categoryId', '__uncategorized__'] },
+            productId: '$items.productId',
+          },
+          quantity: { $sum: '$items.quantity' },
+          productNameAr: { $first: '$items.productName.ar' },
+          productNameEn: { $first: '$items.productName.en' },
+          categoryName: { $first: '$categoryName' },
+          categoryNumber: { $first: '$categoryNumber' },
+          color: { $first: '$color' },
+        },
+      },
+      // Group by category to collect products and category total
+      {
+        $group: {
+          _id: '$_id.categoryId',
+          categoryName: { $first: '$categoryName' },
+          categoryNumber: { $first: '$categoryNumber' },
+          color: { $first: '$color' },
+          totalItems: { $sum: '$quantity' },
+          products: {
+            $push: {
+              productId: { $toString: '$_id.productId' },
+              productName: {
+                ar: '$productNameAr',
+                en: '$productNameEn',
+              },
+              quantity: '$quantity',
+            },
+          },
+        },
+      },
+      { $sort: { categoryNumber: 1 } },
       {
         $project: {
           _id: 0,
           categoryId: { $toString: '$_id' },
-          categoryName: 1,
+          categoryName: { $ifNull: ['$categoryName', 'Uncategorized'] },
+          categoryNumber: 1,
           totalItems: 1,
           color: { $ifNull: ['$color', '#9CA3AF'] },
+          products: 1,
         },
       },
     ];
