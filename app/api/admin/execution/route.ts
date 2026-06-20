@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
+import Category from '@/lib/models/Categories';
 
 /**
  * Execution orders API
@@ -12,6 +14,7 @@ import Order from '@/lib/models/Order';
  * - OR createdAt + 1 day if no executionDate is specified
  *
  * Only includes orders with status: paid, partial-paid.
+ * Supports optional search, category, date range, referral, status filters, and pagination.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -21,11 +24,38 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = request.nextUrl;
     const date = searchParams.get('date');
+    const fromDate = searchParams.get('fromDate');
+    const toDate = searchParams.get('toDate');
     const source = searchParams.get('source');
+    const search = searchParams.get('search')?.trim();
+    const categoryId = searchParams.get('category');
+    const referralId = searchParams.get('referralId');
+    const statusParam = searchParams.get('status');
+    const pageParam = searchParams.get('page');
+    const limitParam = searchParams.get('limit');
 
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const page = Math.max(1, parseInt(pageParam || '1', 10));
+    const limit = Math.max(1, Math.min(500, parseInt(limitParam || '50', 10)));
+    const skip = (page - 1) * limit;
+
+    const isoPattern = /^\d{4}-\d{2}-\d{2}$/;
+
+    // Validate date params if provided
+    if (date && !isoPattern.test(date)) {
       return NextResponse.json(
         { success: false, error: 'Invalid date format. Expected YYYY-MM-DD.' },
+        { status: 400 },
+      );
+    }
+    if (fromDate && !isoPattern.test(fromDate)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid fromDate format. Expected YYYY-MM-DD.' },
+        { status: 400 },
+      );
+    }
+    if (toDate && !isoPattern.test(toDate)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid toDate format. Expected YYYY-MM-DD.' },
         { status: 400 },
       );
     }
@@ -33,20 +63,82 @@ export async function GET(request: NextRequest) {
     // Only paid / partially paid orders should appear in execution
     const PAID_STATUSES = ['paid', 'partial-paid'];
 
-    const matchStage: Record<string, unknown> = {
-      status: { $in: PAID_STATUSES },
-    };
-    if (source && source !== 'all') {
-      matchStage.source = source;
+    const baseMatch: Record<string, unknown> = {};
+    if (statusParam && statusParam !== 'all' && PAID_STATUSES.includes(statusParam)) {
+      baseMatch.status = statusParam;
+    } else {
+      baseMatch.status = { $in: PAID_STATUSES };
     }
 
-    // Aggregation pipeline
-    const pipeline: any[] = [
-      // 1. Base filter: paid statuses + source
-      { $match: matchStage },
+    if (source && source !== 'all') {
+      baseMatch.source = source;
+    }
+    if (referralId) {
+      baseMatch.referralId = referralId;
+    }
 
+    // Category filter: look up category products then match order items
+    let categoryProductIds: mongoose.Types.ObjectId[] | undefined;
+    if (categoryId && categoryId !== 'all') {
+      const category = await Category.findById(categoryId).select('products').lean();
+      if (category && Array.isArray(category.products)) {
+        categoryProductIds = category.products.map((p) => {
+          const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
+          return new mongoose.Types.ObjectId(str);
+        });
+      }
+    }
+
+    // Build search regex if provided
+    let searchMatch: Record<string, unknown> | undefined;
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = { $regex: escaped, $options: 'i' };
+      searchMatch = {
+        $or: [
+          { orderNumber: regex },
+          { 'billingData.fullName': regex },
+          { 'billingData.phone': regex },
+          { 'billingData.email': regex },
+          { 'reservationData.value': regex },
+        ],
+      };
+    }
+
+    // Build date filter for effectiveExecutionDate
+    let dateFilter: Record<string, unknown> | undefined;
+    if (date && !fromDate && !toDate) {
+      // Backward compat: single exact date
+      dateFilter = { effectiveExecutionDate: date };
+    } else if (fromDate || toDate) {
+      const range: Record<string, unknown> = {};
+      if (fromDate) range.$gte = fromDate;
+      if (toDate) range.$lte = toDate;
+      dateFilter = { effectiveExecutionDate: range };
+    }
+
+    // Aggregation pipeline (before pagination)
+    const prePipeline: any[] = [
+      // 1. Base filter: paid statuses + source + referral
+      { $match: baseMatch },
+    ];
+
+    // 1b. Category filter (if applicable)
+    if (categoryProductIds && categoryProductIds.length > 0) {
+      prePipeline.push({
+        $match: {
+          'items.productId': { $in: categoryProductIds },
+        },
+      });
+    }
+
+    // 1c. Search filter (if applicable)
+    if (searchMatch) {
+      prePipeline.push({ $match: searchMatch });
+    }
+
+    prePipeline.push(
       // 2. Safely extract executionDate.value from reservationData using $reduce.
-      //    Returns the value string if found, otherwise '' (never null/undefined).
       {
         $addFields: {
           executionDateValue: {
@@ -71,8 +163,6 @@ export async function GET(request: NextRequest) {
       },
 
       // 3. Compute effectiveExecutionDate
-      //    - If executionDateValue is not empty, take first 10 chars
-      //    - Otherwise default to createdAt + 1 day (UTC)
       {
         $addFields: {
           effectiveExecutionDate: {
@@ -91,8 +181,8 @@ export async function GET(request: NextRequest) {
         },
       },
 
-      // 4. Filter by the requested execution date
-      { $match: { effectiveExecutionDate: date } },
+      // 4. Filter by execution date (range or exact)
+      ...(dateFilter ? [{ $match: dateFilter }] : []),
 
       // 5. Project only needed fields
       {
@@ -107,6 +197,7 @@ export async function GET(request: NextRequest) {
           status: 1,
           billingData: 1,
           source: 1,
+          referralId: 1,
           createdAt: 1,
           reservationData: 1,
           effectiveExecutionDate: 1,
@@ -115,69 +206,36 @@ export async function GET(request: NextRequest) {
 
       // 6. Sort newest first
       { $sort: { createdAt: -1 } },
+    );
+
+    // Use $facet to get total count and paginated orders in one query
+    const facetPipeline = [
+      ...prePipeline,
+      {
+        $facet: {
+          totalCount: [{ $count: 'count' }],
+          orders: [{ $skip: skip }, { $limit: limit }],
+        },
+      },
     ];
 
-    const orders = await Order.aggregate(pipeline);
-
-    // Stats: total orders, total items, product breakdown
-    const stats = {
-      totalOrders: orders.length,
-      totalItems: 0,
-      byProduct: [] as Array<{
-        productName: string;
-        productNameAr: string;
-        quantity: number;
-        percentage: number;
-      }>,
-    };
-
-    const productMap = new Map<
-      string,
-      { productName: string; productNameAr: string; quantity: number }
-    >();
-
-    for (const order of orders) {
-      const items = Array.isArray(order.items) ? order.items : [];
-      for (const item of items) {
-        const qty = typeof item.quantity === 'number' ? item.quantity : 0;
-        stats.totalItems += qty;
-
-        const nameEn = item.productName?.en || 'Unknown';
-        const nameAr = item.productName?.ar || nameEn;
-        const key = nameEn;
-
-        const existing = productMap.get(key);
-        if (existing) {
-          existing.quantity += qty;
-        } else {
-          productMap.set(key, {
-            productName: nameEn,
-            productNameAr: nameAr,
-            quantity: qty,
-          });
-        }
-      }
-    }
-
-    if (stats.totalItems > 0) {
-      const products = Array.from(productMap.values()).sort(
-        (a, b) => b.quantity - a.quantity,
-      );
-
-      stats.byProduct = products.map((p) => ({
-        productName: p.productName,
-        productNameAr: p.productNameAr,
-        quantity: p.quantity,
-        percentage: Math.round((p.quantity / stats.totalItems) * 1000) / 10,
-      }));
-    }
+    const facetResult = await Order.aggregate(facetPipeline);
+    const totalCount = facetResult[0]?.totalCount[0]?.count || 0;
+    const orders = facetResult[0]?.orders || [];
 
     return NextResponse.json({
       success: true,
       data: {
         orders,
-        stats,
+        pagination: {
+          page,
+          limit,
+          totalOrders: totalCount,
+          totalPages: Math.ceil(totalCount / limit),
+        },
         date,
+        fromDate,
+        toDate,
       },
     });
   } catch (error) {
