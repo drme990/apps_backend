@@ -7,7 +7,7 @@ import {
   type IBaseAppUser,
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
-import CustomerRefHistory from '@/lib/models/CustomerRefHistory';
+import CustomerHistory from '@/lib/models/CustomerHistory';
 import type { Model } from 'mongoose';
 
 const bodySchema = z.object({
@@ -74,17 +74,18 @@ export async function PATCH(request: NextRequest) {
           return { id, appId, updated: false, reason: 'not_found' as const };
         }
 
-        await CustomerRefHistory.create({
+        await CustomerHistory.create({
           customerId: String(customer._id),
           appId,
           customerName: customerBefore.name,
           customerEmail: customerBefore.email,
-          previousRef,
-          newRef: nextRef,
+          type: 'ref',
+          previousValue: previousRef,
+          newValue: nextRef,
+          changeSource: 'bulk',
           changedByUserId: auth.user.userId,
           changedByUserName: auth.user.name,
           changedByUserEmail: auth.user.email,
-          changeSource: 'bulk',
         });
 
         return { id, appId, updated: true };
