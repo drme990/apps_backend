@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
+import OrderChangeHistory, { type IOrderChangeHistory } from '@/lib/models/OrderChangeHistory';
 import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
@@ -178,7 +179,7 @@ export async function PUT(
     await order.save();
 
     if (nextStatus === 'paid' && changes.includes('status → paid')) {
-      sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => {});
+      sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
     }
 
     await logActivity({
@@ -204,6 +205,159 @@ export async function PUT(
     });
   } catch (error) {
     console.error('Error updating order:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update order' },
+      { status: 500 },
+    );
+  }
+}
+
+function getReservationValue(
+  reservationData: Array<{ key?: string; value?: string }>,
+  key: string,
+): string | undefined {
+  return reservationData.find((f) => f.key === key)?.value;
+}
+
+function updateReservationField(
+  reservationData: Array<{ key: string; label: { ar: string; en: string }; type: string; value: string }>,
+  key: string,
+  value: string,
+  label: { ar: string; en: string },
+  type: string,
+): Array<{ key: string; label: { ar: string; en: string }; type: string; value: string }> {
+  const idx = reservationData.findIndex((f) => f.key === key);
+  if (idx >= 0) {
+    reservationData[idx].value = value;
+  } else {
+    reservationData.push({ key, label, type, value });
+  }
+  return reservationData;
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    await connectDB();
+    const auth = await requireAdminPageAccess('orders');
+    if ('error' in auth) return auth.error;
+
+    const { id } = await params;
+    const body = await request.json().catch(() => ({}));
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return NextResponse.json(
+        { success: false, error: 'Order not found' },
+        { status: 404 },
+      );
+    }
+
+    const reservationData = Array.isArray(order.reservationData)
+      ? [...order.reservationData]
+      : [];
+    const changes: Array<{
+      changeType: IOrderChangeHistory['changeType'];
+      previousValue: string | null;
+      newValue: string | null;
+    }> = [];
+
+    if (
+      typeof body.sacrificeFor === 'string' &&
+      body.sacrificeFor !== getReservationValue(reservationData, 'sacrificeFor')
+    ) {
+      const previousValue = getReservationValue(reservationData, 'sacrificeFor') || null;
+      updateReservationField(reservationData, 'sacrificeFor', body.sacrificeFor, { ar: 'الذبيحة لأجل', en: 'Sacrifice For' }, 'text');
+      changes.push({
+        changeType: 'name',
+        previousValue,
+        newValue: body.sacrificeFor,
+      });
+    }
+
+    if (
+      typeof body.shortDuaa === 'string' &&
+      body.shortDuaa !== getReservationValue(reservationData, 'shortDuaa')
+    ) {
+      const previousValue = getReservationValue(reservationData, 'shortDuaa') || null;
+      updateReservationField(reservationData, 'shortDuaa', body.shortDuaa, { ar: 'الدعاء المختصر', en: 'Short Duaa' }, 'textarea');
+      changes.push({
+        changeType: 'duaa',
+        previousValue,
+        newValue: body.shortDuaa,
+      });
+    }
+
+    if (
+      typeof body.photo === 'string' &&
+      body.photo !== getReservationValue(reservationData, 'photo')
+    ) {
+      const previousValue = getReservationValue(reservationData, 'photo') || null;
+      updateReservationField(reservationData, 'photo', body.photo, { ar: 'الصورة', en: 'Photo' }, 'picture');
+      changes.push({
+        changeType: 'photo',
+        previousValue,
+        newValue: body.photo,
+      });
+    }
+
+    if (Array.isArray(body.items) && body.items.length > 0) {
+      const previousItems = JSON.stringify(order.items || []);
+      const nextItems = body.items;
+      if (JSON.stringify(nextItems) !== previousItems) {
+        order.items = nextItems;
+        changes.push({
+          changeType: 'items',
+          previousValue: previousItems,
+          newValue: JSON.stringify(nextItems),
+        });
+      }
+    }
+
+    if (changes.length === 0) {
+      return NextResponse.json({
+        success: true,
+        data: sanitizeOrderForAdmin(order.toObject() as unknown as Record<string, unknown>),
+        changed: false,
+      });
+    }
+
+    order.reservationData = reservationData;
+    await order.save();
+
+    for (const change of changes) {
+      await OrderChangeHistory.create({
+        orderId: String(order._id),
+        appId: order.source || 'ghadaq',
+        changeType: change.changeType,
+        previousValue: change.previousValue,
+        newValue: change.newValue,
+        changedByUserId: auth.user.userId,
+        changedByUserName: auth.user.name,
+        changedByUserEmail: auth.user.email,
+      });
+    }
+
+    const changeLabels = changes.map((c) => c.changeType).join(', ');
+    await logActivity({
+      userId: auth.user.userId,
+      userName: auth.user.name,
+      userEmail: auth.user.email,
+      action: 'update',
+      resource: 'order',
+      resourceId: order._id.toString(),
+      details: `Updated order ${order.orderNumber}: ${changeLabels}`,
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: sanitizeOrderForAdmin(order.toObject() as unknown as Record<string, unknown>),
+      changed: true,
+    });
+  } catch (error) {
+    console.error('Error patching order:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to update order' },
       { status: 500 },
