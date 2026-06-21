@@ -87,6 +87,7 @@ export async function PUT(request: NextRequest) {
           },
         },
       ],
+      { updatePipeline: true },
     );
 
     await logActivity({
