@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     const categoryId = searchParams.get('category');
     const referralId = searchParams.get('referralId');
     const statusParam = searchParams.get('status');
+    const intention = searchParams.get('intention');
     const pageParam = searchParams.get('page');
     const limitParam = searchParams.get('limit');
 
@@ -132,7 +133,21 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 1c. Search filter (if applicable)
+    // 1c. Intention filter (if applicable)
+    if (intention && intention !== 'all') {
+      prePipeline.push({
+        $match: {
+          reservationData: {
+            $elemMatch: {
+              key: 'intention',
+              value: intention,
+            },
+          },
+        },
+      });
+    }
+
+    // 1d. Search filter (if applicable)
     if (searchMatch) {
       prePipeline.push({ $match: searchMatch });
     }

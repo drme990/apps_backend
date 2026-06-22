@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search')?.trim();
     const categoryId = searchParams.get('category');
     const referralId = searchParams.get('referralId');
+    const intention = searchParams.get('intention');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
 
@@ -84,6 +85,20 @@ export async function GET(request: NextRequest) {
           {
             $match: {
               'items.productId': { $in: categoryProductIds },
+            },
+          },
+        ]
+        : []),
+      ...(intention && intention !== 'all'
+        ? [
+          {
+            $match: {
+              reservationData: {
+                $elemMatch: {
+                  key: 'intention',
+                  value: intention,
+                },
+              },
             },
           },
         ]
