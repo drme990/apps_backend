@@ -5,12 +5,15 @@ export interface IOrderChangeHistory {
   orderId: string;
   appId: 'ghadaq' | 'manasik';
   changeType:
-    | 'name'
-    | 'items'
-    | 'duaa'
-    | 'photo'
-    | 'executionDate'
-    | 'bulk_execution_date';
+  | 'name'
+  | 'items'
+  | 'duaa'
+  | 'photo'
+  | 'executionDate'
+  | 'bulk_execution_date'
+  | 'gender'
+  | 'isAlive'
+  | 'intention';
   previousValue: string | null;
   newValue: string | null;
   changedByUserId: string;
@@ -38,6 +41,9 @@ const OrderChangeHistorySchema = new mongoose.Schema<IOrderChangeHistory>(
         'photo',
         'executionDate',
         'bulk_execution_date',
+        'gender',
+        'isAlive',
+        'intention',
       ],
       index: true,
     },

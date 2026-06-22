@@ -303,6 +303,45 @@ export async function PATCH(
       });
     }
 
+    if (
+      typeof body.gender === 'string' &&
+      body.gender !== getReservationValue(reservationData, 'gender')
+    ) {
+      const previousValue = getReservationValue(reservationData, 'gender') || null;
+      updateReservationField(reservationData, 'gender', body.gender, { ar: 'الجنس', en: 'Gender' }, 'radio');
+      changes.push({
+        changeType: 'gender',
+        previousValue,
+        newValue: body.gender,
+      });
+    }
+
+    if (
+      typeof body.isAlive === 'string' &&
+      body.isAlive !== getReservationValue(reservationData, 'isAlive')
+    ) {
+      const previousValue = getReservationValue(reservationData, 'isAlive') || null;
+      updateReservationField(reservationData, 'isAlive', body.isAlive, { ar: 'الحالة', en: 'Status' }, 'radio');
+      changes.push({
+        changeType: 'isAlive',
+        previousValue,
+        newValue: body.isAlive,
+      });
+    }
+
+    if (
+      typeof body.intention === 'string' &&
+      body.intention !== getReservationValue(reservationData, 'intention')
+    ) {
+      const previousValue = getReservationValue(reservationData, 'intention') || null;
+      updateReservationField(reservationData, 'intention', body.intention, { ar: 'النية', en: 'Intention' }, 'select');
+      changes.push({
+        changeType: 'intention',
+        previousValue,
+        newValue: body.intention,
+      });
+    }
+
     if (Array.isArray(body.items) && body.items.length > 0) {
       const previousItems = JSON.stringify(order.items || []);
       const nextItems = body.items;
