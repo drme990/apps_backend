@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { validatePhoneNumber } from './phone-validation';
 
+// ISO 8601 datetime with optional timezone offset (e.g. 2026-06-24T02:00:00+02:00 or 2026-06-24T02:00:00Z)
+const isoDateTimeRegex =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const isoDateTimeSchema = z
+  .string()
+  .regex(isoDateTimeRegex, 'Invalid ISO datetime');
+
 // objectLoose was removed or not used
 
 // Standardized ApiError schema response helper
@@ -487,9 +494,28 @@ export const bookingUpdateSchema = z
   .object({
     blockedExecutionDates: z
       .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
-      .default([]),
+      .default([])
+      .optional(),
+    cutoffTime: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/)
+      .nullable()
+      .optional(),
+    lastDayEndAt: isoDateTimeSchema.nullable().optional(),
+    defaultExecutionDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    prevDay: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((payload) => Object.keys(payload).length > 0, {
+    message: 'At least one field must be provided',
+  });
 
 export const appearanceUpdateSchema = z.record(z.string(), z.any()); // Allowed flexibility here
 
@@ -581,7 +607,7 @@ export const supplierOrderItemSchema = z
 export const supplierOrderCreateSchema = z
   .object({
     items: z.array(supplierOrderItemSchema).min(1),
-    orderDate: z.string().datetime().optional(),
+    orderDate: isoDateTimeSchema.optional(),
     notes: z.string().trim().optional(),
     status: z.enum(['pending', 'received', 'cancelled']).optional(),
   })
@@ -590,7 +616,7 @@ export const supplierOrderCreateSchema = z
 export const supplierOrderUpdateSchema = z
   .object({
     items: z.array(supplierOrderItemSchema).min(1).optional(),
-    orderDate: z.string().datetime().optional(),
+    orderDate: isoDateTimeSchema.optional(),
     notes: z.string().trim().optional(),
     status: z.enum(['pending', 'received', 'cancelled']).optional(),
   })
@@ -603,7 +629,7 @@ export const transactionCreateSchema = z
   .object({
     amount: z.coerce.number().positive(),
     accountId: z.string().trim().min(1),
-    date: z.string().datetime().optional(),
+    date: isoDateTimeSchema.optional(),
     paymentMethod: z.string().trim().optional(),
     referenceNumber: z.string().trim().optional(),
     linkedOrderId: z.string().trim().optional(),
@@ -616,7 +642,7 @@ export const transactionUpdateSchema = z
   .object({
     amount: z.coerce.number().positive().optional(),
     accountId: z.string().trim().optional(),
-    date: z.string().datetime().optional(),
+    date: isoDateTimeSchema.optional(),
     paymentMethod: z.string().trim().optional(),
     referenceNumber: z.string().trim().optional(),
     linkedOrderId: z.string().trim().optional(),

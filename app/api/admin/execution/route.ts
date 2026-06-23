@@ -11,7 +11,9 @@ import Category from '@/lib/models/Categories';
  * Returns all orders whose effective execution date matches the requested date.
  * Effective execution date is determined by:
  * - reservationData.executionDate.value (first 10 chars extracted to handle ISO/datetime)
- * - OR createdAt + 1 day if no executionDate is specified
+ * - OR createdAt + 1 day if no executionDate is specified (legacy fallback)
+ *
+ * Since the checkout auto-fill change, all new orders have a persisted executionDate.
  *
  * Only includes orders with status: paid, partial-paid.
  * Supports optional search, category, date range, referral, status filters, and pagination.
@@ -178,6 +180,7 @@ export async function GET(request: NextRequest) {
       },
 
       // 3. Compute effectiveExecutionDate
+      // New orders always have a persisted executionDate; fallback to createdAt+1 for legacy orders.
       {
         $addFields: {
           effectiveExecutionDate: {

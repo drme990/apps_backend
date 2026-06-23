@@ -4,6 +4,10 @@ export interface IBooking {
   _id?: string;
   key: 'global';
   blockedExecutionDates: string[];
+  cutoffTime: string | null;
+  lastDayEndAt: string | null;
+  defaultExecutionDate: string | null;
+  prevDay: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -20,6 +24,22 @@ const BookingSchema = new mongoose.Schema<IBooking>(
     blockedExecutionDates: {
       type: [String],
       default: [],
+    },
+    cutoffTime: {
+      type: String,
+      default: null,
+    },
+    lastDayEndAt: {
+      type: String,
+      default: null,
+    },
+    defaultExecutionDate: {
+      type: String,
+      default: null,
+    },
+    prevDay: {
+      type: String,
+      default: null,
     },
   },
   { timestamps: true },

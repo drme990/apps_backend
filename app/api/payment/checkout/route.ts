@@ -52,6 +52,7 @@ import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { checkoutSchema } from '@/lib/validation/schemas';
+import { refreshDefaultExecutionDateCache } from '@/lib/execution-date';
 import { randomBytes } from 'crypto';
 
 function toIsoLocalDate(date: Date): string {
@@ -546,6 +547,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let defaultExecutionDate = await refreshDefaultExecutionDateCache();
     const booking = await Booking.findOne({ key: 'global' }).lean();
     const blockedExecutionDates = new Set(
       (booking?.blockedExecutionDates ?? []).filter((value: string) =>
@@ -553,10 +555,64 @@ export async function POST(request: NextRequest) {
       ),
     );
 
+    // Defensive: if the cached default is somehow still blocked, skip forward
+    // and update the DB so the next order also gets the corrected date.
+    if (blockedExecutionDates.has(defaultExecutionDate)) {
+      let candidate = defaultExecutionDate;
+      let iterations = 0;
+      while (blockedExecutionDates.has(candidate) && iterations < 365) {
+        const [y, m, d] = candidate.split('-').map(Number);
+        const date = new Date(Date.UTC(y, m - 1, d));
+        date.setUTCDate(date.getUTCDate() + 1);
+        candidate = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+        iterations += 1;
+      }
+      defaultExecutionDate = candidate;
+      await Booking.updateOne(
+        { key: 'global' },
+        { $set: { defaultExecutionDate: candidate } },
+      );
+    }
+
     // Validate reservation answers against product reservation field config
     const reservationInput = Array.isArray(reservationData)
       ? reservationData
       : [];
+
+    // ── Single source of truth: resolve execution date FIRST ──
+    const userExecutionDate = reservationInput.find(
+      (r): r is { key: string; value: string } =>
+        typeof r === 'object' && r !== null && r.key === 'executionDate',
+    )?.value;
+
+    let resolvedExecutionDate = defaultExecutionDate;
+
+    if (typeof userExecutionDate === 'string' && userExecutionDate.trim()) {
+      const trimmed = userExecutionDate.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return NextResponse.json(
+          { success: false, error: 'Execution date format is invalid' },
+          { status: 400 },
+        );
+      }
+      if (trimmed < defaultExecutionDate) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Execution date must be on or after ${defaultExecutionDate}`,
+          },
+          { status: 400 },
+        );
+      }
+      if (blockedExecutionDates.has(trimmed)) {
+        return NextResponse.json(
+          { success: false, error: 'Execution date is not available' },
+          { status: 400 },
+        );
+      }
+      resolvedExecutionDate = trimmed;
+    }
+
     const normalizedReservationData = normalizeReservationFields(
       product.reservationFields,
     ).map((field) => {
@@ -578,27 +634,37 @@ export async function POST(request: NextRequest) {
 
     const reservationAnswers: Array<{
       key:
-        | 'intention'
-        | 'sacrificeFor'
-        | 'gender'
-        | 'isAlive'
-        | 'shortDuaa'
-        | 'photo'
-        | 'executionDate';
+      | 'intention'
+      | 'sacrificeFor'
+      | 'gender'
+      | 'isAlive'
+      | 'shortDuaa'
+      | 'photo'
+      | 'executionDate';
       label: { ar: string; en: string };
       type:
-        | 'text'
-        | 'textarea'
-        | 'number'
-        | 'date'
-        | 'select'
-        | 'radio'
-        | 'picture';
+      | 'text'
+      | 'textarea'
+      | 'number'
+      | 'date'
+      | 'select'
+      | 'radio'
+      | 'picture';
       value: string;
     }> = [];
 
+    let hasExecutionDateField = false;
+
     for (const field of normalizedReservationData) {
-      if (field.required && !field.value) {
+      let finalValue = field.value;
+
+      if (field.key === 'executionDate') {
+        hasExecutionDateField = true;
+        // Override with the already-validated resolved execution date
+        finalValue = resolvedExecutionDate;
+      }
+
+      if (field.required && !finalValue) {
         return NextResponse.json(
           {
             success: false,
@@ -608,12 +674,12 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (!field.value) continue;
+      if (!finalValue) continue;
 
       if (
         (field.type === 'text' || field.type === 'textarea') &&
         field.maxLength &&
-        field.value.length > field.maxLength
+        finalValue.length > field.maxLength
       ) {
         return NextResponse.json(
           {
@@ -630,7 +696,7 @@ export async function POST(request: NextRequest) {
       ) {
         const isValidOption = field.options.some(
           (opt: { ar: string; en: string }) =>
-            opt.ar === field.value || opt.en === field.value,
+            opt.ar === finalValue || opt.en === finalValue,
         );
         if (!isValidOption) {
           return NextResponse.json(
@@ -638,37 +704,6 @@ export async function POST(request: NextRequest) {
               success: false,
               error: 'Invalid reservation option',
             },
-            { status: 400 },
-          );
-        }
-      }
-
-      let finalValue = field.value;
-
-      if (field.key === 'executionDate' && finalValue) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(finalValue)) {
-          return NextResponse.json(
-            { success: false, error: 'Execution date format is invalid' },
-            { status: 400 },
-          );
-        }
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const todayIso = toIsoLocalDate(today);
-        if (finalValue <= todayIso) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: 'Execution date must be after today',
-            },
-            { status: 400 },
-          );
-        }
-
-        if (blockedExecutionDates.has(finalValue)) {
-          return NextResponse.json(
-            { success: false, error: 'Execution date is not available' },
             { status: 400 },
           );
         }
@@ -731,13 +766,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── Guarantee executionDate exists on EVERY order ──
+    if (!hasExecutionDateField) {
+      reservationAnswers.push({
+        key: 'executionDate',
+        label: { ar: 'تاريخ التنفيذ', en: 'Execution Date' },
+        type: 'date',
+        value: resolvedExecutionDate,
+      });
+    }
+
     const currencyUpper = currency.toUpperCase();
 
     const activeSizeIndex =
       sizeIndex !== undefined &&
-      sizeIndex !== null &&
-      sizeIndex >= 0 &&
-      sizeIndex < product.sizes.length
+        sizeIndex !== null &&
+        sizeIndex >= 0 &&
+        sizeIndex < product.sizes.length
         ? sizeIndex
         : 0;
     const selectedSize = product.sizes[activeSizeIndex];
@@ -1186,7 +1231,7 @@ export async function POST(request: NextRequest) {
         client_user_agent: reqUa,
         external_id: order._id.toString(),
       },
-    }).catch(() => {});
+    }).catch(() => { });
 
     // EasyKash payment
     if (!process.env.EASYKASH_API_KEY) {
