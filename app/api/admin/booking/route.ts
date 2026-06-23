@@ -203,6 +203,12 @@ export async function PUT(request: NextRequest) {
     );
 
     const booking = await Booking.findOne({ key: 'global' }).lean();
+    if (!booking) {
+      return NextResponse.json(
+        { success: false, error: 'Booking document not found after update' },
+        { status: 500 },
+      );
+    }
 
     const changedFields = Object.keys(update).join(', ');
     await logActivity({
