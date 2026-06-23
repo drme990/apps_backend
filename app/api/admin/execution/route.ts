@@ -8,12 +8,13 @@ import Category from '@/lib/models/Categories';
 /**
  * Execution orders API
  *
- * Returns all orders whose effective execution date matches the requested date.
- * Effective execution date is determined by:
- * - reservationData.executionDate.value (first 10 chars extracted to handle ISO/datetime)
- * - OR createdAt + 1 day if no executionDate is specified (legacy fallback)
+ * Returns all orders whose effective execution date falls within the requested range.
  *
- * Since the checkout auto-fill change, all new orders have a persisted executionDate.
+ * HOW THE EXECUTION DATE IS DETERMINED (in order of priority):
+ * 1. Order's own `reservationData.executionDate.value` — this is the single source
+ *    of truth. Every new order gets this field filled at checkout time.
+ * 2. Legacy fallback: `createdAt + 1 day` for orders created before the
+ *    execution-date auto-fill logic existed.
  *
  * Only includes orders with status: paid, partial-paid.
  * Supports optional search, category, date range, referral, status filters, and pagination.

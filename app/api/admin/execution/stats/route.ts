@@ -1,3 +1,12 @@
+/**
+ * Execution stats API
+ *
+ * Aggregates execution data grouped by category and product.
+ *
+ * HOW THE EXECUTION DATE IS DETERMINED (same as the main execution route):
+ * 1. Order's own `reservationData.executionDate.value` — primary source of truth.
+ * 2. Legacy fallback: `createdAt + 1 day` for pre-auto-fill orders.
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
