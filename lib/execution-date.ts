@@ -226,7 +226,9 @@ export async function refreshDefaultExecutionDateCache(): Promise<string> {
 
   // Re-fetch if auto-reset happened (booking is already updated, but let's be safe)
   if (!booking._id) {
-    booking = await Booking.findOne({ key: 'global' }).lean();
+    const refreshed = await Booking.findOne({ key: 'global' }).lean();
+    if (!refreshed) return computeDefaultExecutionDate(booking);
+    booking = refreshed;
   }
 
   const computed = computeDefaultExecutionDate(booking);
