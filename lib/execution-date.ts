@@ -18,20 +18,6 @@ function getEgyptToday(): string {
 }
 
 /**
- * Get current time-of-day in Egypt as HH:mm string.
- */
-function getEgyptTime(): string {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: EGYPT_TIMEZONE,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  return formatter.format(now);
-}
-
-/**
  * Add days to a YYYY-MM-DD string and return the new YYYY-MM-DD string.
  */
 function addDays(dateStr: string, days: number): string {
@@ -45,17 +31,29 @@ function addDays(dateStr: string, days: number): string {
 }
 
 /**
- * Check if the current Egypt time is at or after the given cutoff HH:mm.
+ * Check if the current time is at or after the cutoff on the given execution date.
+ *
+ * cutoffTime is HH:mm (e.g. "02:00").
+ * baseDate is the execution date (YYYY-MM-DD).
+ *
+ * Constructs "baseDate T cutoffTime +02:00" as an absolute Egypt datetime
+ * and compares against the current real time.
+ *
+ * Example: today=23rd 21:50, cutoff="02:00", baseDate="2026-06-24"
+ *   → compare now vs "2026-06-24T02:00:00+02:00" → false (still before cutoff)
  */
-function isAtOrAfterCutoff(cutoffTime: string | null | undefined): boolean {
-  if (!cutoffTime) return false;
+function isAtOrAfterCutoff(
+  cutoffTime: string | null | undefined,
+  baseDate: string,
+): boolean {
+  if (!cutoffTime || !baseDate) return false;
 
-  const [cutoffHours, cutoffMinutes] = cutoffTime.split(':').map(Number);
-  const [egyptHours, egyptMinutes] = getEgyptTime().split(':').map(Number);
+  const iso = `${baseDate}T${cutoffTime}:00+02:00`;
+  const cutoffDate = new Date(iso);
+  if (Number.isNaN(cutoffDate.getTime())) return false;
 
-  if (egyptHours > cutoffHours) return true;
-  if (egyptHours < cutoffHours) return false;
-  return egyptMinutes >= cutoffMinutes;
+  const now = new Date();
+  return now.getTime() >= cutoffDate.getTime();
 }
 
 /**
@@ -163,8 +161,8 @@ export function computeDefaultExecutionDate(
     base = tomorrow;
   }
 
-  // If the stored date is exactly "tomorrow" and we've passed the daily cutoff → push forward
-  if (base === tomorrow && isAtOrAfterCutoff(booking.cutoffTime)) {
+  // If the stored date is exactly "tomorrow" and we've passed its cutoff → push forward
+  if (base === tomorrow && isAtOrAfterCutoff(booking.cutoffTime, base)) {
     base = addDays(base, 1);
   }
 

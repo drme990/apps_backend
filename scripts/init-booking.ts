@@ -56,19 +56,18 @@ async function main() {
     console.log('Auto-reset stale day-end.');
   }
 
-  // Recompute and fix stale defaultExecutionDate
-  const computed = computeDefaultExecutionDate(booking);
-  if (booking.defaultExecutionDate !== computed) {
-    console.log(
-      `Updating defaultExecutionDate: "${booking.defaultExecutionDate}" -> "${computed}"`,
-    );
-    await Booking.updateOne(
-      { key: 'global' },
-      { $set: { defaultExecutionDate: computed } },
-    );
-  } else {
-    console.log(`defaultExecutionDate is up to date: "${computed}"`);
-  }
+  // Recompute from scratch (ignore stored defaultExecutionDate to catch logic drift)
+  const computed = computeDefaultExecutionDate({
+    ...booking,
+    defaultExecutionDate: null,
+  });
+  console.log(
+    `Setting defaultExecutionDate: "${booking.defaultExecutionDate}" -> "${computed}"`,
+  );
+  await Booking.updateOne(
+    { key: 'global' },
+    { $set: { defaultExecutionDate: computed } },
+  );
 
   console.log('Done.');
   process.exit(0);
