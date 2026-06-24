@@ -137,10 +137,14 @@ function isDayEndedYesterday(
  *
  * Rules:
  * 1. Start from the stored defaultExecutionDate, or tomorrow if none.
- * 2. If the stored date is in the past (<= today), catch up to tomorrow.
- * 3. If the stored date is "tomorrow" and the daily cutoff has passed → push to day-after-tomorrow.
- * 4. If the admin manually ended the day today → push one more day forward.
- * 5. Skip any blocked dates.
+ * 2. If the stored date is strictly in the past (< today), catch up to today
+ *    so we evaluate the cutoff on today's execution date.
+ * 3. Apply the cutoff ON the current execution date (base). If the current time
+ *    has reached or passed the cutoff on base, advance to the next day.
+ *    The cutoff is always evaluated relative to the execution date itself,
+ *    not to "today" as a separate concept.
+ * 4. Skip any blocked dates.
+ * 5. If the admin manually ended the day today → push one more day forward.
  */
 export function computeDefaultExecutionDate(
   booking: Pick<IBooking, 'cutoffTime' | 'lastDayEndAt' | 'blockedExecutionDates' | 'defaultExecutionDate'>,
@@ -156,13 +160,18 @@ export function computeDefaultExecutionDate(
   // Phase 1: start from stored value or tomorrow
   let base = booking.defaultExecutionDate || tomorrow;
 
-  // If the stored date is stale (today or earlier), catch up
-  if (base <= today) {
-    base = tomorrow;
+  // If the stored date is strictly in the past, catch up to today so we can
+  // evaluate the cutoff on today's execution date instead of yesterday's.
+  if (base < today) {
+    base = today;
   }
 
-  // If the stored date is exactly "tomorrow" and we've passed its cutoff → push forward
-  if (base === tomorrow && isAtOrAfterCutoff(booking.cutoffTime, base)) {
+  // The cutoff is applied ON the execution date (base).
+  // Example: base=2026-06-25, cutoff=02:00, now=2026-06-25 01:00
+  //   → compare now vs 2026-06-25T02:00:00+02:00 → false → keep 2026-06-25
+  // Example: base=2026-06-25, cutoff=04:00, now=2026-06-25 05:00
+  //   → compare now vs 2026-06-25T04:00:00+02:00 → true → advance to 2026-06-26
+  if (isAtOrAfterCutoff(booking.cutoffTime, base)) {
     base = addDays(base, 1);
   }
 

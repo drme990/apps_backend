@@ -167,11 +167,12 @@ export async function PUT(request: NextRequest) {
       const tomorrow = addOneDay(today);
       const dayAfterTomorrow = addOneDay(tomorrow);
 
-      if (body.defaultExecutionDate !== tomorrow && body.defaultExecutionDate !== dayAfterTomorrow) {
+      const allowed = [today, tomorrow, dayAfterTomorrow];
+      if (!allowed.includes(body.defaultExecutionDate)) {
         return NextResponse.json(
           {
             success: false,
-            error: `defaultExecutionDate must be either ${tomorrow} or ${dayAfterTomorrow}`,
+            error: `defaultExecutionDate must be one of ${allowed.join(', ')}`,
           },
           { status: 400 },
         );
