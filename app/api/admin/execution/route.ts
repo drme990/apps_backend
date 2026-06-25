@@ -231,8 +231,8 @@ export async function GET(request: NextRequest) {
         },
       },
 
-      // 6. Sort newest first
-      { $sort: { createdAt: -1 } },
+      // 6. Sort oldest first
+      { $sort: { createdAt: 1 } },
     );
 
     // Use $facet to get total count and paginated orders in one query
