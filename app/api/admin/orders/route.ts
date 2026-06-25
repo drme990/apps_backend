@@ -192,6 +192,7 @@ export async function GET(request: NextRequest) {
       createdAt: 1,
       updatedAt: 1,
       statusUpdateTime: 1,
+      payments: 1,
     };
 
     const fullProjection = {
@@ -220,6 +221,7 @@ export async function GET(request: NextRequest) {
       createdAt: 1,
       updatedAt: 1,
       statusUpdateTime: 1,
+      payments: 1,
     };
 
     const [orders, total] = await Promise.all([

@@ -229,6 +229,7 @@ export async function GET(request: NextRequest) {
           statusUpdateTime: 1,
           updatedAt: 1,
           invoiceUrl: 1,
+          payments: 1,
         },
       },
 

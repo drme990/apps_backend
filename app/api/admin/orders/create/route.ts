@@ -401,9 +401,23 @@ export async function POST(request: NextRequest) {
       let easykashOrderId: string | null = null;
       const maxReferenceRetries = 5;
 
+      const getPaymentAttemptNumber = (o: { payments?: unknown[] }): number =>
+        (o.payments?.length ?? 0) + 1;
+
       try {
+        const initialPaymentAttemptNum = getPaymentAttemptNumber(order);
+        const existingReferences = new Set(
+          (order.payments ?? []).map((payment: { easykashOrderId?: string }) => payment.easykashOrderId),
+        );
+        let paymentAttemptNum = initialPaymentAttemptNum;
+
         for (let attempt = 0; attempt < maxReferenceRetries; attempt += 1) {
-          const candidateReference = `${order.orderNumber}-P1${attempt > 0 ? `-${attempt}` : ''}`;
+          let candidateReference = `${order.orderNumber}-P${paymentAttemptNum}`;
+          while (existingReferences.has(candidateReference)) {
+            paymentAttemptNum += 1;
+            candidateReference = `${order.orderNumber}-P${paymentAttemptNum}`;
+          }
+
           try {
             easykashResponse = await createPayment({
               amount: easykashAmount,
@@ -418,7 +432,9 @@ export async function POST(request: NextRequest) {
             easykashOrderId = candidateReference;
             break;
           } catch (gatewayError) {
-            if (isCustomerReferenceAlreadyUsedError(gatewayError) && attempt < maxReferenceRetries - 1) {
+            if (isCustomerReferenceAlreadyUsedError(gatewayError)) {
+              existingReferences.add(candidateReference);
+              paymentAttemptNum += 1;
               continue;
             }
             throw gatewayError;
