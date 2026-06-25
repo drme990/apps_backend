@@ -78,7 +78,7 @@ function isBlocked(dateStr: string, blockedDates: Set<string>): boolean {
 /**
  * Skip blocked dates by adding days until a non-blocked date is found.
  */
-function skipBlockedDates(
+export function skipBlockedDates(
   dateStr: string,
   blockedDates: Set<string>,
 ): string {

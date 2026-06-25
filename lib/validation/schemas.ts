@@ -689,3 +689,43 @@ export const accountUpdateSchema = z
   .refine((payload) => Object.keys(payload).length > 0, {
     message: 'At least one field must be provided',
   });
+
+export const manualOrderCreateSchema = z
+  .object({
+    source: z.enum(['manasik', 'ghadaq']),
+    items: z
+      .array(
+        z
+          .object({
+            productId: z.string().trim().min(1),
+            quantity: z.coerce.number().int().positive(),
+            sizeIndex: z.coerce.number().int().nonnegative().optional().default(0),
+          })
+          .strict(),
+      )
+      .min(1),
+    currency: z.string().trim().min(1).toUpperCase(),
+    referralId: z.string().trim().optional(),
+    billingData: z
+      .object({
+        fullName: z.string().trim().min(1),
+        email: z.string().email(),
+        phone: z.string().trim().min(1),
+        country: z.string().trim().min(1),
+      })
+      .strict(),
+    reservationData: z
+      .array(
+        z.object({
+          key: z.string().trim().min(1),
+          value: z.string(),
+        }),
+      )
+      .optional()
+      .default([]),
+    paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash']),
+    invoiceUrl: z.string().trim().optional(),
+    locale: z.string().trim().optional().default('ar'),
+    userId: z.string().trim().optional(),
+  })
+  .strict();
