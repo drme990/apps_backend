@@ -52,7 +52,10 @@ import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { checkoutSchema } from '@/lib/validation/schemas';
-import { refreshDefaultExecutionDateCache } from '@/lib/execution-date';
+import {
+  refreshDefaultExecutionDateCache,
+  skipBlockedDates,
+} from '@/lib/execution-date';
 import { randomBytes } from 'crypto';
 
 function toIsoLocalDate(date: Date): string {
@@ -558,19 +561,10 @@ export async function POST(request: NextRequest) {
     // Defensive: if the cached default is somehow still blocked, skip forward
     // and update the DB so the next order also gets the corrected date.
     if (blockedExecutionDates.has(defaultExecutionDate)) {
-      let candidate = defaultExecutionDate;
-      let iterations = 0;
-      while (blockedExecutionDates.has(candidate) && iterations < 365) {
-        const [y, m, d] = candidate.split('-').map(Number);
-        const date = new Date(Date.UTC(y, m - 1, d));
-        date.setUTCDate(date.getUTCDate() + 1);
-        candidate = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
-        iterations += 1;
-      }
-      defaultExecutionDate = candidate;
+      defaultExecutionDate = skipBlockedDates(defaultExecutionDate, blockedExecutionDates);
       await Booking.updateOne(
         { key: 'global' },
-        { $set: { defaultExecutionDate: candidate } },
+        { $set: { defaultExecutionDate } },
       );
     }
 

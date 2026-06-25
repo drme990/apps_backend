@@ -147,7 +147,7 @@ function isDayEndedYesterday(
  * 5. If the admin manually ended the day today → push one more day forward.
  */
 export function computeDefaultExecutionDate(
-  booking: Pick<IBooking, 'cutoffTime' | 'lastDayEndAt' | 'blockedExecutionDates' | 'defaultExecutionDate'>,
+  booking: Pick<IBooking, 'cutoffTime' | 'lastDayEndAt' | 'blockedExecutionDates' | 'defaultExecutionDate' | 'prevDay'>,
 ): string {
   const today = getEgyptToday();
   const tomorrow = addDays(today, 1);
@@ -178,9 +178,14 @@ export function computeDefaultExecutionDate(
   base = skipBlockedDates(base, blockedDates);
 
   // Phase 2: apply manual day-end push
+  // When the admin ends the day via the booking page, prevDay is saved and
+  // defaultExecutionDate is already incremented. Don't double-count.
   if (isDayEndedToday(booking.lastDayEndAt)) {
-    base = addDays(base, 1);
-    base = skipBlockedDates(base, blockedDates);
+    const alreadyAdvanced = !!booking.prevDay && base > booking.prevDay;
+    if (!alreadyAdvanced) {
+      base = addDays(base, 1);
+      base = skipBlockedDates(base, blockedDates);
+    }
   }
 
   return base;
