@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
+import OrderChangeHistory from '@/lib/models/OrderChangeHistory';
 import { logActivity } from '@/lib/services/logger';
 
 export async function PUT(
@@ -38,6 +39,10 @@ export async function PUT(
     const reservationData = Array.isArray(order.reservationData)
       ? order.reservationData
       : [];
+    const oldExecutionDate = (reservationData as Array<{ key?: string; value: string }>).find(
+      (f) => f.key === 'executionDate',
+    )?.value || null;
+
     const idx = reservationData.findIndex(
       (f: { key?: string }) => f.key === 'executionDate',
     );
@@ -53,6 +58,20 @@ export async function PUT(
     }
     order.reservationData = reservationData;
     await order.save();
+
+    // Track execution date change in history
+    if (oldExecutionDate !== executionDate) {
+      await OrderChangeHistory.create({
+        orderId: String(order._id),
+        appId: (order.source as 'manasik' | 'ghadaq') || 'ghadaq',
+        changeType: 'executionDate',
+        previousValue: oldExecutionDate,
+        newValue: executionDate,
+        changedByUserId: auth.user.userId,
+        changedByUserName: auth.user.name,
+        changedByUserEmail: auth.user.email,
+      });
+    }
 
     await logActivity({
       userId: auth.user.userId,

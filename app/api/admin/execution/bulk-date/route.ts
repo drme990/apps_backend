@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
+import OrderChangeHistory from '@/lib/models/OrderChangeHistory';
 import { logActivity } from '@/lib/services/logger';
 
 export async function PUT(request: NextRequest) {
@@ -33,6 +34,20 @@ export async function PUT(request: NextRequest) {
         { success: false, error: 'No valid order IDs provided' },
         { status: 400 },
       );
+    }
+
+    // Fetch existing execution dates for history tracking
+    const existingOrders = await Order.find(
+      { _id: { $in: validIds } },
+      { reservationData: 1, source: 1, orderNumber: 1 },
+    ).lean();
+
+    const oldDates = new Map<string, string | null>();
+    for (const o of existingOrders) {
+      const dateField = (o.reservationData as Array<{ key: string; value: string }> | undefined)?.find(
+        (f) => f.key === 'executionDate',
+      );
+      oldDates.set(String(o._id), dateField?.value || null);
     }
 
     const result = await Order.updateMany(
@@ -89,6 +104,27 @@ export async function PUT(request: NextRequest) {
       ],
       { updatePipeline: true },
     );
+
+    // Create order change history for each modified order
+    const historyEntries = [];
+    for (const order of existingOrders) {
+      const oldDate = oldDates.get(String(order._id));
+      if (oldDate !== executionDate) {
+        historyEntries.push({
+          orderId: String(order._id),
+          appId: (order.source as 'manasik' | 'ghadaq') || 'ghadaq',
+          changeType: 'bulk_execution_date' as const,
+          previousValue: oldDate,
+          newValue: executionDate,
+          changedByUserId: auth.user.userId,
+          changedByUserName: auth.user.name,
+          changedByUserEmail: auth.user.email,
+        });
+      }
+    }
+    if (historyEntries.length > 0) {
+      await OrderChangeHistory.insertMany(historyEntries);
+    }
 
     await logActivity({
       userId: auth.user.userId,
