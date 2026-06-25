@@ -188,6 +188,7 @@ export interface IOrder {
   isWhatsappButtonClicked?: 'clicked' | 'not-clicked' | 'no-need-to-click';
   referralId?: string;
   cancellationReason?: string;
+  invoiceUrl?: string;
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
   payments?: IPayment[];
@@ -472,6 +473,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     },
     referralId: { type: String, trim: true, index: true },
     cancellationReason: { type: String, trim: true },
+    invoiceUrl: { type: String, trim: true },
     statusUpdateTime: {
       type: Date,
       required: true,

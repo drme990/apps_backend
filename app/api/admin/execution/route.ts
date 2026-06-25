@@ -228,6 +228,7 @@ export async function GET(request: NextRequest) {
           isWhatsappButtonClicked: 1,
           statusUpdateTime: 1,
           updatedAt: 1,
+          invoiceUrl: 1,
         },
       },
 

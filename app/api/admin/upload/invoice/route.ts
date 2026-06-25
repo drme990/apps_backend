@@ -32,7 +32,7 @@ function resolveInvoiceFolder(fileType: string): string {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('suppliers');
+    const auth = await requireAdminPageAccess(['suppliers', 'execution', 'orders']);
     if ('error' in auth) return auth.error;
 
     const formData = await request.formData();

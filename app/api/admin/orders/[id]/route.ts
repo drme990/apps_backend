@@ -355,6 +355,19 @@ export async function PATCH(
       }
     }
 
+    if (
+      typeof body.invoiceUrl === 'string' &&
+      body.invoiceUrl !== order.invoiceUrl
+    ) {
+      const previousValue = order.invoiceUrl || null;
+      order.invoiceUrl = body.invoiceUrl;
+      changes.push({
+        changeType: 'invoice',
+        previousValue,
+        newValue: body.invoiceUrl,
+      });
+    }
+
     if (changes.length === 0) {
       return NextResponse.json({
         success: true,
