@@ -8,13 +8,21 @@ import { parseJsonBody } from '@/lib/validation/http';
 import { productCreateSchema } from '@/lib/validation/schemas';
 import { normalizeProductMedia } from '@/lib/product-media';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess('products');
     if ('error' in auth) return auth.error;
 
-    const products = await Product.find({ isDeleted: { $ne: true } })
+    const { searchParams } = request.nextUrl;
+    const status = searchParams.get('status')?.trim().toLowerCase();
+
+    const query: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (status === 'active') {
+      query.isActive = true;
+    }
+
+    const products = await Product.find(query)
       .sort({ displayOrder: 1, createdAt: -1 })
       .limit(1000)
       .lean();

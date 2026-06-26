@@ -210,11 +210,15 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      if (trimmed < defaultExecutionDate) {
+
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      if (trimmed < today) {
         return NextResponse.json(
           {
             success: false,
-            error: `Execution date must be on or after ${defaultExecutionDate}`,
+            error: `Execution date must be on or after ${today}`,
           },
           { status: 400 },
         );
