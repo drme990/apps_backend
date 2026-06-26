@@ -7,6 +7,12 @@ import Order from '@/lib/models/Order';
 import Country from '@/lib/models/Country';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
 
+function getTomorrowDate(): string {
+  const now = new Date();
+  const tomorrow = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+  return tomorrow.toISOString().slice(0, 10);
+}
+
 export async function GET() {
   try {
     await connectDB();
@@ -17,30 +23,71 @@ export async function GET() {
     const customerModelManasik = getUserModelByAppId('manasik');
 
     const [
-      totalProducts,
-      totalUsers,
+      activeProducts,
       totalOrders,
-      totalCountries,
       totalCustomers,
+      tomorrowExecutionCount,
     ] = await Promise.all([
-      Product.countDocuments({ isDeleted: { $ne: true } }),
-      User.countDocuments(),
+      // Match the public /api/products listing exactly: active products that are not deleted.
+      Product.countDocuments({ isActive: true, isDeleted: { $ne: true } }),
       Order.countDocuments(),
-      Country.countDocuments(),
       Promise.all([
         customerModelGhadaq.countDocuments(),
         customerModelManasik.countDocuments(),
       ]).then(([ghadaqCount, manasikCount]) => ghadaqCount + manasikCount),
+      Order.aggregate([
+        { $match: { status: { $in: ['paid', 'partial-paid'] } } },
+        {
+          $addFields: {
+            executionDateValue: {
+              $ifNull: [
+                {
+                  $reduce: {
+                    input: { $ifNull: ['$reservationData', []] },
+                    initialValue: '',
+                    in: {
+                      $cond: [
+                        { $eq: ['$$this.key', 'executionDate'] },
+                        '$$this.value',
+                        '$$value',
+                      ],
+                    },
+                  },
+                },
+                '',
+              ],
+            },
+          },
+        },
+        {
+          $addFields: {
+            effectiveExecutionDate: {
+              $cond: [
+                { $eq: ['$executionDateValue', ''] },
+                {
+                  $dateToString: {
+                    format: '%Y-%m-%d',
+                    date: { $add: ['$createdAt', 86400000] },
+                    timezone: 'UTC',
+                  },
+                },
+                { $substr: ['$executionDateValue', 0, 10] },
+              ],
+            },
+          },
+        },
+        { $match: { effectiveExecutionDate: getTomorrowDate() } },
+        { $count: 'count' },
+      ]).then((result) => result[0]?.count ?? 0),
     ]);
 
     return NextResponse.json({
       success: true,
       data: {
-        totalProducts,
-        totalUsers,
+        activeProducts,
         totalOrders,
-        totalCountries,
         totalCustomers,
+        tomorrowExecutionCount,
       },
     });
   } catch (error) {
