@@ -727,5 +727,6 @@ export const manualOrderCreateSchema = z
     invoiceUrl: z.string().trim().optional(),
     locale: z.string().trim().optional().default('ar'),
     userId: z.string().trim().optional(),
+    paidAmount: z.coerce.number().min(0).optional(),
   })
   .strict();

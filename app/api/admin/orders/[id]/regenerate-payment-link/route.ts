@@ -4,6 +4,7 @@ import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import { createPayment, getEasykashCashExpiryHours } from '@/lib/services/easykash';
 import { convertCurrency } from '@/lib/services/currency';
+import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { logActivity } from '@/lib/services/logger';
 import { randomBytes } from 'crypto';
 
@@ -38,10 +39,10 @@ export async function POST(
       );
     }
 
-    // Only allow regenerating for pending EasyKash orders
-    if (order.status !== 'pending') {
+    // Allow regenerating for pending or partial-paid orders
+    if (order.status !== 'pending' && order.status !== 'partial-paid') {
       return NextResponse.json(
-        { success: false, error: 'Can only regenerate link for pending orders' },
+        { success: false, error: 'Can only regenerate link for pending or partial-paid orders' },
         { status: 400 },
       );
     }
@@ -54,15 +55,19 @@ export async function POST(
       );
     }
 
+    // Calculate the actual remaining balance from payment records
+    const { totalPaid, remainingAmount: computedRemaining } = calculateOrderFinancials(order);
+    const targetPaymentAmount = computedRemaining > 0 ? computedRemaining : order.totalAmount;
+
     const currencyUpper = order.currency.toUpperCase();
-    let easykashAmount = order.totalAmount;
+    let easykashAmount = targetPaymentAmount;
     let paymentCurrency = currencyUpper;
 
     const EASYKASH_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'];
     if (!EASYKASH_CURRENCIES.includes(currencyUpper)) {
       try {
         const convertedAmount = await convertCurrency(
-          order.totalAmount,
+          targetPaymentAmount,
           currencyUpper,
           'EGP',
         );
@@ -86,7 +91,12 @@ export async function POST(
             typeof egpPriceEntry.amount === 'number' &&
             egpPriceEntry.amount > 0
           ) {
-            easykashAmount = Math.ceil(egpPriceEntry.amount * (item.quantity ?? 1));
+            // For partial orders: use the EGP full price minus the paid portion proportionally
+            const egpFull = egpPriceEntry.amount * (item.quantity ?? 1);
+            const fullAmount = order.fullAmount || order.totalAmount;
+            easykashAmount = totalPaid > 0 && fullAmount > 0
+              ? Math.ceil(egpFull - (totalPaid * egpFull / fullAmount))
+              : Math.ceil(egpFull);
             paymentCurrency = 'EGP';
           } else {
             return NextResponse.json(
@@ -170,14 +180,14 @@ export async function POST(
       throw new Error('Unable to allocate a unique EasyKash customerReference');
     }
 
-    // Append new payment record
+    // Append new payment record for the remaining balance
     const newPayment = {
       paymentId,
       easykashOrderId,
-      orderAmount: order.totalAmount,
+      orderAmount: targetPaymentAmount,
       gatewayAmount: easykashAmount,
       gatewayCurrency: paymentCurrency,
-      amount: order.totalAmount,
+      amount: targetPaymentAmount,
       currency: currencyUpper,
       status: 'pending' as const,
       redirectUrl: easykashResponse.redirectUrl,
@@ -196,7 +206,7 @@ export async function POST(
       action: 'update',
       resource: 'order',
       resourceId: id,
-      details: `Regenerated EasyKash payment link: ${easykashOrderId}`,
+      details: `Regenerated EasyKash payment link: ${easykashOrderId} (amount: ${targetPaymentAmount} ${currencyUpper}${totalPaid > 0 ? `, remaining after ${totalPaid} paid` : ''})`,
     });
 
     return NextResponse.json({
@@ -204,6 +214,8 @@ export async function POST(
       data: {
         checkoutUrl: easykashResponse.redirectUrl,
         expiresAt: newPayment.expiresAt,
+        paymentAmount: targetPaymentAmount,
+        currency: currencyUpper,
       },
     });
   } catch (error) {

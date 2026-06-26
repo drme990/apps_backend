@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
       invoiceUrl,
       locale,
       userId,
+      paidAmount: requestedPaidAmount,
     } = body;
 
     const orderSource: 'manasik' | 'ghadaq' = source;
@@ -292,18 +293,49 @@ export async function POST(request: NextRequest) {
 
     // ── Determine order status and payments ──
     const isEasykash = paymentMethod === 'easykash';
-    const orderStatus = isEasykash ? 'pending' : 'paid';
+
+    // Resolve paid amount for partial payment support
+    const requestedPaid = typeof requestedPaidAmount === 'number' ? requestedPaidAmount : 0;
+    const isFullPayment = requestedPaid <= 0 || requestedPaid >= totalAmount;
+    const isPartialManualPayment = !isFullPayment && !isEasykash;
+
+    // For EasyKash: if paidAmount is provided and > 0 but < total, we still
+    // create a pending EasyKash link for the *remaining* amount, and record
+    // the already-paid portion as a manual payment entry.
+    const isPartialEasykash = !isFullPayment && isEasykash;
+
+    let orderStatus: 'pending' | 'paid' | 'partial-paid';
+    if (isEasykash) {
+      orderStatus = isPartialEasykash ? 'partial-paid' : 'pending';
+    } else {
+      orderStatus = isPartialManualPayment ? 'partial-paid' : 'paid';
+    }
+
+    const paidAmountValue = isFullPayment
+      ? (isEasykash ? 0 : totalAmount)
+      : requestedPaid;
+    const remainingAmountValue = isFullPayment
+      ? (isEasykash ? totalAmount : 0)
+      : Math.max(0, totalAmount - requestedPaid);
+
+    const isPartialPayment = !isFullPayment;
+    const paymentType: 'full' | 'partial' = isPartialPayment ? 'partial' : 'full';
 
     const orderPayload = {
       items: orderItemsPayload,
       isGuest: !userId,
       userId: userId || undefined,
-      totalAmount,
+      // totalAmount = the first payment amount:
+      // - Full payment: the full order total
+      // - Partial manual: the paid portion
+      // - Partial EasyKash: the paid portion (the first entered amount); the
+      //   remaining balance is collected via the EasyKash link stored in payments.
+      totalAmount: isPartialPayment ? requestedPaid : totalAmount,
       fullAmount: totalAmount,
-      paidAmount: isEasykash ? 0 : totalAmount,
-      remainingAmount: isEasykash ? totalAmount : 0,
-      isPartialPayment: false,
-      paymentType: 'full' as const,
+      paidAmount: paidAmountValue,
+      remainingAmount: remainingAmountValue,
+      isPartialPayment,
+      paymentType,
       currency: currencyUpper,
       status: orderStatus,
       billingData: {
@@ -353,14 +385,17 @@ export async function POST(request: NextRequest) {
       const baseUrl =
         sourceBaseUrls[orderSource] || sourceBaseUrls.manasik;
 
+      // For partial EasyKash, the gateway amount is for the *remaining* balance
+      const easykashTargetAmount = isPartialEasykash ? remainingAmountValue : totalAmount;
+
       const EASYKASH_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'];
-      let easykashAmount = totalAmount;
+      let easykashAmount = easykashTargetAmount;
       let paymentCurrency = currencyUpper;
 
       if (!EASYKASH_CURRENCIES.includes(currencyUpper)) {
         try {
           const convertedAmount = await convertCurrency(
-            totalAmount,
+            easykashTargetAmount,
             currencyUpper,
             'EGP',
           );
@@ -380,7 +415,11 @@ export async function POST(request: NextRequest) {
             typeof egpPriceEntry?.amount === 'number' &&
             egpPriceEntry.amount > 0
           ) {
-            easykashAmount = Math.ceil(egpPriceEntry.amount * items[0].quantity);
+            // For partial: use the EGP price * quantity, then subtract the paid portion proportionally
+            const egpFull = egpPriceEntry.amount * items[0].quantity;
+            easykashAmount = isPartialEasykash
+              ? Math.ceil(egpFull - (requestedPaid * egpFull / totalAmount))
+              : Math.ceil(egpFull);
             paymentCurrency = 'EGP';
           } else {
             await Order.findByIdAndDelete(order._id);
@@ -447,21 +486,54 @@ export async function POST(request: NextRequest) {
 
         checkoutUrl = easykashResponse.redirectUrl;
 
-        order.payments = [
-          {
-            paymentId,
-            easykashOrderId,
-            orderAmount: totalAmount,
-            gatewayAmount: easykashAmount,
-            gatewayCurrency: paymentCurrency,
-            amount: totalAmount,
+        // Build payments array: if partial, record the already-paid portion as a manual payment
+        const payments: Array<{
+          paymentId: string;
+          easykashOrderId: string;
+          amount: number;
+          currency: string;
+          status: 'pending' | 'paid';
+          orderAmount?: number;
+          gatewayAmount?: number;
+          gatewayCurrency?: string;
+          redirectUrl?: string;
+          expiresAt?: Date;
+          createdAt: Date;
+          paidAt?: Date;
+        }> = [];
+
+        if (isPartialEasykash) {
+          // Record the already-paid portion as a manual paid payment
+          payments.push({
+            paymentId: `manual_${Date.now()}`,
+            easykashOrderId: `manual-${Date.now()}`,
+            orderAmount: requestedPaid,
+            gatewayAmount: requestedPaid,
+            gatewayCurrency: currencyUpper,
+            amount: requestedPaid,
             currency: currencyUpper,
-            status: 'pending',
-            redirectUrl: easykashResponse.redirectUrl,
-            expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
+            status: 'paid',
             createdAt: new Date(),
-          },
-        ];
+            paidAt: new Date(),
+          });
+        }
+
+        // Add the EasyKash pending payment for the remaining amount
+        payments.push({
+          paymentId,
+          easykashOrderId,
+          orderAmount: easykashTargetAmount,
+          gatewayAmount: easykashAmount,
+          gatewayCurrency: paymentCurrency,
+          amount: easykashTargetAmount,
+          currency: currencyUpper,
+          status: 'pending',
+          redirectUrl: easykashResponse.redirectUrl,
+          expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
+          createdAt: new Date(),
+        });
+
+        order.payments = payments;
         await order.save();
       } catch (easykashError) {
         await Order.findByIdAndDelete(order._id);
@@ -473,14 +545,15 @@ export async function POST(request: NextRequest) {
       }
     } else if (!isEasykash) {
       // For manual payment methods, add a manual payment record
+      const paymentRecordAmount = isPartialManualPayment ? requestedPaid : totalAmount;
       order.payments = [
         {
           paymentId: `manual_${Date.now()}`,
           easykashOrderId: `manual-${Date.now()}`,
-          orderAmount: totalAmount,
-          gatewayAmount: totalAmount,
+          orderAmount: paymentRecordAmount,
+          gatewayAmount: paymentRecordAmount,
           gatewayCurrency: currencyUpper,
-          amount: totalAmount,
+          amount: paymentRecordAmount,
           currency: currencyUpper,
           status: 'paid',
           createdAt: new Date(),
@@ -497,7 +570,7 @@ export async function POST(request: NextRequest) {
       action: 'create',
       resource: 'order',
       resourceId: order._id.toString(),
-      details: `Manually created order ${order.orderNumber} via admin panel (${paymentMethod}) with ${items.length} item(s)`,
+      details: `Manually created order ${order.orderNumber} via admin panel (${paymentMethod}) with ${items.length} item(s)${isPartialPayment ? ` — partial payment: ${requestedPaid} ${currencyUpper} of ${totalAmount} ${currencyUpper}` : ''}`,
     });
 
     return NextResponse.json({
@@ -508,6 +581,7 @@ export async function POST(request: NextRequest) {
           orderNumber: order.orderNumber,
           totalAmount: order.totalAmount,
           fullAmount: order.fullAmount,
+          paidAmount: order.paidAmount,
           remainingAmount: order.remainingAmount,
           isPartialPayment: order.isPartialPayment,
           currency: order.currency,
