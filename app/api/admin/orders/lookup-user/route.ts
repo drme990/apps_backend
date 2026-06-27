@@ -80,6 +80,7 @@ export async function GET(request: NextRequest) {
 
     const phone = request.nextUrl.searchParams.get('phone')?.trim();
     const email = request.nextUrl.searchParams.get('email')?.trim();
+    const source = request.nextUrl.searchParams.get('source')?.trim();
 
     if (!phone && !email) {
       return NextResponse.json(
@@ -125,8 +126,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Search both apps for users with matching phone or email
-    const apps: Array<'manasik' | 'ghadaq'> = ['manasik', 'ghadaq'];
+    // Search the requested app, or both if no source is provided
+    const allApps: Array<'manasik' | 'ghadaq'> = ['manasik', 'ghadaq'];
+    const apps: Array<'manasik' | 'ghadaq'> =
+      source === 'manasik' || source === 'ghadaq' ? [source] : allApps;
     const users: LookupUser[] = [];
     const seenIds = new Set<string>();
 
