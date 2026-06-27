@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
       productSlug: string;
       productName: { ar: string; en: string };
       price: number;
+      originalPrice?: number;
       currency: string;
       quantity: number;
       sizeIndex: number;
@@ -134,13 +135,13 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      let unitPrice = selectedSize.price ?? 0;
+      let originalPrice = selectedSize.price ?? 0;
       const sizeCurrencyPrice = selectedSize.prices?.find(
         (p: { currencyCode: string; amount: number }) =>
           p.currencyCode === currencyUpper,
       );
       if (sizeCurrencyPrice) {
-        unitPrice = sizeCurrencyPrice.amount;
+        originalPrice = sizeCurrencyPrice.amount;
       } else if (product.baseCurrency !== currencyUpper) {
         return NextResponse.json(
           {
@@ -150,6 +151,9 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+
+      const customPrice = typeof item.customPrice === 'number' ? item.customPrice : null;
+      const unitPrice = customPrice !== null && customPrice >= 0 ? customPrice : originalPrice;
 
       if (unitPrice <= 0) {
         return NextResponse.json(
@@ -169,6 +173,7 @@ export async function POST(request: NextRequest) {
         productSlug: product.slug,
         productName: { ar: product.name.ar, en: product.name.en },
         price: unitPrice,
+        originalPrice,
         currency: currencyUpper,
         quantity: item.quantity,
         sizeIndex: activeSizeIndex,

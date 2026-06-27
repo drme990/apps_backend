@@ -700,6 +700,7 @@ export const manualOrderCreateSchema = z
             productId: z.string().trim().min(1),
             quantity: z.coerce.number().int().positive(),
             sizeIndex: z.coerce.number().int().nonnegative().optional().default(0),
+            customPrice: z.coerce.number().min(0).optional(),
           })
           .strict(),
       )

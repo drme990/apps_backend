@@ -101,6 +101,7 @@ export interface IOrderItem {
   productSlug?: string;
   productName: { ar: string; en: string };
   price: number;
+  originalPrice?: number;
   currency: string;
   quantity: number;
   sizeIndex?: number;
@@ -225,6 +226,7 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
       en: { type: String, required: true },
     },
     price: { type: Number, required: true, min: 0 },
+    originalPrice: { type: Number, min: 0 },
     currency: { type: String, required: true },
     quantity: { type: Number, required: true, min: 1, default: 1 },
     sizeIndex: { type: Number, min: 0, default: 0 },
