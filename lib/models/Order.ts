@@ -87,7 +87,12 @@ export type PaymentMethod =
   | 'fawry'
   | 'meeza'
   | 'valu'
-  | 'other';
+  | 'other'
+  | 'easykash'
+  | 'insta_pay'
+  | 'vodafone_cash'
+  | 'paypal'
+  | 'binance';
 
 export type PaymentType = 'full' | 'half' | 'partial';
 
@@ -158,6 +163,11 @@ export interface IPaymentAttempt {
   userId?: string;
 }
 
+export interface IInvoiceUrl {
+  url: string;
+  reviewed?: boolean;
+}
+
 export interface IOrder {
   _id?: string;
   orderNumber: string;
@@ -188,7 +198,7 @@ export interface IOrder {
   isWhatsappButtonClicked?: 'clicked' | 'not-clicked' | 'no-need-to-click';
   referralId?: string;
   cancellationReason?: string;
-  invoiceUrl?: string;
+  invoiceUrls?: IInvoiceUrl[];
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
   payments?: IPayment[];
@@ -299,6 +309,11 @@ const PaymentSchema = new mongoose.Schema<IPayment>(
         'meeza',
         'valu',
         'other',
+        'easykash',
+        'insta_pay',
+        'vodafone_cash',
+        'paypal',
+        'binance',
       ],
     },
     easykashRef: { type: String, index: true },
@@ -318,6 +333,14 @@ const PaymentAttemptSchema = new mongoose.Schema<IPaymentAttempt>(
     createdAt: { type: Date, required: true, default: () => new Date() },
     ip: { type: String },
     userId: { type: String },
+  },
+  { _id: false },
+);
+
+const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
+  {
+    url: { type: String, required: true, trim: true },
+    reviewed: { type: Boolean, default: false },
   },
   { _id: false },
 );
@@ -473,7 +496,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     },
     referralId: { type: String, trim: true, index: true },
     cancellationReason: { type: String, trim: true },
-    invoiceUrl: { type: String, trim: true },
+    invoiceUrls: { type: [InvoiceUrlSchema], default: [] },
     statusUpdateTime: {
       type: Date,
       required: true,

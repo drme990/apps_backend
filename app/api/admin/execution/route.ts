@@ -228,7 +228,7 @@ export async function GET(request: NextRequest) {
           isWhatsappButtonClicked: 1,
           statusUpdateTime: 1,
           updatedAt: 1,
-          invoiceUrl: 1,
+          invoiceUrls: 1,
           payments: 1,
         },
       },
@@ -252,10 +252,21 @@ export async function GET(request: NextRequest) {
     const totalCount = facetResult[0]?.totalCount[0]?.count || 0;
     const orders = facetResult[0]?.orders || [];
 
+    const normalizedOrders = orders.map((order: Record<string, unknown>) => {
+      const rawInvoices = order.invoiceUrls as Array<{ url: string; reviewed?: boolean; trusted?: boolean }> | undefined;
+      return {
+        ...order,
+        invoiceUrls: (rawInvoices || []).map((invoice) => ({
+          url: invoice.url,
+          reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+        })),
+      };
+    });
+
     return NextResponse.json({
       success: true,
       data: {
-        orders,
+        orders: normalizedOrders,
         pagination: {
           page,
           limit,

@@ -36,11 +36,21 @@ function hasOrderUserId(userId: unknown): boolean {
   return false;
 }
 
+function normalizeInvoiceUrls(
+  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean }>,
+): Array<{ url: string; reviewed: boolean }> {
+  return (invoiceUrls || []).map((invoice) => ({
+    url: invoice.url,
+    reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+  }));
+}
+
 function sanitizeOrderForAdmin(order: {
   easykashRef?: unknown;
   easykashProductCode?: unknown;
   easykashVoucher?: unknown;
   easykashResponse?: unknown;
+  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean }>;
   [key: string]: unknown;
 }) {
   const sanitized = { ...order };
@@ -48,6 +58,9 @@ function sanitizeOrderForAdmin(order: {
   delete sanitized.easykashProductCode;
   delete sanitized.easykashVoucher;
   delete sanitized.easykashResponse;
+  if (Array.isArray(sanitized.invoiceUrls)) {
+    sanitized.invoiceUrls = normalizeInvoiceUrls(sanitized.invoiceUrls);
+  }
   return sanitized;
 }
 
@@ -355,17 +368,40 @@ export async function PATCH(
       }
     }
 
-    if (
-      typeof body.invoiceUrl === 'string' &&
-      body.invoiceUrl !== order.invoiceUrl
-    ) {
-      const previousValue = order.invoiceUrl || null;
-      order.invoiceUrl = body.invoiceUrl;
-      changes.push({
-        changeType: 'invoice',
-        previousValue,
-        newValue: body.invoiceUrl,
-      });
+    if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
+      const trimmedInvoiceUrl = body.invoiceUrl.trim();
+      const reviewed = body.invoiceReviewed === true;
+      if (!Array.isArray(order.invoiceUrls)) {
+        order.invoiceUrls = [];
+      }
+      const alreadyExists = order.invoiceUrls.some((entry) => entry.url === trimmedInvoiceUrl);
+      if (!alreadyExists) {
+        const previousValue = JSON.stringify(order.invoiceUrls || []);
+        order.invoiceUrls.push({ url: trimmedInvoiceUrl, reviewed });
+        changes.push({
+          changeType: 'invoice',
+          previousValue,
+          newValue: JSON.stringify(order.invoiceUrls),
+        });
+      }
+    }
+
+    if (Array.isArray(body.invoiceUrls)) {
+      const nextInvoiceUrls = body.invoiceUrls
+        .filter((entry: unknown) => entry && typeof (entry as { url?: string }).url === 'string')
+        .map((entry: unknown) => ({
+          url: (entry as { url: string }).url.trim(),
+          reviewed: Boolean((entry as { reviewed?: unknown }).reviewed),
+        }));
+      const previousValue = JSON.stringify(order.invoiceUrls || []);
+      if (JSON.stringify(nextInvoiceUrls) !== previousValue) {
+        order.invoiceUrls = nextInvoiceUrls;
+        changes.push({
+          changeType: 'invoice',
+          previousValue,
+          newValue: JSON.stringify(nextInvoiceUrls),
+        });
+      }
     }
 
     if (changes.length === 0) {

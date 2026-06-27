@@ -48,10 +48,15 @@ export async function POST(request: NextRequest) {
       reservationData,
       paymentMethod,
       invoiceUrl,
+      invoiceReviewed,
       locale,
       userId,
       paidAmount: requestedPaidAmount,
     } = body;
+
+    const initialInvoiceUrls = invoiceUrl
+      ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true }]
+      : [];
 
     const orderSource: 'manasik' | 'ghadaq' = source;
 
@@ -340,6 +345,7 @@ export async function POST(request: NextRequest) {
       remainingAmount: remainingAmountValue,
       isPartialPayment,
       paymentType,
+      paymentMethod,
       currency: currencyUpper,
       status: orderStatus,
       billingData: {
@@ -368,14 +374,14 @@ export async function POST(request: NextRequest) {
         paidAt?: Date;
       }>,
       paymentAttempts: [],
-      invoiceUrl: invoiceUrl || undefined,
+      invoiceUrls: initialInvoiceUrls,
     };
 
     // ── Create order ──
     const order = await Order.create(orderPayload);
 
-    // ── Prefix order number with W- ──
-    order.orderNumber = `W-${order.orderNumber}`;
+    // ── Prefix order number with W ──
+    order.orderNumber = `W${order.orderNumber}`;
     await order.save();
 
     let checkoutUrl: string | null = null;

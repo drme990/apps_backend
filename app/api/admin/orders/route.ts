@@ -189,6 +189,7 @@ export async function GET(request: NextRequest) {
       isWhatsappButtonClicked: 1,
       remainingAmount: 1,
       source: 1,
+      invoiceUrls: 1,
       createdAt: 1,
       updatedAt: 1,
       statusUpdateTime: 1,
@@ -222,6 +223,7 @@ export async function GET(request: NextRequest) {
       updatedAt: 1,
       statusUpdateTime: 1,
       payments: 1,
+      invoiceUrls: 1,
     };
 
     const [orders, total] = await Promise.all([
@@ -243,8 +245,14 @@ export async function GET(request: NextRequest) {
           ? undefined
           : order.referralId;
 
+      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; reviewed?: boolean; trusted?: boolean }>).map((invoice) => ({
+        url: invoice.url,
+        reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+      }));
+
       return {
         ...order,
+        invoiceUrls,
         isGuest: hasIsGuest ? order.isGuest : !hasUserId,
         referralId: normalizedReferralId,
       };

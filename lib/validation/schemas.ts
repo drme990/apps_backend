@@ -723,8 +723,9 @@ export const manualOrderCreateSchema = z
       )
       .optional()
       .default([]),
-    paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash']),
+    paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash', 'bank_transfer', 'paypal', 'binance']),
     invoiceUrl: z.string().trim().optional(),
+    invoiceReviewed: z.boolean().optional(),
     locale: z.string().trim().optional().default('ar'),
     userId: z.string().trim().optional(),
     paidAmount: z.coerce.number().min(0).optional(),
