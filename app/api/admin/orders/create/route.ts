@@ -86,20 +86,44 @@ export async function POST(request: NextRequest) {
 
     // ── Resolve each item ──
     const orderItemsPayload: Array<{
-      productId: string;
-      productSlug: string;
+      productId?: string;
+      productSlug?: string;
       productName: { ar: string; en: string };
       price: number;
       originalPrice?: number;
       currency: string;
       quantity: number;
-      sizeIndex: number;
-      sizeName: { ar: string; en: string };
+      sizeIndex?: number;
+      sizeName?: { ar: string; en: string };
+      isCustom?: boolean;
+      customSize?: string;
     }> = [];
 
     let totalAmount = 0;
 
     for (const item of items) {
+      if (item.type === 'custom') {
+        if (item.price <= 0) {
+          return NextResponse.json(
+            { success: false, error: `Custom item price must be greater than zero: ${item.name}` },
+            { status: 400 },
+          );
+        }
+
+        const itemTotal = item.price * item.quantity;
+        totalAmount += itemTotal;
+
+        orderItemsPayload.push({
+          productName: { ar: item.name, en: item.name },
+          price: item.price,
+          currency: currencyUpper,
+          quantity: item.quantity,
+          isCustom: true,
+          customSize: item.size,
+        });
+        continue;
+      }
+
       const product = await Product.findOne({
         _id: item.productId,
         isDeleted: { $ne: true },
@@ -419,9 +443,20 @@ export async function POST(request: NextRequest) {
             paymentCurrency = 'EGP';
           }
         } catch {
-          // Fallback: try to find EGP price on the first product
-          const firstProduct = await Product.findById(items[0].productId).lean();
-          const firstSize = firstProduct?.sizes?.[items[0].sizeIndex];
+          // Fallback: try to find EGP price on the first existing product
+          const firstExistingItem = items.find((it) => it.type === 'existing');
+          if (!firstExistingItem || firstExistingItem.type !== 'existing') {
+            await Order.findByIdAndDelete(order._id);
+            return NextResponse.json(
+              {
+                success: false,
+                error: `Unable to convert ${currencyUpper} amount to EGP for custom items.`,
+              },
+              { status: 500 },
+            );
+          }
+          const firstProduct = await Product.findById(firstExistingItem.productId).lean();
+          const firstSize = firstProduct?.sizes?.[firstExistingItem.sizeIndex ?? 0];
           const egpPriceEntry = firstSize?.prices?.find(
             (p: { currencyCode: string; amount: number }) =>
               p.currencyCode === 'EGP',
@@ -431,7 +466,7 @@ export async function POST(request: NextRequest) {
             egpPriceEntry.amount > 0
           ) {
             // For partial: use the EGP price * quantity, then subtract the paid portion proportionally
-            const egpFull = egpPriceEntry.amount * items[0].quantity;
+            const egpFull = egpPriceEntry.amount * firstExistingItem.quantity;
             easykashAmount = isPartialEasykash
               ? Math.ceil(egpFull - (requestedPaid * egpFull / totalAmount))
               : Math.ceil(egpFull);

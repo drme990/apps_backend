@@ -97,7 +97,7 @@ export type PaymentMethod =
 export type PaymentType = 'full' | 'half' | 'partial';
 
 export interface IOrderItem {
-  productId: mongoose.Types.ObjectId | string;
+  productId?: mongoose.Types.ObjectId | string;
   productSlug?: string;
   productName: { ar: string; en: string };
   price: number;
@@ -106,6 +106,8 @@ export interface IOrderItem {
   quantity: number;
   sizeIndex?: number;
   sizeName?: { ar: string; en: string };
+  isCustom?: boolean;
+  customSize?: string;
 }
 
 export interface IBillingData {
@@ -218,7 +220,6 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
     productId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Product',
-      required: true,
     },
     productSlug: { type: String, trim: true, lowercase: true },
     productName: {
@@ -234,6 +235,8 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
       ar: { type: String, trim: true },
       en: { type: String, trim: true },
     },
+    isCustom: { type: Boolean, default: false },
+    customSize: { type: String, trim: true },
   },
   { _id: false },
 );
