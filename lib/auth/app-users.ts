@@ -50,15 +50,16 @@ export interface IBaseAppUser {
   ref?: string | null;
   detectedCountry?: string;
   tier?: mongoose.Types.ObjectId | string | null;
+  isAdminCreated?: boolean;
 }
 
 export interface IBaseAppUserMethods {
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
-type BaseAppUserModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
+export type BaseAppUserModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
-function normalizeAppUserPhone(value: unknown): string {
+export function normalizeAppUserPhone(value: unknown): string {
   if (typeof value !== 'string') return '';
 
   let normalized = value.trim();
@@ -106,6 +107,7 @@ function buildBaseAppUserModel(
       ref: { type: String, trim: true, default: null },
       detectedCountry: { type: String, trim: true },
       tier: { type: mongoose.Schema.Types.ObjectId, ref: 'UserTier', default: null, index: true },
+      isAdminCreated: { type: Boolean, default: false },
     },
     { timestamps: true, collection },
   );

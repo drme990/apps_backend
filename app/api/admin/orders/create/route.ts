@@ -14,6 +14,7 @@ import { createPayment, getEasykashCashExpiryHours } from '@/lib/services/easyka
 import { convertCurrency } from '@/lib/services/currency';
 import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
+import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } from '@/lib/auth/app-users';
 import { randomBytes } from 'crypto';
 
 function generatePaymentId(): string {
@@ -83,6 +84,69 @@ export async function POST(request: NextRequest) {
     }
 
     const currencyUpper = currency.toUpperCase();
+
+    // ── Resolve or create the customer user ──
+    let resolvedUserId = userId;
+    const AppUserModel = getUserModelByAppId(orderSource) as BaseAppUserModel;
+    if (!resolvedUserId) {
+      const trimmedEmail = billingData.email.trim().toLowerCase();
+      const normalizedPhone = normalizeAppUserPhone(billingData.phone);
+      let existingUser = null;
+      if (trimmedEmail) {
+        existingUser = await AppUserModel.findOne({ email: trimmedEmail }).select('_id').lean();
+      }
+      if (!existingUser && normalizedPhone) {
+        existingUser = await AppUserModel.findOne({ phone: normalizedPhone }).select('_id').lean();
+      }
+      if (existingUser) {
+        resolvedUserId = String(existingUser._id);
+      } else {
+        try {
+          const newUser = await AppUserModel.create({
+            name: billingData.fullName.trim() || trimmedEmail,
+            email: trimmedEmail,
+            password: trimmedEmail,
+            phone: normalizedPhone,
+            country: billingData.country.trim() || '',
+            appId: orderSource,
+            isAdminCreated: true,
+          });
+          resolvedUserId = String(newUser._id);
+        } catch (error) {
+          // If another request created the same user in the meantime, reuse it.
+          const isDuplicateKey =
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            (error as { code: unknown }).code === 11000;
+          if (isDuplicateKey) {
+            const existingUser = await AppUserModel.findOne({
+              $or: [
+                ...(trimmedEmail ? [{ email: trimmedEmail }] : []),
+                ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+              ],
+            })
+              .select('_id')
+              .lean();
+            if (existingUser) {
+              resolvedUserId = String(existingUser._id);
+            } else {
+              console.error('Create manual order duplicate key but no existing user:', error);
+              return NextResponse.json(
+                { success: false, error: 'Failed to create customer user' },
+                { status: 500 },
+              );
+            }
+          } else {
+            console.error('Create manual order user error:', error);
+            return NextResponse.json(
+              { success: false, error: 'Failed to create customer user' },
+              { status: 500 },
+            );
+          }
+        }
+      }
+    }
 
     // ── Resolve each item ──
     const orderItemsPayload: Array<{
@@ -361,8 +425,8 @@ export async function POST(request: NextRequest) {
 
     const orderPayload = {
       items: orderItemsPayload,
-      isGuest: !userId,
-      userId: userId || undefined,
+      isGuest: !resolvedUserId,
+      userId: resolvedUserId || undefined,
       // totalAmount = the first payment amount:
       // - Full payment: the full order total
       // - Partial manual: the paid portion
