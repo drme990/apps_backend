@@ -37,11 +37,12 @@ function hasOrderUserId(userId: unknown): boolean {
 }
 
 function normalizeInvoiceUrls(
-  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean }>,
-): Array<{ url: string; reviewed: boolean }> {
+  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }>,
+): Array<{ url: string; reviewed: boolean; value: number }> {
   return (invoiceUrls || []).map((invoice) => ({
     url: invoice.url,
     reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+    value: typeof invoice.value === 'number' ? invoice.value : 0,
   }));
 }
 
@@ -50,7 +51,7 @@ function sanitizeOrderForAdmin(order: {
   easykashProductCode?: unknown;
   easykashVoucher?: unknown;
   easykashResponse?: unknown;
-  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean }>;
+  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }>;
   [key: string]: unknown;
 }) {
   const sanitized = { ...order };
@@ -190,6 +191,19 @@ export async function PUT(
     }
 
     await order.save();
+
+    if (nextStatus !== previousStatus) {
+      await OrderChangeHistory.create({
+        orderId: String(order._id),
+        appId: order.source || 'ghadaq',
+        changeType: 'status',
+        previousValue: previousStatus,
+        newValue: nextStatus,
+        changedByUserId: auth.user.userId,
+        changedByUserName: auth.user.name,
+        changedByUserEmail: auth.user.email,
+      });
+    }
 
     if (nextStatus === 'paid' && changes.includes('status → paid')) {
       sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
@@ -371,13 +385,14 @@ export async function PATCH(
     if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
       const reviewed = body.invoiceReviewed === true;
+      const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
       if (!Array.isArray(order.invoiceUrls)) {
         order.invoiceUrls = [];
       }
       const alreadyExists = order.invoiceUrls.some((entry) => entry.url === trimmedInvoiceUrl);
       if (!alreadyExists) {
         const previousValue = JSON.stringify(order.invoiceUrls || []);
-        order.invoiceUrls.push({ url: trimmedInvoiceUrl, reviewed });
+        order.invoiceUrls.push({ url: trimmedInvoiceUrl, reviewed, value });
         changes.push({
           changeType: 'invoice',
           previousValue,
@@ -392,6 +407,7 @@ export async function PATCH(
         .map((entry: unknown) => ({
           url: (entry as { url: string }).url.trim(),
           reviewed: Boolean((entry as { reviewed?: unknown }).reviewed),
+          value: typeof (entry as { value?: unknown }).value === 'number' ? (entry as { value: number }).value : 0,
         }));
       const previousValue = JSON.stringify(order.invoiceUrls || []);
       if (JSON.stringify(nextInvoiceUrls) !== previousValue) {

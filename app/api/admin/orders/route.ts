@@ -245,9 +245,10 @@ export async function GET(request: NextRequest) {
           ? undefined
           : order.referralId;
 
-      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; reviewed?: boolean; trusted?: boolean }>).map((invoice) => ({
+      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }>).map((invoice) => ({
         url: invoice.url,
         reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+        value: typeof invoice.value === 'number' ? invoice.value : 0,
       }));
 
       return {

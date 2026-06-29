@@ -721,7 +721,7 @@ export const manualOrderCreateSchema = z
     referralId: z.string().trim().optional(),
     billingData: z
       .object({
-        fullName: z.string().trim().min(1),
+        fullName: z.string().trim().optional().default(''),
         email: z.string().email(),
         phone: z.string().trim().min(1),
         country: z.string().trim().min(1),
@@ -739,8 +739,23 @@ export const manualOrderCreateSchema = z
     paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash', 'bank_transfer', 'paypal', 'binance']),
     invoiceUrl: z.string().trim().optional(),
     invoiceReviewed: z.boolean().optional(),
+    invoiceValue: z.coerce.number().min(0).optional().default(0),
     locale: z.string().trim().optional().default('ar'),
     userId: z.string().trim().optional(),
     paidAmount: z.coerce.number().min(0).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (data) => {
+      const fullName = data.billingData.fullName.trim();
+      if (fullName) return true;
+      const sacrificeFor = data.reservationData.find(
+        (r): r is { key: string; value: string } => r.key === 'sacrificeFor',
+      )?.value;
+      return Boolean(sacrificeFor?.trim());
+    },
+    {
+      message: 'Either customer fullName or a sacrificeFor name is required',
+      path: ['billingData', 'fullName'],
+    },
+  );

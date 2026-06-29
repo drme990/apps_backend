@@ -253,12 +253,13 @@ export async function GET(request: NextRequest) {
     const orders = facetResult[0]?.orders || [];
 
     const normalizedOrders = orders.map((order: Record<string, unknown>) => {
-      const rawInvoices = order.invoiceUrls as Array<{ url: string; reviewed?: boolean; trusted?: boolean }> | undefined;
+      const rawInvoices = order.invoiceUrls as Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }> | undefined;
       return {
         ...order,
         invoiceUrls: (rawInvoices || []).map((invoice) => ({
           url: invoice.url,
           reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+          value: typeof invoice.value === 'number' ? invoice.value : 0,
         })),
       };
     });

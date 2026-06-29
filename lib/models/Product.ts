@@ -18,6 +18,8 @@ export interface IProductSize {
   name: { ar: string; en: string };
   price: number;
   prices: ICurrencyPrice[];
+  manualPrice?: number | null;
+  manualPrices?: ICurrencyPrice[];
   feedsUp?: number;
   isAvailable?: boolean;
 }
@@ -115,6 +117,8 @@ const ProductSizeSchema = new mongoose.Schema({
   },
   price: { type: Number, required: true, min: 0, default: 0 },
   prices: [CurrencyPriceSchema],
+  manualPrice: { type: Number, min: 0, default: null },
+  manualPrices: [CurrencyPriceSchema],
   feedsUp: { type: Number, min: 0, default: 0 },
   isAvailable: { type: Boolean, default: true },
 });

@@ -14,7 +14,8 @@ export interface IOrderChangeHistory {
   | 'bulk_execution_date'
   | 'gender'
   | 'isAlive'
-  | 'intention';
+  | 'intention'
+  | 'status';
   previousValue: string | null;
   newValue: string | null;
   changedByUserId: string;
@@ -46,6 +47,7 @@ const OrderChangeHistorySchema = new mongoose.Schema<IOrderChangeHistory>(
         'gender',
         'isAlive',
         'intention',
+        'status',
       ],
       index: true,
     },

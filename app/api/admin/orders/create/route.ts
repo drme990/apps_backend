@@ -50,13 +50,14 @@ export async function POST(request: NextRequest) {
       paymentMethod,
       invoiceUrl,
       invoiceReviewed,
+      invoiceValue,
       locale,
       userId,
       paidAmount: requestedPaidAmount,
     } = body;
 
     const initialInvoiceUrls = invoiceUrl
-      ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true }]
+      ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true, value: invoiceValue }]
       : [];
 
     const orderSource: 'manasik' | 'ghadaq' = source;
@@ -85,8 +86,22 @@ export async function POST(request: NextRequest) {
 
     const currencyUpper = currency.toUpperCase();
 
+    // ── Resolve the effective customer name ──
+    const reservationInput = Array.isArray(reservationData) ? reservationData : [];
+    const firstSacrificeName = reservationInput
+      .find((r): r is { key: string; value: string } => r.key === 'sacrificeFor')
+      ?.value?.split('\n')
+      .map((n) => n.trim())
+      .filter(Boolean)[0];
+    const effectiveFullName = billingData.fullName.trim()
+      ? billingData.fullName.trim()
+      : firstSacrificeName
+        ? `User_${firstSacrificeName}`
+        : '';
+
     // ── Resolve or create the customer user ──
     let resolvedUserId = userId;
+    let createdUser: { email: string; password: string } | null = null;
     const AppUserModel = getUserModelByAppId(orderSource) as BaseAppUserModel;
     if (!resolvedUserId) {
       const trimmedEmail = billingData.email.trim().toLowerCase();
@@ -103,7 +118,7 @@ export async function POST(request: NextRequest) {
       } else {
         try {
           const newUser = await AppUserModel.create({
-            name: billingData.fullName.trim() || trimmedEmail,
+            name: effectiveFullName || trimmedEmail,
             email: trimmedEmail,
             password: trimmedEmail,
             phone: normalizedPhone,
@@ -112,6 +127,7 @@ export async function POST(request: NextRequest) {
             isAdminCreated: true,
           });
           resolvedUserId = String(newUser._id);
+          createdUser = { email: trimmedEmail, password: trimmedEmail };
         } catch (error) {
           // If another request created the same user in the meantime, reuse it.
           const isDuplicateKey =
@@ -215,7 +231,14 @@ export async function POST(request: NextRequest) {
         item.sizeIndex >= 0 && item.sizeIndex < product.sizes.length
           ? item.sizeIndex
           : 0;
-      const selectedSize = product.sizes[activeSizeIndex];
+      const selectedSize = product.sizes[activeSizeIndex] as {
+        manualPrice?: number | null;
+        manualPrices?: { currencyCode: string; amount: number }[];
+        name?: { ar: string; en: string };
+        price: number;
+        prices?: { currencyCode: string; amount: number }[];
+        isAvailable?: boolean;
+      };
       if (selectedSize?.isAvailable === false) {
         return NextResponse.json(
           { success: false, error: `Selected size unavailable for: ${product.name.en || product.name.ar}` },
@@ -223,21 +246,30 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      let originalPrice = selectedSize.price ?? 0;
-      const sizeCurrencyPrice = selectedSize.prices?.find(
-        (p: { currencyCode: string; amount: number }) =>
-          p.currencyCode === currencyUpper,
-      );
-      if (sizeCurrencyPrice) {
-        originalPrice = sizeCurrencyPrice.amount;
-      } else if (product.baseCurrency !== currencyUpper) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Price not available in ${currencyUpper} for ${product.name.en || product.name.ar}. Available in: ${product.baseCurrency}`,
-          },
-          { status: 400 },
+      let originalPrice = 0;
+      if (typeof selectedSize.manualPrice === 'number' && selectedSize.manualPrice > 0) {
+        const manualCurrencyPrice = selectedSize.manualPrices?.find(
+          (p: { currencyCode: string; amount: number }) =>
+            p.currencyCode === currencyUpper,
         );
+        originalPrice = manualCurrencyPrice?.amount ?? selectedSize.manualPrice;
+      } else {
+        originalPrice = selectedSize.price ?? 0;
+        const sizeCurrencyPrice = selectedSize.prices?.find(
+          (p: { currencyCode: string; amount: number }) =>
+            p.currencyCode === currencyUpper,
+        );
+        if (sizeCurrencyPrice) {
+          originalPrice = sizeCurrencyPrice.amount;
+        } else if (product.baseCurrency !== currencyUpper) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Price not available in ${currencyUpper} for ${product.name.en || product.name.ar}. Available in: ${product.baseCurrency}`,
+            },
+            { status: 400 },
+          );
+        }
       }
 
       const customPrice = typeof item.customPrice === 'number' ? item.customPrice : null;
@@ -290,8 +322,6 @@ export async function POST(request: NextRequest) {
         { $set: { defaultExecutionDate } },
       );
     }
-
-    const reservationInput = Array.isArray(reservationData) ? reservationData : [];
 
     const userExecutionDate = reservationInput.find(
       (r): r is { key: string; value: string } =>
@@ -442,7 +472,7 @@ export async function POST(request: NextRequest) {
       currency: currencyUpper,
       status: orderStatus,
       billingData: {
-        fullName: billingData.fullName.trim(),
+        fullName: effectiveFullName,
         email: billingData.email.trim().toLowerCase(),
         phone: billingData.phone.trim(),
         country: billingData.country.trim() || 'N/A',
@@ -575,7 +605,7 @@ export async function POST(request: NextRequest) {
             easykashResponse = await createPayment({
               amount: easykashAmount,
               currency: paymentCurrency,
-              name: billingData.fullName.trim(),
+              name: effectiveFullName,
               email: billingData.email.trim().toLowerCase(),
               mobile: billingData.phone.trim(),
               cashExpiry: cashExpiryHours,
@@ -702,6 +732,7 @@ export async function POST(request: NextRequest) {
           status: order.status,
         },
         checkoutUrl,
+        createdUser,
       },
     });
   } catch (error) {
