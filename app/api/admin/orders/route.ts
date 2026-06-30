@@ -49,7 +49,7 @@ function getUtcStartOfLocalDay(
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;
@@ -245,10 +245,11 @@ export async function GET(request: NextRequest) {
           ? undefined
           : order.referralId;
 
-      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }>).map((invoice) => ({
+      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number; currency?: string }>).map((invoice) => ({
         url: invoice.url,
         reviewed: invoice.reviewed ?? invoice.trusted ?? false,
         value: typeof invoice.value === 'number' ? invoice.value : 0,
+        currency: invoice.currency || 'EGP',
       }));
 
       return {

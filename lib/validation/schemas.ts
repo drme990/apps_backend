@@ -740,6 +740,7 @@ export const manualOrderCreateSchema = z
     invoiceUrl: z.string().trim().optional(),
     invoiceReviewed: z.boolean().optional(),
     invoiceValue: z.coerce.number().min(0).optional().default(0),
+    invoiceCurrency: z.string().trim().optional().default('EGP'),
     locale: z.string().trim().optional().default('ar'),
     userId: z.string().trim().optional(),
     paidAmount: z.coerce.number().min(0).optional(),

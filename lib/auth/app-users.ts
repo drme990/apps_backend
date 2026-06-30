@@ -11,6 +11,7 @@ export const ADMIN_ALLOWED_PAGES = [
   'products-discovery',
   'orders',
   'execution',
+  'invoices',
   'customers',
   'analytics',
   'booking',

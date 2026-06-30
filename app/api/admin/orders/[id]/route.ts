@@ -71,7 +71,7 @@ export async function GET(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -117,7 +117,7 @@ export async function PUT(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -268,7 +268,7 @@ export async function PATCH(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -296,7 +296,7 @@ export async function PATCH(
       body.sacrificeFor !== getReservationValue(reservationData, 'sacrificeFor')
     ) {
       const previousValue = getReservationValue(reservationData, 'sacrificeFor') || null;
-      updateReservationField(reservationData, 'sacrificeFor', body.sacrificeFor, { ar: 'الذبيحة لأجل', en: 'Sacrifice For' }, 'text');
+      updateReservationField(reservationData, 'sacrificeFor', body.sacrificeFor, { ar: 'المؤدى عنه', en: 'Sacrifice For' }, 'text');
       changes.push({
         changeType: 'name',
         previousValue,
@@ -408,6 +408,7 @@ export async function PATCH(
           url: (entry as { url: string }).url.trim(),
           reviewed: Boolean((entry as { reviewed?: unknown }).reviewed),
           value: typeof (entry as { value?: unknown }).value === 'number' ? (entry as { value: number }).value : 0,
+          currency: typeof (entry as { currency?: unknown }).currency === 'string' ? (entry as { currency: string }).currency.trim() || 'EGP' : 'EGP',
         }));
       const previousValue = JSON.stringify(order.invoiceUrls || []);
       if (JSON.stringify(nextInvoiceUrls) !== previousValue) {

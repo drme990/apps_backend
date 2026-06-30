@@ -51,13 +51,14 @@ export async function POST(request: NextRequest) {
       invoiceUrl,
       invoiceReviewed,
       invoiceValue,
+      invoiceCurrency,
       locale,
       userId,
       paidAmount: requestedPaidAmount,
     } = body;
 
     const initialInvoiceUrls = invoiceUrl
-      ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true, value: invoiceValue }]
+      ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true, value: invoiceValue, currency: invoiceCurrency || 'EGP' }]
       : [];
 
     const orderSource: 'manasik' | 'ghadaq' = source;

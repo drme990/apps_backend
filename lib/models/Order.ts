@@ -170,6 +170,7 @@ export interface IInvoiceUrl {
   url: string;
   reviewed?: boolean;
   value: number;
+  currency?: string;
 }
 
 export interface IOrder {
@@ -348,6 +349,7 @@ const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
     url: { type: String, required: true, trim: true },
     reviewed: { type: Boolean, default: false },
     value: { type: Number, required: true, min: 0, default: 0 },
+    currency: { type: String, trim: true, default: 'EGP' },
   },
   { _id: false },
 );

@@ -57,6 +57,7 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'products-discovery',
         'orders',
         'execution',
+        'invoices',
         'customers',
         'analytics',
         'booking',
