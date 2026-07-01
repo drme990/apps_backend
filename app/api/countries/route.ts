@@ -70,9 +70,9 @@ export async function GET(request: NextRequest) {
     const visible = viewerCode
       ? getVisibleCountriesForViewer(normalizedCountries, viewerCode)
       : normalizedCountries.map((country) => ({
-          ...country,
-          viewerVisibility: { realPrice: true, exchangePrice: true },
-        }));
+        ...country,
+        viewerVisibility: { realPrice: true, exchangePrice: true },
+      }));
 
     // Return only the required fields
     const filteredData = visible.map((country) => ({
@@ -83,6 +83,7 @@ export async function GET(request: NextRequest) {
       currencySymbol: country.currencySymbol,
       flagEmoji: country.flagEmoji,
       sortOrder: country.sortOrder,
+      currencyOrder: country.currencyOrder,
       viewerVisibility: country.viewerVisibility,
     }));
 

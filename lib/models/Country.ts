@@ -11,14 +11,16 @@ export interface ICountry {
   currencyCode: string;
   currencySymbol: string;
   roundingRule:
-    | 'nearest-ten'
-    | 'nearest-five'
-    | 'nearest-fifty'
-    | 'nearest-hundred'
-    | 'ceil';
+  | 'nearest-ten'
+  | 'nearest-five'
+  | 'nearest-fifty'
+  | 'nearest-hundred'
+  | 'ceil';
   flagEmoji: string;
   isActive: boolean;
   sortOrder: number | null;
+  /** Display order for this country's currency in the multi-currency price editor. Null = alphabetical fallback. */
+  currencyOrder: number | null;
   region?: string;
   visibilityMode?: CountryVisibilityMode;
   countriesToSee?: CountryVisibilityMap;
@@ -75,6 +77,7 @@ const CountrySchema = new mongoose.Schema<ICountry>(
     flagEmoji: { type: String, default: '' },
     isActive: { type: Boolean, default: true },
     sortOrder: { type: Number, default: null },
+    currencyOrder: { type: Number, default: null },
     region: { type: String, trim: true, default: '' },
     visibilityMode: {
       type: String,
@@ -92,6 +95,7 @@ const CountrySchema = new mongoose.Schema<ICountry>(
 CountrySchema.index({ currencyCode: 1 });
 CountrySchema.index({ isActive: 1 });
 CountrySchema.index({ sortOrder: 1 });
+CountrySchema.index({ currencyOrder: 1 });
 
 const Country =
   (mongoose.models.Country as mongoose.Model<ICountry>) ||
