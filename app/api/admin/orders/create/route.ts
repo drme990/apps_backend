@@ -52,14 +52,23 @@ export async function POST(request: NextRequest) {
       invoiceReviewed,
       invoiceValue,
       invoiceCurrency,
+      invoiceUrls,
       locale,
       userId,
       paidAmount: requestedPaidAmount,
     } = body;
 
-    const initialInvoiceUrls = invoiceUrl
-      ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true, value: invoiceValue, currency: invoiceCurrency || 'EGP' }]
-      : [];
+    // Support both legacy single-invoice fields and new invoiceUrls array
+    const initialInvoiceUrls = invoiceUrls && Array.isArray(invoiceUrls) && invoiceUrls.length > 0
+      ? invoiceUrls.map((u: { url: string; reviewed?: boolean; value?: number; currency?: string }) => ({
+        url: u.url,
+        reviewed: u.reviewed === true,
+        value: u.value ?? 0,
+        currency: u.currency || 'EGP',
+      }))
+      : invoiceUrl
+        ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true, value: invoiceValue, currency: invoiceCurrency || 'EGP' }]
+        : [];
 
     const orderSource: 'manasik' | 'ghadaq' = source;
 

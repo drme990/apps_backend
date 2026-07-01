@@ -88,9 +88,15 @@ async function findOrderForPaymentStatus(
     request.nextUrl.searchParams.get('customerReference');
   const orderNumber = normalizeOrderNumber(orderNumberParam);
 
-  let order = orderNumber
-    ? await Order.findOne({ orderNumber }).sort({ createdAt: -1 })
-    : null;
+  // Case-insensitive order number query (DB may store lowercase)
+  const findByOrderNumber = async (num: string) => {
+    const escaped = num.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return Order.findOne({ orderNumber: { $regex: `^${escaped}$`, $options: 'i' } })
+      .sort({ createdAt: -1 })
+      .exec();
+  };
+
+  let order = orderNumber ? await findByOrderNumber(orderNumber) : null;
 
   if (!order && customerReference) {
     const resolvedOrderId = getOrderIdFromReference(customerReference);
@@ -101,16 +107,13 @@ async function findOrderForPaymentStatus(
     if (!order) {
       const orderNumberFromReference = normalizeOrderNumber(customerReference);
       if (orderNumberFromReference) {
-        order = await Order.findOne({ orderNumber: orderNumberFromReference })
-          .sort({ createdAt: -1 })
-          .exec();
+        order = await findByOrderNumber(orderNumberFromReference);
       }
     }
 
     if (!order) {
-      order = await Order.findOne({ orderNumber: customerReference })
-        .sort({ createdAt: -1 })
-        .exec();
+      // Last resort: try the raw customerReference as order number (case-insensitive)
+      order = await findByOrderNumber(customerReference);
     }
   }
 

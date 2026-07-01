@@ -326,7 +326,8 @@ export async function POST(request: NextRequest) {
       '',
     );
     if (!order && baseOrderReference) {
-      order = await Order.findOne({ orderNumber: baseOrderReference }).exec();
+      const escapedRef = baseOrderReference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      order = await Order.findOne({ orderNumber: { $regex: `^${escapedRef}$`, $options: 'i' } }).exec();
     }
 
     if (!order && linkedPaymentLink?.orderId) {

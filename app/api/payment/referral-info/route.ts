@@ -12,7 +12,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, data: null });
     }
 
-    const order = await Order.findOne({ orderNumber });
+    const escapedNum = orderNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const order = await Order.findOne({ orderNumber: { $regex: `^${escapedNum}$`, $options: 'i' } });
 
     if (!order || !order.referralId) {
       return NextResponse.json({ success: true, data: null });

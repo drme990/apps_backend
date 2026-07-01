@@ -132,8 +132,9 @@ export async function POST(request: NextRequest) {
 
     log('info', 'create_link.initiated', { ip, traceId, orderNumber });
 
-    // Find order
-    const order = await Order.findOne({ orderNumber }).exec();
+    // Find order (case-insensitive — DB may store lowercase)
+    const escapedNum = orderNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const order = await Order.findOne({ orderNumber: { $regex: `^${escapedNum}$`, $options: 'i' } }).exec();
     if (!order) {
       return NextResponse.json(
         { success: false, error: 'Order not found' },

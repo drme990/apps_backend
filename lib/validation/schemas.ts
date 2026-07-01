@@ -741,6 +741,16 @@ export const manualOrderCreateSchema = z
     invoiceReviewed: z.boolean().optional(),
     invoiceValue: z.coerce.number().min(0).optional().default(0),
     invoiceCurrency: z.string().trim().optional().default('EGP'),
+    invoiceUrls: z
+      .array(
+        z.object({
+          url: z.string().trim(),
+          reviewed: z.boolean().optional().default(false),
+          value: z.coerce.number().min(0).optional().default(0),
+          currency: z.string().trim().optional().default('EGP'),
+        }),
+      )
+      .optional(),
     locale: z.string().trim().optional().default('ar'),
     userId: z.string().trim().optional(),
     paidAmount: z.coerce.number().min(0).optional(),
