@@ -243,7 +243,6 @@ export async function POST(request: NextRequest) {
           : 0;
       const selectedSize = product.sizes[activeSizeIndex] as {
         manualPrice?: number | null;
-        manualPrices?: { currencyCode: string; amount: number }[];
         name?: { ar: string; en: string };
         price: number;
         prices?: { currencyCode: string; amount: number }[];
@@ -258,11 +257,28 @@ export async function POST(request: NextRequest) {
 
       let originalPrice = 0;
       if (typeof selectedSize.manualPrice === 'number' && selectedSize.manualPrice > 0) {
-        const manualCurrencyPrice = selectedSize.manualPrices?.find(
-          (p: { currencyCode: string; amount: number }) =>
-            p.currencyCode === currencyUpper,
-        );
-        originalPrice = manualCurrencyPrice?.amount ?? selectedSize.manualPrice;
+        // Manual price is always in EGP — use it directly when order currency is EGP,
+        // otherwise fall back to the regular multi-currency price for non-EGP currencies.
+        if (currencyUpper === 'EGP') {
+          originalPrice = selectedSize.manualPrice;
+        } else {
+          originalPrice = selectedSize.price ?? 0;
+          const sizeCurrencyPrice = selectedSize.prices?.find(
+            (p: { currencyCode: string; amount: number }) =>
+              p.currencyCode === currencyUpper,
+          );
+          if (sizeCurrencyPrice) {
+            originalPrice = sizeCurrencyPrice.amount;
+          } else if (product.baseCurrency !== currencyUpper) {
+            return NextResponse.json(
+              {
+                success: false,
+                error: `Price not available in ${currencyUpper} for ${product.name.en || product.name.ar}. Available in: ${product.baseCurrency}`,
+              },
+              { status: 400 },
+            );
+          }
+        }
       } else {
         originalPrice = selectedSize.price ?? 0;
         const sizeCurrencyPrice = selectedSize.prices?.find(
