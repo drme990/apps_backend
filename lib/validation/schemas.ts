@@ -738,14 +738,14 @@ export const manualOrderCreateSchema = z
       .default([]),
     paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash', 'bank_transfer', 'paypal', 'binance']),
     invoiceUrl: z.string().trim().optional(),
-    invoiceReviewed: z.boolean().optional(),
+    invoiceStatus: z.enum(['confirmed', 'waiting', 'pending', 'rejected']).optional().default('waiting'),
     invoiceValue: z.coerce.number().min(0).optional().default(0),
     invoiceCurrency: z.string().trim().optional().default('EGP'),
     invoiceUrls: z
       .array(
         z.object({
           url: z.string().trim(),
-          reviewed: z.boolean().optional().default(false),
+          invoiceStatus: z.enum(['confirmed', 'waiting', 'pending', 'rejected']).optional().default('waiting'),
           value: z.coerce.number().min(0).optional().default(0),
           currency: z.string().trim().optional().default('EGP'),
         }),

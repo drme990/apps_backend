@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
-import Order from '@/lib/models/Order';
+import Order, { type IInvoiceUrl } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { z } from 'zod';
@@ -15,7 +15,6 @@ const allowedPatchFields = [
   'shortDuaa',
   'photo',
   'invoiceUrl',
-  'invoiceReviewed',
   'invoiceStatus',
   'invoiceValue',
   'items',
@@ -23,6 +22,29 @@ const allowedPatchFields = [
   'isAlive',
   'intention',
 ];
+
+const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+
+function normalizeInvoiceUrls(
+  invoiceUrls?: Array<{
+    url: string;
+    invoiceStatus?: string;
+    rejectionReason?: string;
+    value?: number;
+    currency?: string;
+  }>,
+): IInvoiceUrl[] {
+  return (invoiceUrls || []).map((invoice) => ({
+    url: invoice.url,
+    invoiceStatus:
+      invoice.invoiceStatus && VALID_INVOICE_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_INVOICE_STATUSES)[number])
+        ? (invoice.invoiceStatus as (typeof VALID_INVOICE_STATUSES)[number])
+        : 'waiting',
+    rejectionReason: invoice.rejectionReason || '',
+    value: typeof invoice.value === 'number' ? invoice.value : 0,
+    currency: invoice.currency || 'EGP',
+  }));
+}
 
 const putSchema = z.object({
   status: z.enum([
@@ -63,7 +85,12 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ success: true, data: order });
+    const sanitized = {
+      ...order,
+      invoiceUrls: normalizeInvoiceUrls(order.invoiceUrls),
+    };
+
+    return NextResponse.json({ success: true, data: sanitized });
   } catch (error) {
     console.error('Error fetching order:', error);
     return NextResponse.json(
@@ -126,7 +153,12 @@ export async function PUT(
       details: `Updated order ${order.orderNumber} status to ${status}`,
     });
 
-    return NextResponse.json({ success: true, data: order });
+    const sanitized = {
+      ...order.toObject(),
+      invoiceUrls: normalizeInvoiceUrls(order.invoiceUrls),
+    };
+
+    return NextResponse.json({ success: true, data: sanitized });
   } catch (error) {
     console.error('Error updating order status:', error);
     return NextResponse.json(
@@ -199,7 +231,12 @@ export async function PATCH(
       details: `Updated order ${order.orderNumber} fields: ${Object.keys(fields).join(', ')}`,
     });
 
-    return NextResponse.json({ success: true, data: order });
+    const sanitized = {
+      ...order.toObject(),
+      invoiceUrls: normalizeInvoiceUrls(order.invoiceUrls),
+    };
+
+    return NextResponse.json({ success: true, data: sanitized });
   } catch (error) {
     console.error('Error patching order:', error);
     return NextResponse.json(

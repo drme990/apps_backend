@@ -247,9 +247,10 @@ export async function GET(request: NextRequest) {
           ? undefined
           : order.referralId;
 
-      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number; currency?: string }>).map((invoice) => ({
+      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; invoiceStatus?: string; rejectionReason?: string; value?: number; currency?: string }>).map((invoice) => ({
         url: invoice.url,
-        reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+        invoiceStatus: ['confirmed', 'waiting', 'pending', 'rejected'].includes(invoice.invoiceStatus || '') ? invoice.invoiceStatus : 'waiting',
+        rejectionReason: invoice.rejectionReason || '',
         value: typeof invoice.value === 'number' ? invoice.value : 0,
         currency: invoice.currency || 'EGP',
       }));

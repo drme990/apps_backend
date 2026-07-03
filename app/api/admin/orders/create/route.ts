@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       reservationData,
       paymentMethod: rawPaymentMethod,
       invoiceUrl,
-      invoiceReviewed,
+      invoiceStatus,
       invoiceValue,
       invoiceCurrency,
       invoiceUrls,
@@ -60,22 +60,24 @@ export async function POST(request: NextRequest) {
 
     const paymentMethod = rawPaymentMethod as PaymentMethod;
 
+    const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+    const resolveInvoiceStatus = (status?: string): 'confirmed' | 'waiting' | 'pending' | 'rejected' =>
+      status && VALID_INVOICE_STATUSES.includes(status as (typeof VALID_INVOICE_STATUSES)[number])
+        ? (status as (typeof VALID_INVOICE_STATUSES)[number])
+        : 'waiting';
+
     // Support both legacy single-invoice fields and new invoiceUrls array
     const initialInvoiceUrls = invoiceUrls && Array.isArray(invoiceUrls) && invoiceUrls.length > 0
-      ? invoiceUrls.map((u: { url: string; reviewed?: boolean; invoiceStatus?: string; value?: number; currency?: string }) => ({
+      ? invoiceUrls.map((u: { url: string; invoiceStatus?: string; value?: number; currency?: string }) => ({
         url: u.url,
-        reviewed: u.reviewed === true,
-        invoiceStatus: (u.invoiceStatus === 'confirmed' || u.invoiceStatus === 'waiting')
-          ? u.invoiceStatus
-          : (u.reviewed === true ? 'confirmed' : 'waiting'),
+        invoiceStatus: resolveInvoiceStatus(u.invoiceStatus),
         value: u.value ?? 0,
         currency: u.currency || 'EGP',
       }))
       : invoiceUrl
         ? [{
           url: invoiceUrl,
-          reviewed: invoiceReviewed === true,
-          invoiceStatus: invoiceReviewed === true ? 'confirmed' : 'waiting',
+          invoiceStatus: resolveInvoiceStatus(invoiceStatus),
           value: invoiceValue,
           currency: invoiceCurrency || 'EGP',
         }]

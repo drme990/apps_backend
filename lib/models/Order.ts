@@ -170,7 +170,6 @@ export type InvoiceStatus = 'confirmed' | 'waiting' | 'pending' | 'rejected';
 
 export interface IInvoiceUrl {
   url: string;
-  reviewed?: boolean; // @deprecated kept for backward-compat migration
   invoiceStatus?: InvoiceStatus;
   rejectionReason?: string;
   value: number;
@@ -352,7 +351,6 @@ const PaymentAttemptSchema = new mongoose.Schema<IPaymentAttempt>(
 const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
   {
     url: { type: String, required: true, trim: true },
-    reviewed: { type: Boolean, default: false },
     invoiceStatus: {
       type: String,
       enum: ['confirmed', 'waiting', 'pending', 'rejected'],

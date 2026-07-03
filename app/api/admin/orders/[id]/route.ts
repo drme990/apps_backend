@@ -39,8 +39,6 @@ function hasOrderUserId(userId: unknown): boolean {
 function normalizeInvoiceUrls(
   invoiceUrls?: Array<{
     url: string;
-    reviewed?: boolean;
-    trusted?: boolean;
     invoiceStatus?: string;
     rejectionReason?: string;
     value?: number;
@@ -48,7 +46,6 @@ function normalizeInvoiceUrls(
   }>,
 ): Array<{
   url: string;
-  reviewed: boolean;
   invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected';
   rejectionReason: string;
   value: number;
@@ -57,25 +54,17 @@ function normalizeInvoiceUrls(
   const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
   return (invoiceUrls || []).map((invoice: {
     url: string;
-    reviewed?: boolean;
-    trusted?: boolean;
     invoiceStatus?: string;
     rejectionReason?: string;
     value?: number;
     currency?: string;
   }) => {
-    // Migrate legacy `reviewed` boolean to invoiceStatus if invoiceStatus is missing
-    let invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected';
-    if (invoice.invoiceStatus && VALID_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_STATUSES)[number])) {
-      invoiceStatus = invoice.invoiceStatus as (typeof VALID_STATUSES)[number];
-    } else if (invoice.reviewed ?? invoice.trusted ?? false) {
-      invoiceStatus = 'confirmed';
-    } else {
-      invoiceStatus = 'waiting';
-    }
+    const invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected' =
+      invoice.invoiceStatus && VALID_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
+        ? (invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
+        : 'waiting';
     return {
       url: invoice.url,
-      reviewed: invoice.reviewed ?? invoice.trusted ?? false,
       invoiceStatus,
       rejectionReason: typeof invoice.rejectionReason === 'string' ? invoice.rejectionReason : '',
       value: typeof invoice.value === 'number' ? invoice.value : 0,
@@ -91,8 +80,6 @@ function sanitizeOrderForAdmin(order: {
   easykashResponse?: unknown;
   invoiceUrls?: Array<{
     url: string;
-    reviewed?: boolean;
-    trusted?: boolean;
     invoiceStatus?: string;
     rejectionReason?: string;
     value?: number;
@@ -430,16 +417,13 @@ export async function PATCH(
 
     if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
-      const reviewed = body.invoiceReviewed === true;
       const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
       const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
       const rawStatus = body.invoiceStatus;
       const invoiceStatus =
         typeof rawStatus === 'string' && VALID_STATUSES.includes(rawStatus as (typeof VALID_STATUSES)[number])
           ? (rawStatus as (typeof VALID_STATUSES)[number])
-          : reviewed
-            ? 'confirmed'
-            : 'waiting';
+          : 'waiting';
       const rejectionReason =
         typeof body.rejectionReason === 'string' ? body.rejectionReason.trim() : '';
       if (!Array.isArray(order.invoiceUrls)) {
@@ -447,7 +431,7 @@ export async function PATCH(
       }
       const alreadyExists = order.invoiceUrls.some((entry: IInvoiceUrl) => entry.url === trimmedInvoiceUrl);
       if (!alreadyExists) {
-        const newEntry = { url: trimmedInvoiceUrl, reviewed, invoiceStatus, rejectionReason, value };
+        const newEntry = { url: trimmedInvoiceUrl, invoiceStatus, rejectionReason, value };
         order.invoiceUrls.push(newEntry);
         changes.push({
           changeType: 'invoice',
@@ -462,17 +446,13 @@ export async function PATCH(
       const nextInvoiceUrls: IInvoiceUrl[] = body.invoiceUrls
         .filter((entry: unknown) => entry && typeof (entry as { url?: string }).url === 'string')
         .map((entry: unknown) => {
-          const reviewed = Boolean((entry as { reviewed?: unknown }).reviewed);
           const rawStatus = (entry as { invoiceStatus?: unknown }).invoiceStatus;
           const invoiceStatus =
             typeof rawStatus === 'string' && VALID_STATUSES.includes(rawStatus as (typeof VALID_STATUSES)[number])
               ? (rawStatus as (typeof VALID_STATUSES)[number])
-              : reviewed
-                ? 'confirmed'
-                : 'waiting';
+              : 'waiting';
           return {
             url: (entry as { url: string }).url.trim(),
-            reviewed,
             invoiceStatus,
             rejectionReason:
               typeof (entry as { rejectionReason?: unknown }).rejectionReason === 'string'
