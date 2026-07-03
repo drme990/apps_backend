@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
+import Category from '@/lib/models/Categories';
 
 function hasOrderUserId(userId: unknown): boolean {
   if (typeof userId === 'string') return userId.trim().length > 0;
@@ -62,6 +64,8 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search');
     const source = searchParams.get('source');
     const whatsappState = searchParams.get('whatsappState');
+    const categoryId = searchParams.get('category');
+    const intention = searchParams.get('intention');
     const viewMode = searchParams.get('view') || 'full';
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
@@ -70,6 +74,18 @@ export async function GET(request: NextRequest) {
       searchParams.get('tzOffsetMinutes'),
     );
     const skip = (page - 1) * maxLimit;
+
+    // Category filter: resolve category products to match order items
+    let categoryProductIds: mongoose.Types.ObjectId[] | undefined;
+    if (categoryId && categoryId !== 'all') {
+      const category = await Category.findById(categoryId).select('products').lean();
+      if (category && Array.isArray(category.products)) {
+        categoryProductIds = category.products.map((p) => {
+          const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
+          return new mongoose.Types.ObjectId(str);
+        });
+      }
+    }
 
     const query: Record<string, unknown> = {};
     const andConditions: Record<string, unknown>[] = [];
@@ -123,6 +139,23 @@ export async function GET(request: NextRequest) {
           { 'billingData.email': { $regex: search, $options: 'i' } },
           { 'billingData.phone': { $regex: search, $options: 'i' } },
         ],
+      });
+    }
+
+    if (categoryProductIds && categoryProductIds.length > 0) {
+      andConditions.push({
+        'items.productId': { $in: categoryProductIds },
+      });
+    }
+
+    if (intention && intention !== 'all') {
+      andConditions.push({
+        reservationData: {
+          $elemMatch: {
+            key: 'intention',
+            value: intention,
+          },
+        },
       });
     }
 
