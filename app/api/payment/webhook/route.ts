@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import Order, { type IOrder, type IPayment } from '@/lib/models/Order';
+import Order, { type IOrder, type IPayment, type PaymentMethod } from '@/lib/models/Order';
 import PaymentLink from '@/lib/models/PaymentLink';
 import {
   verifyCallbackSignature,
@@ -88,7 +88,7 @@ function normalizeStatus(rawStatus: string | undefined): string {
 
 function mapPaymentMethod(
   methodRaw: string | undefined,
-): 'card' | 'wallet' | 'bank_transfer' | 'fawry' | 'meeza' | 'valu' | 'other' {
+): PaymentMethod {
   const method = (methodRaw || '').toLowerCase();
 
   if (method.includes('card')) return 'card';
@@ -117,6 +117,7 @@ function createSyntheticPayment(
     amount: orderAmount,
     currency,
     status: 'pending',
+    paymentMethod: 'easykash' as PaymentMethod,
     createdAt: new Date(),
   };
 }

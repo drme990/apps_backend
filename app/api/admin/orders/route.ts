@@ -190,10 +190,12 @@ export async function GET(request: NextRequest) {
       remainingAmount: 1,
       source: 1,
       invoiceUrls: 1,
+      reservationData: 1,
       createdAt: 1,
       updatedAt: 1,
       statusUpdateTime: 1,
       payments: 1,
+      paymentMethod: 1,
     };
 
     const fullProjection = {

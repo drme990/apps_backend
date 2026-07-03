@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
-import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
+import Order, { type IOrder, type IInvoiceUrl, type OrderStatus } from '@/lib/models/Order';
 import OrderChangeHistory, { type IOrderChangeHistory } from '@/lib/models/OrderChangeHistory';
 import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { logActivity } from '@/lib/services/logger';
@@ -37,13 +37,51 @@ function hasOrderUserId(userId: unknown): boolean {
 }
 
 function normalizeInvoiceUrls(
-  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }>,
-): Array<{ url: string; reviewed: boolean; value: number }> {
-  return (invoiceUrls || []).map((invoice) => ({
-    url: invoice.url,
-    reviewed: invoice.reviewed ?? invoice.trusted ?? false,
-    value: typeof invoice.value === 'number' ? invoice.value : 0,
-  }));
+  invoiceUrls?: Array<{
+    url: string;
+    reviewed?: boolean;
+    trusted?: boolean;
+    invoiceStatus?: string;
+    rejectionReason?: string;
+    value?: number;
+    currency?: string;
+  }>,
+): Array<{
+  url: string;
+  reviewed: boolean;
+  invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected';
+  rejectionReason: string;
+  value: number;
+  currency: string;
+}> {
+  const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+  return (invoiceUrls || []).map((invoice: {
+    url: string;
+    reviewed?: boolean;
+    trusted?: boolean;
+    invoiceStatus?: string;
+    rejectionReason?: string;
+    value?: number;
+    currency?: string;
+  }) => {
+    // Migrate legacy `reviewed` boolean to invoiceStatus if invoiceStatus is missing
+    let invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected';
+    if (invoice.invoiceStatus && VALID_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_STATUSES)[number])) {
+      invoiceStatus = invoice.invoiceStatus as (typeof VALID_STATUSES)[number];
+    } else if (invoice.reviewed ?? invoice.trusted ?? false) {
+      invoiceStatus = 'confirmed';
+    } else {
+      invoiceStatus = 'waiting';
+    }
+    return {
+      url: invoice.url,
+      reviewed: invoice.reviewed ?? invoice.trusted ?? false,
+      invoiceStatus,
+      rejectionReason: typeof invoice.rejectionReason === 'string' ? invoice.rejectionReason : '',
+      value: typeof invoice.value === 'number' ? invoice.value : 0,
+      currency: typeof invoice.currency === 'string' ? invoice.currency.trim() || 'EGP' : 'EGP',
+    };
+  });
 }
 
 function sanitizeOrderForAdmin(order: {
@@ -51,7 +89,15 @@ function sanitizeOrderForAdmin(order: {
   easykashProductCode?: unknown;
   easykashVoucher?: unknown;
   easykashResponse?: unknown;
-  invoiceUrls?: Array<{ url: string; reviewed?: boolean; trusted?: boolean; value?: number }>;
+  invoiceUrls?: Array<{
+    url: string;
+    reviewed?: boolean;
+    trusted?: boolean;
+    invoiceStatus?: string;
+    rejectionReason?: string;
+    value?: number;
+    currency?: string;
+  }>;
   [key: string]: unknown;
 }) {
   const sanitized = { ...order };
@@ -386,38 +432,139 @@ export async function PATCH(
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
       const reviewed = body.invoiceReviewed === true;
       const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
+      const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+      const rawStatus = body.invoiceStatus;
+      const invoiceStatus =
+        typeof rawStatus === 'string' && VALID_STATUSES.includes(rawStatus as (typeof VALID_STATUSES)[number])
+          ? (rawStatus as (typeof VALID_STATUSES)[number])
+          : reviewed
+            ? 'confirmed'
+            : 'waiting';
+      const rejectionReason =
+        typeof body.rejectionReason === 'string' ? body.rejectionReason.trim() : '';
       if (!Array.isArray(order.invoiceUrls)) {
         order.invoiceUrls = [];
       }
-      const alreadyExists = order.invoiceUrls.some((entry) => entry.url === trimmedInvoiceUrl);
+      const alreadyExists = order.invoiceUrls.some((entry: IInvoiceUrl) => entry.url === trimmedInvoiceUrl);
       if (!alreadyExists) {
-        const previousValue = JSON.stringify(order.invoiceUrls || []);
-        order.invoiceUrls.push({ url: trimmedInvoiceUrl, reviewed, value });
+        const newEntry = { url: trimmedInvoiceUrl, reviewed, invoiceStatus, rejectionReason, value };
+        order.invoiceUrls.push(newEntry);
         changes.push({
           changeType: 'invoice',
-          previousValue,
-          newValue: JSON.stringify(order.invoiceUrls),
+          previousValue: null,
+          newValue: JSON.stringify(newEntry),
         });
       }
     }
 
     if (Array.isArray(body.invoiceUrls)) {
-      const nextInvoiceUrls = body.invoiceUrls
+      const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+      const nextInvoiceUrls: IInvoiceUrl[] = body.invoiceUrls
         .filter((entry: unknown) => entry && typeof (entry as { url?: string }).url === 'string')
-        .map((entry: unknown) => ({
-          url: (entry as { url: string }).url.trim(),
-          reviewed: Boolean((entry as { reviewed?: unknown }).reviewed),
-          value: typeof (entry as { value?: unknown }).value === 'number' ? (entry as { value: number }).value : 0,
-          currency: typeof (entry as { currency?: unknown }).currency === 'string' ? (entry as { currency: string }).currency.trim() || 'EGP' : 'EGP',
-        }));
-      const previousValue = JSON.stringify(order.invoiceUrls || []);
-      if (JSON.stringify(nextInvoiceUrls) !== previousValue) {
-        order.invoiceUrls = nextInvoiceUrls;
-        changes.push({
-          changeType: 'invoice',
-          previousValue,
-          newValue: JSON.stringify(nextInvoiceUrls),
+        .map((entry: unknown) => {
+          const reviewed = Boolean((entry as { reviewed?: unknown }).reviewed);
+          const rawStatus = (entry as { invoiceStatus?: unknown }).invoiceStatus;
+          const invoiceStatus =
+            typeof rawStatus === 'string' && VALID_STATUSES.includes(rawStatus as (typeof VALID_STATUSES)[number])
+              ? (rawStatus as (typeof VALID_STATUSES)[number])
+              : reviewed
+                ? 'confirmed'
+                : 'waiting';
+          return {
+            url: (entry as { url: string }).url.trim(),
+            reviewed,
+            invoiceStatus,
+            rejectionReason:
+              typeof (entry as { rejectionReason?: unknown }).rejectionReason === 'string'
+                ? (entry as { rejectionReason: string }).rejectionReason.trim()
+                : '',
+            value: typeof (entry as { value?: unknown }).value === 'number' ? (entry as { value: number }).value : 0,
+            currency:
+              typeof (entry as { currency?: unknown }).currency === 'string'
+                ? (entry as { currency: string }).currency.trim() || 'EGP'
+                : 'EGP',
+          };
         });
+      const previousInvoiceUrls: IInvoiceUrl[] = Array.isArray(order.invoiceUrls) ? order.invoiceUrls : [];
+      if (JSON.stringify(nextInvoiceUrls) !== JSON.stringify(previousInvoiceUrls)) {
+        order.invoiceUrls = nextInvoiceUrls;
+
+        if (previousInvoiceUrls.length === nextInvoiceUrls.length) {
+          // Same length: compare entries by index so invoice replacements are tracked as image changes.
+          for (let i = 0; i < nextInvoiceUrls.length; i++) {
+            const prevEntry = previousInvoiceUrls[i];
+            const nextEntry = nextInvoiceUrls[i];
+
+            if (prevEntry.url !== nextEntry.url) {
+              changes.push({
+                changeType: 'invoiceImage',
+                previousValue: JSON.stringify({ url: prevEntry.url }),
+                newValue: JSON.stringify({ url: nextEntry.url }),
+              });
+            }
+
+            if (prevEntry.invoiceStatus !== nextEntry.invoiceStatus || prevEntry.rejectionReason !== nextEntry.rejectionReason) {
+              changes.push({
+                changeType: 'invoiceStatus',
+                previousValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: prevEntry.invoiceStatus, rejectionReason: prevEntry.rejectionReason }),
+                newValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: nextEntry.invoiceStatus, rejectionReason: nextEntry.rejectionReason }),
+              });
+            }
+
+            if (prevEntry.value !== nextEntry.value || prevEntry.currency !== nextEntry.currency) {
+              changes.push({
+                changeType: 'invoiceValue',
+                previousValue: JSON.stringify({ url: nextEntry.url, value: prevEntry.value, currency: prevEntry.currency }),
+                newValue: JSON.stringify({ url: nextEntry.url, value: nextEntry.value, currency: nextEntry.currency }),
+              });
+            }
+          }
+        } else {
+          // Different lengths: match by URL and log added/removed invoices.
+          const previousByUrl = new Map(previousInvoiceUrls.map((entry: IInvoiceUrl) => [entry.url, entry]));
+          const nextByUrl = new Map(nextInvoiceUrls.map((entry: IInvoiceUrl) => [entry.url, entry]));
+
+          for (const nextEntry of nextInvoiceUrls) {
+            const prevEntry = previousByUrl.get(nextEntry.url);
+            if (prevEntry) {
+              if (prevEntry.invoiceStatus !== nextEntry.invoiceStatus || prevEntry.rejectionReason !== nextEntry.rejectionReason) {
+                changes.push({
+                  changeType: 'invoiceStatus',
+                  previousValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: prevEntry.invoiceStatus, rejectionReason: prevEntry.rejectionReason }),
+                  newValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: nextEntry.invoiceStatus, rejectionReason: nextEntry.rejectionReason }),
+                });
+              }
+
+              if (prevEntry.value !== nextEntry.value || prevEntry.currency !== nextEntry.currency) {
+                changes.push({
+                  changeType: 'invoiceValue',
+                  previousValue: JSON.stringify({ url: nextEntry.url, value: prevEntry.value, currency: prevEntry.currency }),
+                  newValue: JSON.stringify({ url: nextEntry.url, value: nextEntry.value, currency: nextEntry.currency }),
+                });
+              }
+            }
+          }
+
+          for (const nextEntry of nextInvoiceUrls) {
+            if (!previousByUrl.has(nextEntry.url)) {
+              changes.push({
+                changeType: 'invoice',
+                previousValue: null,
+                newValue: JSON.stringify(nextEntry),
+              });
+            }
+          }
+
+          for (const prevEntry of previousInvoiceUrls) {
+            if (!nextByUrl.has(prevEntry.url)) {
+              changes.push({
+                changeType: 'invoice',
+                previousValue: JSON.stringify(prevEntry),
+                newValue: null,
+              });
+            }
+          }
+        }
       }
     }
 

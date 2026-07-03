@@ -10,6 +10,9 @@ export interface IOrderChangeHistory {
   | 'duaa'
   | 'photo'
   | 'invoice'
+  | 'invoiceImage'
+  | 'invoiceStatus'
+  | 'invoiceValue'
   | 'executionDate'
   | 'bulk_execution_date'
   | 'gender'
@@ -42,6 +45,9 @@ const OrderChangeHistorySchema = new mongoose.Schema<IOrderChangeHistory>(
         'duaa',
         'photo',
         'invoice',
+        'invoiceImage',
+        'invoiceStatus',
+        'invoiceValue',
         'executionDate',
         'bulk_execution_date',
         'gender',

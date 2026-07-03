@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import Order, { type IPayment } from '@/lib/models/Order';
+import Order, { type IPayment, type PaymentMethod } from '@/lib/models/Order';
 import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import {
   createPayment,
@@ -456,6 +456,7 @@ export async function POST(request: NextRequest) {
       amount: orderPaymentAmount,
       currency: (order.currency || 'EGP').toUpperCase().trim(),
       status: 'pending' as const,
+      paymentMethod: 'easykash' as PaymentMethod,
       redirectUrl: easykashResponse.redirectUrl,
       expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
       createdAt: new Date(),

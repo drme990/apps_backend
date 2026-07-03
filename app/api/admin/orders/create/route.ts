@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
-import Order from '@/lib/models/Order';
+import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import User from '@/lib/models/User';
 import Booking from '@/lib/models/Booking';
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
       referralId,
       billingData,
       reservationData,
-      paymentMethod,
+      paymentMethod: rawPaymentMethod,
       invoiceUrl,
       invoiceReviewed,
       invoiceValue,
@@ -58,16 +58,27 @@ export async function POST(request: NextRequest) {
       paidAmount: requestedPaidAmount,
     } = body;
 
+    const paymentMethod = rawPaymentMethod as PaymentMethod;
+
     // Support both legacy single-invoice fields and new invoiceUrls array
     const initialInvoiceUrls = invoiceUrls && Array.isArray(invoiceUrls) && invoiceUrls.length > 0
-      ? invoiceUrls.map((u: { url: string; reviewed?: boolean; value?: number; currency?: string }) => ({
+      ? invoiceUrls.map((u: { url: string; reviewed?: boolean; invoiceStatus?: string; value?: number; currency?: string }) => ({
         url: u.url,
         reviewed: u.reviewed === true,
+        invoiceStatus: (u.invoiceStatus === 'confirmed' || u.invoiceStatus === 'waiting')
+          ? u.invoiceStatus
+          : (u.reviewed === true ? 'confirmed' : 'waiting'),
         value: u.value ?? 0,
         currency: u.currency || 'EGP',
       }))
       : invoiceUrl
-        ? [{ url: invoiceUrl, reviewed: invoiceReviewed === true, value: invoiceValue, currency: invoiceCurrency || 'EGP' }]
+        ? [{
+          url: invoiceUrl,
+          reviewed: invoiceReviewed === true,
+          invoiceStatus: invoiceReviewed === true ? 'confirmed' : 'waiting',
+          value: invoiceValue,
+          currency: invoiceCurrency || 'EGP',
+        }]
         : [];
 
     const orderSource: 'manasik' | 'ghadaq' = source;
@@ -517,6 +528,7 @@ export async function POST(request: NextRequest) {
         orderAmount?: number;
         gatewayAmount?: number;
         gatewayCurrency?: string;
+        paymentMethod?: PaymentMethod;
         redirectUrl?: string;
         expiresAt?: Date;
         createdAt: Date;
@@ -666,6 +678,7 @@ export async function POST(request: NextRequest) {
           orderAmount?: number;
           gatewayAmount?: number;
           gatewayCurrency?: string;
+          paymentMethod?: PaymentMethod;
           redirectUrl?: string;
           expiresAt?: Date;
           createdAt: Date;
@@ -683,6 +696,7 @@ export async function POST(request: NextRequest) {
             amount: requestedPaid,
             currency: currencyUpper,
             status: 'paid',
+            paymentMethod,
             createdAt: new Date(),
             paidAt: new Date(),
           });
@@ -698,6 +712,7 @@ export async function POST(request: NextRequest) {
           amount: easykashTargetAmount,
           currency: currencyUpper,
           status: 'pending',
+          paymentMethod,
           redirectUrl: easykashResponse.redirectUrl,
           expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
           createdAt: new Date(),
@@ -726,6 +741,7 @@ export async function POST(request: NextRequest) {
           amount: paymentRecordAmount,
           currency: currencyUpper,
           status: 'paid',
+          paymentMethod,
           createdAt: new Date(),
           paidAt: new Date(),
         },

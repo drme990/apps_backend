@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
-import Order from '@/lib/models/Order';
+import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
 import { getAuthUser } from '@/lib/auth';
@@ -1429,6 +1429,7 @@ export async function POST(request: NextRequest) {
         amount: payAmount,
         currency: currencyUpper,
         status: 'pending',
+        paymentMethod: 'easykash' as PaymentMethod,
         redirectUrl: easykashResponse.redirectUrl,
         expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
         createdAt: new Date(),

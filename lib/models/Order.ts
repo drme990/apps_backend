@@ -166,9 +166,13 @@ export interface IPaymentAttempt {
   userId?: string;
 }
 
+export type InvoiceStatus = 'confirmed' | 'waiting' | 'pending' | 'rejected';
+
 export interface IInvoiceUrl {
   url: string;
-  reviewed?: boolean;
+  reviewed?: boolean; // @deprecated kept for backward-compat migration
+  invoiceStatus?: InvoiceStatus;
+  rejectionReason?: string;
   value: number;
   currency?: string;
 }
@@ -200,6 +204,7 @@ export interface IOrder {
   remainingAmount?: number;
   isPartialPayment?: boolean;
   paymentType?: PaymentType;
+  paymentMethod?: PaymentMethod;
   isWhatsappButtonClicked?: 'clicked' | 'not-clicked' | 'no-need-to-click';
   referralId?: string;
   cancellationReason?: string;
@@ -348,6 +353,12 @@ const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
   {
     url: { type: String, required: true, trim: true },
     reviewed: { type: Boolean, default: false },
+    invoiceStatus: {
+      type: String,
+      enum: ['confirmed', 'waiting', 'pending', 'rejected'],
+      default: 'waiting',
+    },
+    rejectionReason: { type: String, default: '' },
     value: { type: Number, required: true, min: 0, default: 0 },
     currency: { type: String, trim: true, default: 'EGP' },
   },
@@ -495,6 +506,24 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       type: String,
       enum: ['full', 'half', 'partial'],
       default: 'full',
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: [
+        'card',
+        'wallet',
+        'bank_transfer',
+        'fawry',
+        'meeza',
+        'valu',
+        'other',
+        'easykash',
+        'insta_pay',
+        'vodafone_cash',
+        'paypal',
+        'binance',
+      ],
       index: true,
     },
     isWhatsappButtonClicked: {
