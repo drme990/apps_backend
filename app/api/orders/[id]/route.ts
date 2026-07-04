@@ -62,14 +62,14 @@ const putSchema = z.object({
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } },
-) {
+  ctx: RouteContext<'/api/orders/[id]'>,
+): Promise<NextResponse> {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
-    const { id } = params;
+    const { id } = await ctx.params;
     if (!id || !mongoose.isValidObjectId(id)) {
       return NextResponse.json(
         { success: false, error: 'Invalid order id' },
@@ -102,14 +102,14 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } },
-) {
+  ctx: RouteContext<'/api/orders/[id]'>,
+): Promise<NextResponse> {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
-    const { id } = params;
+    const { id } = await ctx.params;
     if (!id || !mongoose.isValidObjectId(id)) {
       return NextResponse.json(
         { success: false, error: 'Invalid order id' },
@@ -170,14 +170,14 @@ export async function PUT(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } },
-) {
+  ctx: RouteContext<'/api/orders/[id]'>,
+): Promise<NextResponse> {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess(['orders', 'invoices']);
     if ('error' in auth) return auth.error;
 
-    const { id } = params;
+    const { id } = await ctx.params;
     if (!id || !mongoose.isValidObjectId(id)) {
       return NextResponse.json(
         { success: false, error: 'Invalid order id' },
