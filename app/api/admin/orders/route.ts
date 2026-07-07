@@ -4,6 +4,8 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
+import Country from '@/lib/models/Country';
+import { normalizeCountryCode } from '@/lib/country-visibility';
 
 function hasOrderUserId(userId: unknown): boolean {
   if (typeof userId === 'string') return userId.trim().length > 0;
@@ -66,6 +68,7 @@ export async function GET(request: NextRequest) {
     const whatsappState = searchParams.get('whatsappState');
     const categoryId = searchParams.get('category');
     const intention = searchParams.get('intention');
+    const country = searchParams.get('country');
     const viewMode = searchParams.get('view') || 'full';
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
@@ -157,6 +160,26 @@ export async function GET(request: NextRequest) {
           },
         },
       });
+    }
+
+    if (country && country !== 'all') {
+      const normalizedCountryCode = normalizeCountryCode(country);
+      if (normalizedCountryCode) {
+        const countryDoc = await Country.findOne({ code: normalizedCountryCode }).select('name').lean();
+        const countryNames = countryDoc?.name
+          ? [countryDoc.name.en, countryDoc.name.ar].filter((name): name is string => Boolean(name))
+          : [];
+        if (countryNames.length > 0) {
+          andConditions.push({
+            $or: countryNames.map((name) => ({
+              'billingData.country': {
+                $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+                $options: 'i',
+              },
+            })),
+          });
+        }
+      }
     }
 
     const updatedAtFilter: Record<string, Date> = {};

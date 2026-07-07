@@ -4,6 +4,8 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
+import Country from '@/lib/models/Country';
+import { normalizeCountryCode } from '@/lib/country-visibility';
 
 /**
  * Execution orders API
@@ -35,6 +37,7 @@ export async function GET(request: NextRequest) {
     const referralId = searchParams.get('referralId');
     const statusParam = searchParams.get('status');
     const intention = searchParams.get('intention');
+    const country = searchParams.get('country');
     const pageParam = searchParams.get('page');
     const limitParam = searchParams.get('limit');
 
@@ -79,6 +82,25 @@ export async function GET(request: NextRequest) {
     }
     if (referralId) {
       baseMatch.referralId = referralId;
+    }
+    if (country && country !== 'all') {
+      const normalizedCountryCode = normalizeCountryCode(country);
+      if (normalizedCountryCode) {
+        const countryDoc = await Country.findOne({ code: normalizedCountryCode }).select('name').lean();
+        const countryNames = countryDoc?.name
+          ? [countryDoc.name.en, countryDoc.name.ar].filter((name): name is string => Boolean(name))
+          : [];
+        if (countryNames.length > 0) {
+          baseMatch.$and = [{
+            $or: countryNames.map((name) => ({
+              'billingData.country': {
+                $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+                $options: 'i',
+              },
+            })),
+          }];
+        }
+      }
     }
 
     // Category filter: look up category products then match order items
