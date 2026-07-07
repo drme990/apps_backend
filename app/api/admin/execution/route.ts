@@ -82,23 +82,10 @@ export async function GET(request: NextRequest) {
       baseMatch.referralId = referralId;
     }
     if (country && country !== 'all') {
-      const normalizedCountryCode = normalizeCountryCode(country);
-      if (normalizedCountryCode) {
-        const countryDoc = await Country.findOne({ code: normalizedCountryCode }).select('name').lean();
-        const countryNames = countryDoc?.name
-          ? [countryDoc.name.en, countryDoc.name.ar].filter((name): name is string => Boolean(name))
-          : [];
-        if (countryNames.length > 0) {
-          baseMatch.$and = [{
-            $or: countryNames.map((name) => ({
-              'billingData.country': {
-                $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-                $options: 'i',
-              },
-            })),
-          }];
-        }
-      }
+      baseMatch['billingData.country'] = {
+        $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+        $options: 'i',
+      };
     }
 
     // Category filter: look up category products then match order items
