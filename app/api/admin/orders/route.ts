@@ -161,23 +161,12 @@ export async function GET(request: NextRequest) {
     }
 
     if (country && country !== 'all') {
-      const normalizedCountryCode = normalizeCountryCode(country);
-      if (normalizedCountryCode) {
-        const countryDoc = await Country.findOne({ code: normalizedCountryCode }).select('name').lean();
-        const countryNames = countryDoc?.name
-          ? [countryDoc.name.en, countryDoc.name.ar].filter((name): name is string => Boolean(name))
-          : [];
-        if (countryNames.length > 0) {
-          andConditions.push({
-            $or: countryNames.map((name) => ({
-              'billingData.country': {
-                $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-                $options: 'i',
-              },
-            })),
-          });
-        }
-      }
+      andConditions.push({
+        'billingData.country': {
+          $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+          $options: 'i',
+        },
+      });
     }
 
     const updatedAtFilter: Record<string, Date> = {};
