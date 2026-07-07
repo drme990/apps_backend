@@ -4,8 +4,6 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
-import Country from '@/lib/models/Country';
-import { normalizeCountryCode } from '@/lib/country-visibility';
 
 function hasOrderUserId(userId: unknown): boolean {
   if (typeof userId === 'string') return userId.trim().length > 0;

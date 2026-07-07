@@ -13,8 +13,6 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
-import Country from '@/lib/models/Country';
-import { normalizeCountryCode } from '@/lib/country-visibility';
 
 export async function GET(request: NextRequest) {
   try {
@@ -89,28 +87,6 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Resolve country code to full name(s) for filtering
-    let countryMatch: Record<string, unknown> | undefined;
-    if (country && country !== 'all') {
-      const normalizedCountryCode = normalizeCountryCode(country);
-      if (normalizedCountryCode) {
-        const countryDoc = await Country.findOne({ code: normalizedCountryCode }).select('name').lean();
-        const countryNames = countryDoc?.name
-          ? [countryDoc.name.en, countryDoc.name.ar].filter((name): name is string => Boolean(name))
-          : [];
-        if (countryNames.length > 0) {
-          countryMatch = {
-            $or: countryNames.map((name) => ({
-              'billingData.country': {
-                $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-                $options: 'i',
-              },
-            })),
-          };
-        }
-      }
-    }
-
     const prePipeline: any[] = [
       { $match: baseMatch },
       ...(searchMatch ? [{ $match: searchMatch }] : []),
@@ -137,7 +113,7 @@ export async function GET(request: NextRequest) {
           },
         ]
         : []),
-      ...(countryMatch ? [{ $match: countryMatch }] : []),
+      ...(country && country !== 'all' ? [{ $match: { 'billingData.country': { $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } } }] : []),
       // Compute executionDateValue from reservationData
       {
         $addFields: {

@@ -15,6 +15,8 @@ const querySchema = z.object({
   isBanned: z.enum(['true', 'false']).optional(),
   ref: z.string().trim().optional(),
   tier: z.string().trim().optional(),
+  country: z.string().trim().optional(),
+  detectedCountry: z.string().trim().optional(),
   page: z
     .string()
     .optional()
@@ -57,6 +59,9 @@ export async function GET(request: NextRequest) {
       isBanned: request.nextUrl.searchParams.get('isBanned') || undefined,
       ref: request.nextUrl.searchParams.get('ref') || undefined,
       tier: request.nextUrl.searchParams.get('tier') || undefined,
+      country: request.nextUrl.searchParams.get('country') || undefined,
+      detectedCountry:
+        request.nextUrl.searchParams.get('detectedCountry') || undefined,
       page: request.nextUrl.searchParams.get('page') || undefined,
       limit: request.nextUrl.searchParams.get('limit') || undefined,
     });
@@ -75,6 +80,9 @@ export async function GET(request: NextRequest) {
         : parsed.data.isBanned === 'true';
     const refFilter = parsed.data.ref || undefined;
     const tierFilter = parsed.data.tier || undefined;
+    const countryFilter = parsed.data.country || undefined;
+    const detectedCountryFilter =
+      parsed.data.detectedCountry || undefined;
     const page = parsed.data.page || 1;
     const limit = parsed.data.limit || 20;
     const skip = (page - 1) * limit;
@@ -108,6 +116,18 @@ export async function GET(request: NextRequest) {
         }
         if (typeof isBannedFilter === 'boolean') {
           filterQuery.isBanned = isBannedFilter;
+        }
+        if (countryFilter) {
+          filterQuery.country = {
+            $regex: `^${countryFilter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            $options: 'i',
+          };
+        }
+        if (detectedCountryFilter) {
+          filterQuery.detectedCountry = {
+            $regex: `^${detectedCountryFilter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            $options: 'i',
+          };
         }
 
         const andConditions: Record<string, unknown>[] = [];

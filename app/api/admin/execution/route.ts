@@ -4,8 +4,6 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
-import Country from '@/lib/models/Country';
-import { normalizeCountryCode } from '@/lib/country-visibility';
 
 /**
  * Execution orders API
