@@ -52,6 +52,7 @@ export interface IBaseAppUser {
   detectedCountry?: string;
   tier?: mongoose.Types.ObjectId | string | null;
   isAdminCreated?: boolean;
+  accountSetUp?: boolean;
 }
 
 export interface IBaseAppUserMethods {
@@ -109,6 +110,7 @@ function buildBaseAppUserModel(
       detectedCountry: { type: String, trim: true },
       tier: { type: mongoose.Schema.Types.ObjectId, ref: 'UserTier', default: null, index: true },
       isAdminCreated: { type: Boolean, default: false },
+      accountSetUp: { type: Boolean, default: false },
     },
     { timestamps: true, collection },
   );

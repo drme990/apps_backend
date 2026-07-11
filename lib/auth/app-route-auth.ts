@@ -43,6 +43,8 @@ type AuthUserDoc = {
   ref?: string | null;
   detectedCountry?: string | null;
   isBanned?: boolean;
+  isAdminCreated?: boolean;
+  accountSetUp?: boolean;
   registrationIp?: string;
   lastLoginIp?: string;
   lastLoginAt?: Date;
@@ -76,6 +78,13 @@ const updateProfileSchema = z
     },
   );
 
+const setupAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  email: z.string().email('Invalid email'),
+  country: z.string().trim().min(1, 'Country is required'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+});
+
 const registerPayloadSchema = registerSchema.omit({ appId: true });
 
 function mapRouteAppToAppId(app: RouteApp): AppId {
@@ -102,18 +111,20 @@ function toPublicUser(user: AuthUserDoc, appId: AppId) {
     appId,
     ...(appId !== 'admin_panel'
       ? {
-          phone: user.phone || '',
-          country: user.country || '',
-          detectedCountry: user.detectedCountry || null,
-          isBanned: Boolean(user.isBanned),
-          ...(user.ref ? { ref: user.ref } : {}),
-        }
+        phone: user.phone || '',
+        country: user.country || '',
+        detectedCountry: user.detectedCountry || null,
+        isBanned: Boolean(user.isBanned),
+        isAdminCreated: Boolean(user.isAdminCreated),
+        accountSetUp: Boolean(user.accountSetUp),
+        ...(user.ref ? { ref: user.ref } : {}),
+      }
       : {}),
     ...(appId === 'admin_panel'
       ? {
-          role: user.role,
-          allowedPages: user.allowedPages || [],
-        }
+        role: user.role,
+        allowedPages: user.allowedPages || [],
+      }
       : {}),
   };
 }
@@ -263,10 +274,18 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
       });
     }
 
+    const requiresAccountSetup =
+      appId !== 'admin_panel' &&
+      user.isAdminCreated === true &&
+      user.accountSetUp !== true;
+
     const response = NextResponse.json({
       success: true,
       data: {
         user: toPublicUser(user, appId),
+        ...(appId !== 'admin_panel'
+          ? { requiresAccountSetup }
+          : {}),
       },
     });
 
@@ -385,7 +404,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
           resolvedRef = ref.trim();
         }
       }
-      
+
       if (!resolvedRef) {
         resolvedRef = appId === 'ghadaq' ? 'GHD-D' : 'MNK-D';
       }
@@ -636,6 +655,87 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
     console.error('Error updating auth user profile:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to update profile' },
+      { status: 500 },
+    );
+  }
+}
+
+export async function setupAccountForApp(request: NextRequest, app: RouteApp) {
+  try {
+    await connectDB();
+
+    const appId = mapRouteAppToAppId(app);
+    if (appId === 'admin_panel') {
+      return NextResponse.json(
+        { success: false, error: 'Invalid app' },
+        { status: 400 },
+      );
+    }
+
+    const authUser = await getAuthUser(appId);
+    if (!authUser) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 },
+      );
+    }
+
+    const parsed = await parseJsonBody(request, setupAccountSchema);
+    if (!parsed.success) return parsed.response;
+
+    const { name, email, country, password } = parsed.data;
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid email', code: 'INVALID_EMAIL' },
+        { status: 400 },
+      );
+    }
+
+    const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
+    const userDoc = await UserModel.findById(authUser.userId);
+    if (!userDoc) {
+      return NextResponse.json(
+        { success: false, error: 'User not found' },
+        { status: 404 },
+      );
+    }
+
+    if (userDoc.accountSetUp) {
+      return NextResponse.json(
+        { success: false, error: 'Account already set up' },
+        { status: 400 },
+      );
+    }
+
+    const existingUser = await UserModel.findOne({
+      email: normalizedEmail,
+      _id: { $ne: authUser.userId },
+    });
+
+    if (existingUser) {
+      return NextResponse.json(
+        { success: false, error: 'Email already used', code: 'EMAIL_ALREADY_USED' },
+        { status: 409 },
+      );
+    }
+
+    userDoc.name = name;
+    userDoc.email = normalizedEmail;
+    userDoc.country = country;
+    userDoc.password = password;
+    userDoc.accountSetUp = true;
+
+    const updatedUser = await userDoc.save();
+
+    return NextResponse.json({
+      success: true,
+      data: toPublicUser(updatedUser, appId),
+    });
+  } catch (error) {
+    console.error('Error setting up account:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to set up account' },
       { status: 500 },
     );
   }
