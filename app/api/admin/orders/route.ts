@@ -57,8 +57,8 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
-    // Enforce hard limit to prevent OOM
-    const maxLimit = limit > 200 ? 200 : limit;
+    // Allow the "all" sentinel (10000) while keeping a safe cap for normal requests
+    const maxLimit = Math.min(limit, 10000);
     const status = searchParams.get('status');
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');

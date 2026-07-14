@@ -40,7 +40,8 @@ export async function GET(request: NextRequest) {
     const limitParam = searchParams.get('limit');
 
     const page = Math.max(1, parseInt(pageParam || '1', 10));
-    const limit = Math.max(1, Math.min(500, parseInt(limitParam || '50', 10)));
+    // Allow the "all" sentinel (10000) while keeping a safe cap for normal requests
+    const limit = Math.max(1, Math.min(10000, parseInt(limitParam || '50', 10)));
     const skip = (page - 1) * limit;
 
     const isoPattern = /^\d{4}-\d{2}-\d{2}$/;
