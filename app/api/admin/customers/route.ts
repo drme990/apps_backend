@@ -9,6 +9,41 @@ import {
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
 
+function parseIsoDateParts(
+  value: string | null,
+): { year: number; month: number; day: number } | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (Number.isNaN(date.getTime())) return null;
+  return { year, month, day };
+}
+
+function parseTimezoneOffsetMinutes(value: string | null): number {
+  const parsed = Number.parseInt(value || '', 10);
+  if (Number.isNaN(parsed)) return 0;
+  if (parsed < -840 || parsed > 840) return 0;
+  return parsed;
+}
+
+function getUtcStartOfLocalDay(
+  dateParts: { year: number; month: number; day: number },
+  timezoneOffsetMinutes: number,
+): Date {
+  const utcMidnightMs = Date.UTC(
+    dateParts.year,
+    dateParts.month - 1,
+    dateParts.day,
+    0,
+    0,
+    0,
+    0,
+  );
+  return new Date(utcMidnightMs + timezoneOffsetMinutes * 60 * 1000);
+}
+
 const querySchema = z.object({
   appId: z.enum(['ghadaq', 'manasik']).optional(),
   search: z.string().trim().optional(),
@@ -25,6 +60,12 @@ const querySchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? parseInt(val, 10) : 20)),
+  fromDate: z.string().trim().optional(),
+  toDate: z.string().trim().optional(),
+  tzOffsetMinutes: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 0)),
 });
 
 type CustomerDTO = {
@@ -64,6 +105,9 @@ export async function GET(request: NextRequest) {
         request.nextUrl.searchParams.get('detectedCountry') || undefined,
       page: request.nextUrl.searchParams.get('page') || undefined,
       limit: request.nextUrl.searchParams.get('limit') || undefined,
+      fromDate: request.nextUrl.searchParams.get('fromDate') || undefined,
+      toDate: request.nextUrl.searchParams.get('toDate') || undefined,
+      tzOffsetMinutes: request.nextUrl.searchParams.get('tzOffsetMinutes') || undefined,
     });
 
     if (!parsed.success) {
@@ -84,8 +128,9 @@ export async function GET(request: NextRequest) {
     const detectedCountryFilter =
       parsed.data.detectedCountry || undefined;
     const page = parsed.data.page || 1;
-    const limit = parsed.data.limit || 20;
+    const limit = Math.min(parsed.data.limit || 20, 10000);
     const skip = (page - 1) * limit;
+    const timezoneOffsetMinutes = parsed.data.tzOffsetMinutes || 0;
 
     const appIds: Array<'ghadaq' | 'manasik'> = parsed.data.appId
       ? [parsed.data.appId]
@@ -128,6 +173,32 @@ export async function GET(request: NextRequest) {
             $regex: `^${detectedCountryFilter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
             $options: 'i',
           };
+        }
+
+        const createdAtFilter: Record<string, unknown> = {};
+        if (parsed.data.fromDate) {
+          const parsedFromDate = parseIsoDateParts(parsed.data.fromDate);
+          if (parsedFromDate) {
+            createdAtFilter.$gte = getUtcStartOfLocalDay(
+              parsedFromDate,
+              timezoneOffsetMinutes,
+            );
+          }
+        }
+        if (parsed.data.toDate) {
+          const parsedToDate = parseIsoDateParts(parsed.data.toDate);
+          if (parsedToDate) {
+            const toDateStart = getUtcStartOfLocalDay(
+              parsedToDate,
+              timezoneOffsetMinutes,
+            );
+            const toDateEndExclusive = new Date(toDateStart);
+            toDateEndExclusive.setDate(toDateEndExclusive.getDate() + 1);
+            createdAtFilter.$lt = toDateEndExclusive;
+          }
+        }
+        if (Object.keys(createdAtFilter).length > 0) {
+          filterQuery.createdAt = createdAtFilter;
         }
 
         const andConditions: Record<string, unknown>[] = [];
