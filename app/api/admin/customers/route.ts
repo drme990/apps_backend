@@ -60,6 +60,11 @@ const querySchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? parseInt(val, 10) : 20)),
+  offset: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 0)),
+  globalSlice: z.enum(['true', 'false']).optional().default('false'),
   fromDate: z.string().trim().optional(),
   toDate: z.string().trim().optional(),
   tzOffsetMinutes: z
@@ -105,6 +110,8 @@ export async function GET(request: NextRequest) {
         request.nextUrl.searchParams.get('detectedCountry') || undefined,
       page: request.nextUrl.searchParams.get('page') || undefined,
       limit: request.nextUrl.searchParams.get('limit') || undefined,
+      offset: request.nextUrl.searchParams.get('offset') || undefined,
+      globalSlice: request.nextUrl.searchParams.get('globalSlice') || undefined,
       fromDate: request.nextUrl.searchParams.get('fromDate') || undefined,
       toDate: request.nextUrl.searchParams.get('toDate') || undefined,
       tzOffsetMinutes: request.nextUrl.searchParams.get('tzOffsetMinutes') || undefined,
@@ -129,7 +136,9 @@ export async function GET(request: NextRequest) {
       parsed.data.detectedCountry || undefined;
     const page = parsed.data.page || 1;
     const limit = Math.min(parsed.data.limit || 20, 10000);
-    const skip = (page - 1) * limit;
+    const offset = parsed.data.offset || 0;
+    const skip = Math.max(0, offset > 0 ? offset : (page - 1) * limit);
+    const useGlobalSlice = parsed.data.globalSlice === 'true';
     const timezoneOffsetMinutes = parsed.data.tzOffsetMinutes || 0;
 
     const appIds: Array<'ghadaq' | 'manasik'> = parsed.data.appId
@@ -236,8 +245,8 @@ export async function GET(request: NextRequest) {
           model
             .find(filterQuery)
             .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit)
+            .skip(useGlobalSlice ? 0 : skip)
+            .limit(useGlobalSlice ? 10000 : limit)
             .select(
               'name email phone registrationIp lastLoginIp country isBanned isAdminCreated ref detectedCountry lastLoginAt createdAt tier',
             )
@@ -290,6 +299,10 @@ export async function GET(request: NextRequest) {
     const filteredTotal = results.reduce((sum, r) => sum + r.totalCount, 0);
 
     customers.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    if (useGlobalSlice) {
+      customers = customers.slice(skip, skip + limit);
+    }
 
     // Get overall stats (all customers regardless of filters)
     const statsResults = await Promise.all(

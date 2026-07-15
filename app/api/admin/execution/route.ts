@@ -38,11 +38,15 @@ export async function GET(request: NextRequest) {
     const country = searchParams.get('country');
     const pageParam = searchParams.get('page');
     const limitParam = searchParams.get('limit');
+    const offsetParam = searchParams.get('offset');
+    const globalSliceParam = searchParams.get('globalSlice');
 
     const page = Math.max(1, parseInt(pageParam || '1', 10));
     // Allow the "all" sentinel (10000) while keeping a safe cap for normal requests
     const limit = Math.max(1, Math.min(10000, parseInt(limitParam || '50', 10)));
-    const skip = (page - 1) * limit;
+    const offset = Math.max(0, parseInt(offsetParam || '0', 10));
+    const skip = offset > 0 ? offset : (page - 1) * limit;
+    const useGlobalSlice = globalSliceParam === 'true';
 
     const isoPattern = /^\d{4}-\d{2}-\d{2}$/;
 
