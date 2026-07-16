@@ -193,16 +193,22 @@ export async function GET(request: NextRequest) {
           color: { $arrayElemAt: ['$categoryInfo.color', 0] },
         },
       },
-      // Group by category + product to get per-product counts
+      // Group by category + product + size to get per-product/size counts
       {
         $group: {
           _id: {
             categoryId: { $ifNull: ['$categoryId', '__uncategorized__'] },
             productId: '$items.productId',
+            sizeKey: { $ifNull: ['$items.sizeName', '$items.sizeLabel', '$items.size', null] },
           },
           quantity: { $sum: '$items.quantity' },
           productNameAr: { $first: '$items.productName.ar' },
           productNameEn: { $first: '$items.productName.en' },
+          sizeName: { $first: '$items.sizeName' },
+          sizeLabel: { $first: '$items.sizeLabel' },
+          size: { $first: '$items.size' },
+          sizeIndex: { $first: '$items.sizeIndex' },
+          sizes: { $first: '$items.sizes' },
           categoryName: { $first: '$categoryName' },
           categoryNumber: { $first: '$categoryNumber' },
           color: { $first: '$color' },
@@ -223,6 +229,11 @@ export async function GET(request: NextRequest) {
                 ar: '$productNameAr',
                 en: '$productNameEn',
               },
+              sizeName: '$sizeName',
+              sizeLabel: '$sizeLabel',
+              size: '$size',
+              sizeIndex: '$sizeIndex',
+              sizes: '$sizes',
               quantity: '$quantity',
             },
           },
