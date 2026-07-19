@@ -90,10 +90,6 @@ function getPaymentAttemptNumber(order: { payments?: unknown[] }): number {
   return (order.payments?.length ?? 0) + 1;
 }
 
-function touchStatusUpdateTime(order: { statusUpdateTime?: Date }): void {
-  order.statusUpdateTime = new Date();
-}
-
 type CheckoutAppUserDoc = mongoose.Document & {
   _id: mongoose.Types.ObjectId;
   email: string;
@@ -1443,7 +1439,6 @@ export async function POST(request: NextRequest) {
       },
     ];
     order.status = 'processing';
-    touchStatusUpdateTime(order);
     await order.save();
 
     const response = NextResponse.json({

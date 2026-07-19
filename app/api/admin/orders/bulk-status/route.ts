@@ -35,8 +35,8 @@ export async function PUT(request: NextRequest) {
 
     const orderIds = Array.isArray(parsed.data.orderIds)
       ? parsed.data.orderIds.filter(
-          (id): id is string => typeof id === 'string' && id.trim().length > 0,
-        )
+        (id): id is string => typeof id === 'string' && id.trim().length > 0,
+      )
       : [];
     const requestedStatus =
       typeof parsed.data.status === 'string'
@@ -59,11 +59,10 @@ export async function PUT(request: NextRequest) {
     }
 
     const result = await Order.updateMany(
-      { _id: { $in: orderIds } },
+      { _id: { $in: orderIds }, status: { $ne: normalizedStatus } },
       {
         $set: {
           status: normalizedStatus,
-          statusUpdateTime: new Date(),
           isWhatsappButtonClicked: resolveWhatsappButtonState(normalizedStatus),
         },
       },
