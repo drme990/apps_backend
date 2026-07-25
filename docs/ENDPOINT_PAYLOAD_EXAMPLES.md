@@ -278,7 +278,7 @@ Request:
 Request: multipart/form-data
 
 - file: image/png (required)
-- oldUrl: https://res.cloudinary.com/... (optional)
+- oldUrl: https://storage.manasik.net/... (optional)
 
 Success response:
 
@@ -286,8 +286,8 @@ Success response:
 {
   "success": true,
   "data": {
-    "url": "https://res.cloudinary.com/.../image/upload/v1/...",
-    "publicId": "products/abc123"
+    "url": "https://storage.manasik.net/products/images/...",
+    "key": "products/images/..."
   }
 }
 ```

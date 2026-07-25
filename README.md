@@ -44,7 +44,6 @@ Canonical API and business-logic service for Admin Panel, Ghadaq, and Manasik.
 - MongoDB (Mongoose)
 - EasyKash
 - Resend
-- Cloudinary
 - Cloudflare R2
 - Facebook CAPI
 
@@ -58,10 +57,6 @@ JWT_SECRET=
 
 EASYKASH_API_KEY=
 EASYKASH_HMAC_SECRET=
-
-CLOUDINARY_CLOUD_NAME=
-CLOUDINARY_API_KEY=
-CLOUDINARY_API_SECRET=
 
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=

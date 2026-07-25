@@ -7,11 +7,6 @@ import {
   isR2Url,
   extractR2Key,
 } from '@/lib/services/r2';
-import {
-  deleteImage,
-  isCloudinaryUrl,
-  extractPublicId,
-} from '@/lib/services/cloudinary';
 import { captureException } from '@/lib/services/error-monitor';
 import { validateInput } from '@/lib/validation/http';
 import {
@@ -89,16 +84,11 @@ export async function POST(request: NextRequest) {
     const imageFolder = resolveImageFolder(folder);
     const result = await uploadFileToR2(file, imageFolder);
 
-    // Optionally delete old image after the new upload succeeds.
+    // Optionally delete the old image after the new upload succeeds.
     if (oldUrl && isR2Url(oldUrl)) {
       const key = extractR2Key(oldUrl);
       if (key && key !== result.key) {
         await deleteFileFromR2(key);
-      }
-    } else if (oldUrl && isCloudinaryUrl(oldUrl)) {
-      const publicId = extractPublicId(oldUrl);
-      if (publicId) {
-        await deleteImage(publicId);
       }
     }
 
@@ -130,38 +120,22 @@ export async function DELETE(request: NextRequest) {
 
     const { url } = parsed.data;
 
-    if (isR2Url(url)) {
-      const key = extractR2Key(url);
-      if (!key) {
-        return NextResponse.json(
-          { success: false, error: 'Could not extract object key from URL' },
-          { status: 400 },
-        );
-      }
-
-      await deleteFileFromR2(key);
-      return NextResponse.json({
-        success: true,
-        message: 'Image deleted successfully',
-      });
-    }
-
-    if (!isCloudinaryUrl(url)) {
+    if (!isR2Url(url)) {
       return NextResponse.json(
         { success: false, error: 'Not a valid image URL' },
         { status: 400 },
       );
     }
 
-    const publicId = extractPublicId(url);
-    if (!publicId) {
+    const key = extractR2Key(url);
+    if (!key) {
       return NextResponse.json(
-        { success: false, error: 'Could not extract public ID from URL' },
+        { success: false, error: 'Could not extract object key from URL' },
         { status: 400 },
       );
     }
 
-    await deleteImage(publicId);
+    await deleteFileFromR2(key);
 
     return NextResponse.json({
       success: true,

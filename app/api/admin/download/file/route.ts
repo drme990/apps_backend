@@ -6,7 +6,6 @@ import { captureException } from '@/lib/services/error-monitor';
 
 const ALLOWED_HOSTNAMES = new Set<string>([
   'storage.manasik.net',
-  'res.cloudinary.com',
 ]);
 
 if (process.env.R2_PUBLIC_URL) {
