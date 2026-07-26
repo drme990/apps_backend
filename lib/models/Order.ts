@@ -190,6 +190,13 @@ export interface IOrderDesignUrl {
   url: string;
   /** Which template variant was used — 'text' (no-image) or 'image' */
   templateType: 'text' | 'image';
+  /**
+   * ID of the design-app template project used to generate this design.
+   * Used by the admin panel to open the editor
+   * (`{DESIGN_APP_URL}/editor/{templateId}`) so the admin can edit the
+   * template and re-generate.
+   */
+  templateId?: string;
   /** When the design was generated (UTC) */
   createdAt: Date;
 }
@@ -393,6 +400,7 @@ const OrderDesignUrlSchema = new mongoose.Schema<IOrderDesignUrl>(
       enum: ['text', 'image'],
       required: true,
     },
+    templateId: { type: String, trim: true },
     createdAt: { type: Date, required: true, default: () => new Date() },
   },
   { _id: false },

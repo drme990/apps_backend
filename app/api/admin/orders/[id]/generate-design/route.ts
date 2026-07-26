@@ -124,6 +124,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           productName,
           url: result.url,
           templateType: result.templateType ?? 'text',
+          templateId: result.templateId,
           createdAt: new Date(),
         });
       } else {

@@ -34,6 +34,11 @@ export interface DesignAppResult {
   url?: string;
   /** Which template variant was used */
   templateType?: TemplateType;
+  /**
+   * ID of the design-app template project used to generate this design.
+   * Stored on the order so the admin panel can open the editor.
+   */
+  templateId?: string;
   /** Error code from the design app (when success=false) */
   error?: string;
   /** Human-readable error message */
@@ -137,6 +142,7 @@ export async function generateDesignForProduct(params: {
       productId,
       url: body.data.url,
       templateType: body.data.templateType ?? 'text',
+      templateId: body.data.templateId,
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
