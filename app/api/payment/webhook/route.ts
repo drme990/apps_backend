@@ -13,6 +13,7 @@ import {
 } from '@/lib/services/order-financials';
 import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { trackPurchase } from '@/lib/services/fb-capi';
+import { trackTiktokPurchase } from '@/lib/services/tiktok-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import WebhookEvent from '@/lib/models/WebhookEvent';
 import TerminalLog from '@/lib/models/TerminalLog';
@@ -562,6 +563,23 @@ export async function POST(request: NextRequest) {
               order.billingData?.fullName?.split(' ').slice(1).join(' ') ||
               order.billingData?.fullName?.split(' ')[0],
             country: order.billingData?.country || order.location,
+            external_id: order._id.toString(),
+          },
+        }).catch(() => { });
+
+        // TikTok Events API — same orderId as event_id so TikTok can
+        // deduplicate against the browser Pixel Purchase event.
+        trackTiktokPurchase({
+          productId: item.productId?.toString() || '',
+          productName: item.productName?.en || item.productName?.ar || '',
+          value: order.totalAmount ?? 0,
+          currency: order.currency || 'SAR',
+          numItems: item.quantity || 1,
+          orderId: order.orderNumber,
+          sourceUrl: `${baseUrl}/payment/status`,
+          userData: {
+            email: order.billingData?.email,
+            phone: order.billingData?.phone,
             external_id: order._id.toString(),
           },
         }).catch(() => { });

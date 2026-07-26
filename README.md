@@ -46,6 +46,7 @@ Canonical API and business-logic service for Admin Panel, Ghadaq, and Manasik.
 - Resend
 - Cloudflare R2
 - Facebook CAPI
+- TikTok Events API
 
 ## Environment Variables
 
@@ -63,6 +64,16 @@ R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=
 R2_PUBLIC_URL=
+
+# Facebook Conversions API
+API_TOKEN=
+FB_PIXEL_ID=
+FB_TEST_EVENT_CODE=
+
+# TikTok Events API
+TIKTOK_PIXEL_ID=
+TIKTOK_ACCESS_TOKEN=
+TIKTOK_TEST_EVENT_CODE=
 
 MANASIK_RESEND_API_KEY=
 GHADAQ_RESEND_API_KEY=
