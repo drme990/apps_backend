@@ -192,10 +192,12 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     // ── Log the action ───────────────────────────────────────────────
     try {
       await logActivity({
-        action: 'order.generate_design',
+        action: 'generate_design',
         resource: 'order',
         resourceId: String(order._id),
         userId: auth.user.userId,
+        userName: auth.user.name,
+        userEmail: auth.user.email,
         details: JSON.stringify({
           orderNumber: order.orderNumber,
           generatedCount: generated.length,
