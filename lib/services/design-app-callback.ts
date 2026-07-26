@@ -35,10 +35,11 @@ export interface DesignAppResult {
   /** Which template variant was used */
   templateType?: TemplateType;
   /**
-   * ID of the design-app template project used to generate this design.
-   * Stored on the order so the admin panel can open the editor.
+   * ID of the design-app project (design instance) generated for this
+   * order. The admin panel opens the editor at /editor/{projectId} so
+   * the admin edits THIS design, not the template.
    */
-  templateId?: string;
+  projectId?: string;
   /** Error code from the design app (when success=false) */
   error?: string;
   /** Human-readable error message */
@@ -51,8 +52,12 @@ interface DesignAppResponseBody {
     url: string;
     key: string;
     orderNumber: string;
-    templateId: string;
-    templateName: string;
+    /** ID of the design instance project (for editing in the design app) */
+    projectId?: string;
+    designName?: string;
+    /** ID of the template the design instance was created from (reference) */
+    templateId?: string;
+    templateName?: string;
     templateType?: TemplateType;
   };
   error?: string;
@@ -142,7 +147,7 @@ export async function generateDesignForProduct(params: {
       productId,
       url: body.data.url,
       templateType: body.data.templateType ?? 'text',
-      templateId: body.data.templateId,
+      projectId: body.data.projectId,
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {

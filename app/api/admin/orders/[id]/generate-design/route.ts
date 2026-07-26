@@ -110,7 +110,15 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
 
     // ── Partition results ────────────────────────────────────────────
     const generated: IOrderDesignUrl[] = [];
-    const skipped: Array<{ productId: string; productName: string; reason: string }> = [];
+    // `reasonCode` is a machine-readable code the admin panel maps to a
+    // localized string. `reason` is an Arabic fallback for logs/non-i18n
+    // callers.
+    const skipped: Array<{
+      productId: string;
+      productName: string;
+      reasonCode: string;
+      reason: string;
+    }> = [];
 
     for (const result of results) {
       const item = productItems.find(
@@ -124,35 +132,45 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           productName,
           url: result.url,
           templateType: result.templateType ?? 'text',
-          templateId: result.templateId,
+          projectId: result.projectId,
           createdAt: new Date(),
         });
       } else {
-        // Map design-app error codes to user-facing reasons
+        // Map design-app error codes to machine-readable reasonCode +
+        // Arabic fallback reason. The admin panel uses reasonCode to
+        // show a localized message; reason is for logs/fallback.
+        let reasonCode: string;
         let reason: string;
         switch (result.error) {
           case 'noTemplate':
+            reasonCode = 'noTemplate';
             reason = 'لا يوجد قالب لهذا المنتج';
             break;
           case 'noBookingProduct':
+            reasonCode = 'noBookingProduct';
             reason = 'المنتج غير مستورد في تطبيق التصميم';
             break;
           case 'templateNotFound':
+            reasonCode = 'templateNotFound';
             reason = 'تم حذف القالب المرتبط بهذا المنتج';
             break;
           case 'designAppNotConfigured':
+            reasonCode = 'designAppNotConfigured';
             reason = 'لم يتم ضبط رابط تطبيق التصميم';
             break;
           case 'callbackSecretNotConfigured':
+            reasonCode = 'callbackSecretNotConfigured';
             reason = 'لم يتم ضبط مفتاح المصادقة لتطبيق التصميم';
             break;
           case 'timeout':
+            reasonCode = 'timeout';
             reason = 'انتهت مهلة تطبيق التصميم';
             break;
           default:
+            reasonCode = 'unknown';
             reason = result.message || result.error || 'فشل غير معروف';
         }
-        skipped.push({ productId: result.productId, productName, reason });
+        skipped.push({ productId: result.productId, productName, reasonCode, reason });
       }
     }
 
@@ -204,7 +222,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       {
         success: false,
         error: {
-          code: 'ERR_INTERNAL',
+          code: 'internalError',
           message: 'Failed to generate design',
         },
       },
