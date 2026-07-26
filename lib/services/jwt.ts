@@ -39,7 +39,25 @@ export function generateToken(user: {
 export function verifyToken(token: string): TokenPayload | null {
   if (!JWT_SECRET) return null;
   try {
-    return jwt.verify(token, JWT_SECRET) as TokenPayload;
+    const raw = jwt.verify(token, JWT_SECRET) as TokenPayload & {
+      sub?: string;
+    };
+
+    // Accept design app tokens that use `sub` instead of `userId` (SSO).
+    // The design app's custom JWT payload uses `sub`; the backend uses
+    // `userId`. Map whichever is present.
+    if (!raw.userId && raw.sub) {
+      raw.userId = raw.sub;
+    }
+
+    // Design app tokens include appId: 'admin_panel'. Legacy or
+    // third-party tokens may not include appId — default to admin_panel
+    // so they're accepted by admin routes.
+    if (!raw.appId) {
+      raw.appId = 'admin_panel';
+    }
+
+    return raw;
   } catch {
     return null;
   }

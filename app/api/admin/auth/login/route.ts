@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
     });
 
     const isProduction = process.env.NODE_ENV === 'production';
+    const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
     const response = NextResponse.json({
       success: true,
       data: {
@@ -93,9 +94,12 @@ export async function POST(request: NextRequest) {
     response.cookies.set('admin_panel-token', token, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
+      sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60,
       path: '/',
+      // Scope to parent domain for SSO across subdomains
+      // (e.g. admin.manasik.net + design.manasik.net)
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
 
     return response;

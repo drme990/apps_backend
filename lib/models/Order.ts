@@ -176,6 +176,24 @@ export interface IInvoiceUrl {
   currency?: string;
 }
 
+/**
+ * A generated design image for an order, one per product that had a
+ * matching template. Populated by the design-app callback flow
+ * (POST /api/admin/orders/[id]/generate-design).
+ */
+export interface IOrderDesignUrl {
+  /** Backend product ID (string ObjectId) this design was generated for */
+  productId: string;
+  /** Product name snapshot (for display without a DB lookup) */
+  productName?: string;
+  /** Public R2 URL of the generated JPG */
+  url: string;
+  /** Which template variant was used — 'text' (no-image) or 'image' */
+  templateType: 'text' | 'image';
+  /** When the design was generated (UTC) */
+  createdAt: Date;
+}
+
 export interface IOrder {
   _id?: string;
   orderNumber: string;
@@ -208,6 +226,8 @@ export interface IOrder {
   referralId?: string;
   cancellationReason?: string;
   invoiceUrls?: IInvoiceUrl[];
+  /** Generated design images — one entry per product with a template */
+  designUrls?: IOrderDesignUrl[];
   termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
   payments?: IPayment[];
@@ -359,6 +379,21 @@ const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
     rejectionReason: { type: String, default: '' },
     value: { type: Number, required: true, min: 0, default: 0 },
     currency: { type: String, trim: true, default: 'EGP' },
+  },
+  { _id: false },
+);
+
+const OrderDesignUrlSchema = new mongoose.Schema<IOrderDesignUrl>(
+  {
+    productId: { type: String, required: true, trim: true },
+    productName: { type: String, trim: true },
+    url: { type: String, required: true, trim: true },
+    templateType: {
+      type: String,
+      enum: ['text', 'image'],
+      required: true,
+    },
+    createdAt: { type: Date, required: true, default: () => new Date() },
   },
   { _id: false },
 );
@@ -533,6 +568,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     referralId: { type: String, trim: true, index: true },
     cancellationReason: { type: String, trim: true },
     invoiceUrls: { type: [InvoiceUrlSchema], default: [] },
+    designUrls: { type: [OrderDesignUrlSchema], default: [] },
     statusUpdateTime: {
       type: Date,
       required: true,

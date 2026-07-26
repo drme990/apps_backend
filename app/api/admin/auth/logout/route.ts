@@ -21,6 +21,7 @@ export async function POST() {
     });
 
     const isProduction = process.env.NODE_ENV === 'production';
+    const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
     const response = NextResponse.json({
       success: true,
       message: 'Logged out successfully',
@@ -29,9 +30,12 @@ export async function POST() {
     response.cookies.set('admin_panel-token', '', {
       httpOnly: true,
       secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
+      sameSite: 'lax',
       maxAge: 0,
       path: '/',
+      // Must match the domain used at login so the browser deletes the
+      // correct cookie.
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
 
     return response;
