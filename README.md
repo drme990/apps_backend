@@ -86,6 +86,26 @@ ALLOWED_ORIGINS=
 CRON_SECRET=
 ```
 
+## Testing Conversion Events
+
+### TikTok Events API
+
+To verify server-side Purchase events in the TikTok Events Manager Test
+Event tool:
+
+1. Set `TIKTOK_TEST_EVENT_CODE` in `backend/.env.local` to the test code
+   shown in Events Manager (e.g. `TEST24472`).
+2. Trigger a paid order (webhook `transitionedToPaid`).
+3. The event appears in the Test Event tool — events sent with a test
+   code are NOT counted as live conversions.
+4. Remove `TIKTOK_TEST_EVENT_CODE` (or leave it empty) before deploying
+   to production.
+
+### Facebook Conversions API
+
+Set `FB_TEST_EVENT_CODE` to the test code from Meta Events Manager to
+route CAPI events to the test tool instead of live.
+
 ## Scripts
 
 - `npm run dev`

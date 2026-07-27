@@ -244,6 +244,16 @@ export interface IOrder {
   deviceFingerprint?: string;
   locale?: string;
   statusUpdateTime: Date;
+  /**
+   * Server-side conversion send tracking — set once after the matching
+   * Events API / Conversions API call succeeds. Prevents duplicate
+   * server sends when the webhook retries. The order number is used as
+   * the event_id on both browser and server, so a repeat send would be
+   * deduplicated by the ad platform anyway, but this flag avoids the
+   * extra API call entirely.
+   */
+  fbPurchaseServerSentAt?: Date;
+  tiktokPurchaseServerSentAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -583,6 +593,8 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       default: () => new Date(),
       index: true,
     },
+    fbPurchaseServerSentAt: { type: Date },
+    tiktokPurchaseServerSentAt: { type: Date },
     termsAgreedAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
     payments: { type: [PaymentSchema], default: [] },
