@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder, type IOrderDesignUrl } from '@/lib/models/Order';
+import Referral from '@/lib/models/Referral';
 import { logActivity } from '@/lib/services/logger';
 import {
   generateDesignForProduct,
@@ -63,9 +64,11 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     }
 
     // ── Check for a reservation photo ────────────────────────────────
-    // The design app uses this flag to pick the right template variant:
-    //   hasReservationPhoto=true  → 'image' template (if available)
-    //   hasReservationPhoto=false → 'text' template
+    // The design app uses this flag to STRICTLY pick the right template:
+    //   hasReservationPhoto=true  → MUST use 'image' template (imageTemplateId)
+    //   hasReservationPhoto=false → MUST use 'text' template (templateId)
+    // No fallback — if the required template is missing, the design app
+    // returns `noTemplate` and the admin must create the right variant.
     const reservationPhoto = order.reservationData?.find(
       (r) => r.key === 'photo' && r.value && r.value.trim().length > 0,
     );
@@ -76,7 +79,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     // `billing.fullName`, `order.orderNumber`, `reservation.photo`, etc.
     // We send the full order document so the renderer can resolve any
     // field without us having to map each one explicitly.
-    const orderData = buildOrderDataPayload(order);
+    const orderData = await buildOrderDataPayload(order);
 
     // ── Call the design app for each product ─────────────────────────
     const productItems = (order.items || []).filter((item) => item.productId);
@@ -247,7 +250,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
  * the renderer can read directly without re-parsing the reservation
  * array.
  */
-function buildOrderDataPayload(order: IOrder): Record<string, unknown> {
+async function buildOrderDataPayload(order: IOrder): Promise<Record<string, unknown>> {
   // Flatten reservationData into a `reservation` object for easy
   // `reservation.photo` / `reservation.intention` lookups.
   const reservation: Record<string, string> = {};
@@ -258,6 +261,26 @@ function buildOrderDataPayload(order: IOrder): Record<string, unknown> {
       }
     }
   }
+
+  // ── Fetch all referrals for the ref.phoneNumbers dynamic field ─────
+  // The design app's renderer uses this to build a multi-line list of
+  // ref phone numbers, with the order's ref first.
+  let referrals: Array<{ referralId: string; phone: string; name: string }> = [];
+  try {
+    const allReferrals = await Referral.find().lean();
+    referrals = allReferrals.map((r) => ({
+      referralId: r.referralId,
+      phone: r.phone,
+      name: r.name,
+    }));
+  } catch {
+    // Referral collection not available — skip (ref.phoneNumbers will
+    // resolve to undefined and the field will show its placeholder)
+  }
+
+  // The order's referral ID — defaults to MNK-D or GHD-D by source.
+  // The design app uses this to determine which ref's phone goes first.
+  const referralId = order.referralId || (order.source === 'ghadaq' ? 'GHD-D' : 'MNK-D');
 
   return {
     orderNumber: order.orderNumber,
@@ -274,5 +297,7 @@ function buildOrderDataPayload(order: IOrder): Record<string, unknown> {
     reservation, // convenience: flattened key→value
     source: order.source,
     locale: order.locale,
+    referralId,
+    referrals,
   };
 }

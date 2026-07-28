@@ -70,15 +70,18 @@ interface DesignAppResponseBody {
  * The design app will:
  *   1. Look up the booking product by `productId`.
  *   2. Check if it has a template assigned.
- *   3. Pick the right template variant based on `hasReservationPhoto`
- *      — 'image' template if the order has a reservation photo, 'text'
- *      template otherwise.
+ *   3. STRICTLY pick the template variant based on `hasReservationPhoto`
+ *      — 'image' template (imageTemplateId) if the order has a
+ *      reservation photo, 'text' template (templateId) otherwise.
+ *      NO fallback between types — if the required template is missing,
+ *      the design app returns `noTemplate`.
  *   4. Render the template with the order data and upload the JPG to R2.
  *   5. Return the public URL.
  *
- * If the product has no template, the design app responds with
- * `success: false, error: 'noTemplate'` and this function returns a
- * failed `DesignAppResult` — the caller (admin route) skips it and
+ * If the product has no template (of the required type), the design app
+ * responds with `success: false, error: 'noTemplate'` and this function
+ * returns a failed `DesignAppResult` — the caller (admin route) skips
+ * it and
  * tries the next product.
  */
 export async function generateDesignForProduct(params: {
