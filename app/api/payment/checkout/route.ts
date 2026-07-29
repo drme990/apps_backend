@@ -58,12 +58,7 @@ import {
 } from '@/lib/execution-date';
 import { randomBytes } from 'crypto';
 
-function toIsoLocalDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+
 
 function generatePaymentId(): string {
   return `pay_${randomBytes(12).toString('hex')}`;
@@ -401,7 +396,15 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        const newUserPayload: Record<string, any> = {
+        const newUserPayload: {
+          name: string;
+          email: string;
+          password: string;
+          phone: string;
+          country: string;
+          appId: string;
+          detectedCountry?: string;
+        } = {
           name: billingData.fullName.trim(),
           email: normalizedInputEmail,
           password: normalizedPassword,
@@ -717,10 +720,24 @@ export async function POST(request: NextRequest) {
       }
 
       if (field.type === 'picture') {
-        const isDataImage = finalValue.startsWith('data:image/');
-        const isHttpUrl = /^https?:\/\//i.test(finalValue);
+        // New multi-image format: JSON-stringified array of data URLs / HTTP URLs.
+        // Legacy format: single data URL / HTTP URL string.
+        let imageValues: string[] = [];
+        try {
+          const parsed = JSON.parse(finalValue);
+          if (Array.isArray(parsed)) {
+            imageValues = parsed.filter(
+              (v): v is string => typeof v === 'string' && v.length > 0,
+            );
+          }
+        } catch {
+          // Not JSON — treat as a single image (legacy)
+          if (typeof finalValue === 'string' && finalValue.length > 0) {
+            imageValues = [finalValue];
+          }
+        }
 
-        if (!isDataImage && !isHttpUrl) {
+        if (imageValues.length === 0) {
           return NextResponse.json(
             {
               success: false,
@@ -730,20 +747,42 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Store customer-submitted pictures in Cloudflare R2 instead of large base64 strings.
-        if (isDataImage) {
-          const [header, base64Data] = finalValue.split(',');
-          const mimeType =
-            header.match(/data:(.*?);base64/)?.[1] || 'image/png';
-          const imageBuffer = Buffer.from(base64Data || '', 'base64');
-          const uploaded = await uploadFileToR2(
-            new File([imageBuffer], 'reservation-picture', {
-              type: mimeType,
-            }),
-            'images/customers',
-          );
-          finalValue = uploaded.url;
+        // Cap at 4 images for safety
+        imageValues = imageValues.slice(0, 4);
+
+        const uploadedUrls: string[] = [];
+        for (const imageValue of imageValues) {
+          const isDataImage = imageValue.startsWith('data:image/');
+          const isHttpUrl = /^https?:\/\//i.test(imageValue);
+
+          if (!isDataImage && !isHttpUrl) {
+            return NextResponse.json(
+              {
+                success: false,
+                error: 'Invalid reservation picture format',
+              },
+              { status: 400 },
+            );
+          }
+
+          if (isDataImage) {
+            const [header, base64Data] = imageValue.split(',');
+            const mimeType =
+              header.match(/data:(.*?);base64/)?.[1] || 'image/png';
+            const imageBuffer = Buffer.from(base64Data || '', 'base64');
+            const uploaded = await uploadFileToR2(
+              new File([imageBuffer], 'reservation-picture', {
+                type: mimeType,
+              }),
+              'images/customers',
+            );
+            uploadedUrls.push(uploaded.url);
+          } else {
+            uploadedUrls.push(imageValue);
+          }
         }
+
+        finalValue = JSON.stringify(uploadedUrls);
       }
 
       if (finalValue) {
