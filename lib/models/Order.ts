@@ -192,7 +192,7 @@ export interface IOrderDesignUrl {
   templateType: 'text' | 'image';
   /**
    * ID of the design-app project (design instance) generated for this
-   * order. The admin panel opens `{DESIGN_APP_URL}/editor/{projectId}`
+   * order. The admin panel opens `{DESIGN_APP_URL}/editor/d/{projectId}`
    * so the admin can edit THIS specific design — not the template.
    * The template stays unchanged; only this design instance is edited.
    */

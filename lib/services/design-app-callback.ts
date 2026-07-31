@@ -36,7 +36,7 @@ export interface DesignAppResult {
   templateType?: TemplateType;
   /**
    * ID of the design-app project (design instance) generated for this
-   * order. The admin panel opens the editor at /editor/{projectId} so
+   * order. The admin panel opens the editor at /editor/d/{projectId} so
    * the admin edits THIS design, not the template.
    */
   projectId?: string;
