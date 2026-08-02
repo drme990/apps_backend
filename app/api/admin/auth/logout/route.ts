@@ -21,7 +21,7 @@ export async function POST() {
     });
 
     const isProduction = process.env.NODE_ENV === 'production';
-    const cookieDomain = process.env.COOKIE_DOMAIN || undefined;
+    const cookieDomain = isProduction ? (process.env.COOKIE_DOMAIN || undefined) : undefined;
     const response = NextResponse.json({
       success: true,
       message: 'Logged out successfully',
