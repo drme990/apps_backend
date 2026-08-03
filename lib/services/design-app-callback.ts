@@ -171,3 +171,64 @@ export async function generateDesignForProduct(params: {
     clearTimeout(timeout);
   }
 }
+
+/**
+ * Call the design app to delete design instance projects for an order.
+ *
+ * The design app will:
+ *   1. Find each project by ID.
+ *   2. Collect all R2 keys (order design JPG, thumbnail, layer images).
+ *   3. Delete the project documents from MongoDB.
+ *   4. Delete all R2 assets in the background.
+ *
+ * Returns the number of projects deleted.
+ */
+export async function deleteDesignProjects(projectIds: string[]): Promise<{
+  success: boolean;
+  deleted?: number;
+  error?: string;
+}> {
+  if (projectIds.length === 0) {
+    return { success: true, deleted: 0 };
+  }
+
+  const baseUrl = getDesignAppUrl();
+  if (!baseUrl) {
+    return { success: false, error: 'designAppNotConfigured' };
+  }
+
+  const secret = getCallbackSecret();
+  if (!secret) {
+    return { success: false, error: 'callbackSecretNotConfigured' };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetch(`${baseUrl}/api/orders/delete-designs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-callback-secret': secret,
+      },
+      body: JSON.stringify({ projectIds }),
+      signal: controller.signal,
+    });
+
+    const body = await response.json();
+
+    if (!response.ok || !body.success) {
+      return { success: false, error: body.error || `http_${response.status}` };
+    }
+
+    return { success: true, deleted: body.data?.deleted ?? 0 };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { success: false, error: 'timeout' };
+    }
+    return { success: false, error: 'fetchFailed' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
