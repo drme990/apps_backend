@@ -770,8 +770,22 @@ export async function POST(request: NextRequest) {
             const mimeType =
               header.match(/data:(.*?);base64/)?.[1] || 'image/png';
             const imageBuffer = Buffer.from(base64Data || '', 'base64');
+            // Derive the file extension from the MIME type so the stored
+            // object has a proper extension (e.g. .jpg, .png, .webp).
+            // Without this, the R2 key has no extension which breaks
+            // content-type detection and CDN caching.
+            const ext =
+              mimeType === 'image/jpeg' || mimeType === 'image/jpg'
+                ? 'jpg'
+                : mimeType === 'image/png'
+                  ? 'png'
+                  : mimeType === 'image/webp'
+                    ? 'webp'
+                    : mimeType === 'image/gif'
+                      ? 'gif'
+                      : 'jpg';
             const uploaded = await uploadFileToR2(
-              new File([imageBuffer], 'reservation-picture', {
+              new File([imageBuffer], `reservation-picture.${ext}`, {
                 type: mimeType,
               }),
               'images/customers',
