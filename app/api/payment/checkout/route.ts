@@ -789,6 +789,7 @@ export async function POST(request: NextRequest) {
                 type: mimeType,
               }),
               'images/customers',
+              `reservation-picture.${ext}`,
             );
             uploadedUrls.push(uploaded.url);
           } else {

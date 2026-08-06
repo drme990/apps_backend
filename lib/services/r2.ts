@@ -59,7 +59,7 @@ async function readAwsErrorBodySnippet(body: unknown): Promise<string> {
       body !== null &&
       'transformToString' in body &&
       typeof (body as { transformToString?: unknown }).transformToString ===
-        'function'
+      'function'
     ) {
       const text = await (
         body as { transformToString: () => Promise<string> }
@@ -85,12 +85,17 @@ async function readAwsErrorBodySnippet(body: unknown): Promise<string> {
 export const uploadVideoToR2 = async (
   file: File,
   folder: string = 'products/videos',
+  /** Optional filename override — used when the File object's name
+   *  might not be reliable (e.g. File created from a Buffer in Node.js
+   *  where the name property may not be preserved correctly). */
+  fileName?: string,
 ): Promise<{ url: string; key: string }> => {
   if (!accountId || !accessKeyId || !secretAccessKey) {
     throw new Error('R2 credentials are missing');
   }
 
-  const key = buildObjectKey(folder, file.name);
+  const effectiveName = fileName || file.name;
+  const key = buildObjectKey(folder, effectiveName);
   const bodyBuffer = Buffer.from(await file.arrayBuffer());
 
   const command = new PutObjectCommand({
@@ -134,8 +139,9 @@ export const uploadVideoToR2 = async (
 export const uploadFileToR2 = async (
   file: File,
   folder: string = 'products/images',
+  fileName?: string,
 ): Promise<{ url: string; key: string }> => {
-  return uploadVideoToR2(file, folder);
+  return uploadVideoToR2(file, folder, fileName);
 };
 
 export const deleteVideoFromR2 = async (key: string): Promise<boolean> => {
@@ -193,9 +199,17 @@ export const generatePresignedUploadUrl = async (
   });
 
   try {
-    const uploadUrl = await getSignedUrl(s3Client as any, command, {
-      expiresIn,
-    });
+    // S3Client extends Client<...> but the private 'handlers' property has
+    // separate declarations between @aws-sdk/client-s3 and @smithy/core —
+    // a known AWS SDK packaging issue. No cast avoids it, so we suppress
+    // the one TS error here. getSignedUrl accepts S3Client at runtime.
+    const uploadUrl = await getSignedUrl(
+      // @ts-expect-error — AWS SDK type incompatibility (private 'handlers')
+      s3Client,
+      command,
+      {
+        expiresIn,
+      });
 
     return {
       uploadUrl,
@@ -243,7 +257,7 @@ export const listR2Objects = async (
 
   try {
     const response = await s3Client.send(command);
-    
+
     const folders: string[] = [];
     const files: R2Object[] = [];
 
@@ -331,7 +345,12 @@ export const generatePresignedDownloadUrl = async (
   });
 
   try {
-    return await getSignedUrl(s3Client as any, command, { expiresIn });
+    return await getSignedUrl(
+      // @ts-expect-error — AWS SDK type incompatibility (private 'handlers')
+      s3Client,
+      command,
+      { expiresIn },
+    );
   } catch (error) {
     console.error('Error generating presigned download URL:', error);
     throw error;
