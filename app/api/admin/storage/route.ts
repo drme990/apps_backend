@@ -1,27 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listR2Objects, deleteR2Folder, deleteMultipleR2Objects, generatePresignedDownloadUrl } from '@/lib/services/r2';
+import { listR2Objects, deleteR2Folder, deleteMultipleR2Objects, type R2FolderStructure } from '@/lib/services/r2';
+
+// Public CDN URL for R2 objects (e.g. https://storage.manasik.net)
+const publicUrl = process.env.R2_PUBLIC_URL || '';
 
 // Simple in-memory cache for list operations
-const listCache = new Map<string, { data: any; timestamp: number }>();
+const listCache = new Map<string, { data: R2FolderStructure; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 function getCacheKey(prefix: string): string {
   return `list:${prefix}`;
 }
 
-function getFromCache(key: string): any | null {
+function getFromCache(key: string): R2FolderStructure | null {
   const cached = listCache.get(key);
   if (!cached) return null;
-  
+
   if (Date.now() - cached.timestamp > CACHE_TTL) {
     listCache.delete(key);
     return null;
   }
-  
+
   return cached.data;
 }
 
-function setCache(key: string, data: any): void {
+function setCache(key: string, data: R2FolderStructure): void {
   listCache.set(key, { data, timestamp: Date.now() });
 }
 
@@ -44,18 +47,18 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const prefix = searchParams.get('prefix') || '';
-    
+
     const cacheKey = getCacheKey(prefix);
     const cached = getFromCache(cacheKey);
-    
+
     if (cached) {
-      return NextResponse.json({ success: true, data: cached, cached: true });
+      return NextResponse.json({ success: true, data: cached, publicUrl, cached: true });
     }
-    
+
     const data = await listR2Objects(prefix);
     setCache(cacheKey, data);
-    
-    return NextResponse.json({ success: true, data, cached: false });
+
+    return NextResponse.json({ success: true, data, publicUrl, cached: false });
   } catch (error) {
     console.error('Error listing storage:', error);
     return NextResponse.json(
@@ -70,27 +73,27 @@ export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
     const { keys, folder } = body;
-    
+
     if (folder) {
       // Delete entire folder
       const count = await deleteR2Folder(folder);
       clearCache(folder);
       return NextResponse.json({ success: true, deletedCount: count });
     }
-    
+
     if (keys && Array.isArray(keys)) {
       // Delete multiple objects
       const result = await deleteMultipleR2Objects(keys);
-      
+
       // Clear cache for affected prefixes
       for (const key of keys) {
         const prefix = key.substring(0, key.lastIndexOf('/'));
         clearCache(prefix ? `${prefix}/` : '');
       }
-      
+
       return NextResponse.json({ success: true, ...result });
     }
-    
+
     return NextResponse.json(
       { success: false, error: 'No keys or folder specified' },
       { status: 400 }
