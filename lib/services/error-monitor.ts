@@ -1,10 +1,15 @@
 /**
- * Pseudo-Error Monitoring Service
+ * Error Monitoring Service
  *
- * In a real production environment, this should wrap Sentry or Datadog.
- * For now, it enforces structured JSON logging to stderr so log aggregators
- * (like Vercel Logs, Datadog or AWS CloudWatch) can natively index these fail states.
+ * Captures exceptions and routes them through the pino server logger.
+ * In production, logs are written to stdout (JSON) + rotating log files.
+ * In development, logs are pretty-printed to the terminal.
+ *
+ * The ActivityLog (MongoDB) is separate — it tracks admin user actions.
+ * This service tracks server-side errors and operational failures.
  */
+
+import { logger } from './server-logger';
 
 export interface ErrorContext {
   service: string;
@@ -14,30 +19,32 @@ export interface ErrorContext {
 }
 
 export function captureException(error: unknown, context: ErrorContext) {
-  // Extract error details safely
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorStack = error instanceof Error ? error.stack : undefined;
-  const isErrorObject = error instanceof Error;
 
   const payload = {
-    timestamp: new Date().toISOString(),
-    event: 'ERROR_CAUGHT',
+    event: 'error.caught',
     severity: context.severity,
     service: context.service,
     operation: context.operation,
     message: errorMessage,
     stack: errorStack,
     metadata: context.metadata,
-    rawError: isErrorObject ? undefined : error,
+    rawError: error instanceof Error ? undefined : error,
   };
 
-  // Structured log to stderr for log aggregators to pick up instead of swallowing
-  console.error(JSON.stringify(payload));
+  // Route through pino at the appropriate level
+  const level =
+    context.severity === 'critical' ? 'fatal' :
+      context.severity === 'high' ? 'error' :
+        context.severity === 'medium' ? 'warn' : 'info';
 
-  // TODO: Add critical alerting mechanism (e.g. queue failed jobs, Slack/Discord webhook alerts)
+  logger[level](payload, `${context.service}:${context.operation} failed`);
+
+  // Critical alerts get an additional explicit fatal log
   if (context.severity === 'critical') {
-    // Notify devops or escalate immediately
-    console.error(
+    logger.fatal(
+      { service: context.service, operation: context.operation },
       `[CRITICAL ALERT] ${context.service}:${context.operation} failed!`,
     );
   }
