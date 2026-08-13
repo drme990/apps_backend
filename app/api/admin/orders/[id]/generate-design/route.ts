@@ -98,6 +98,8 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           productId: item.productId,
           productName: item.productName,
           quantity: item.quantity,
+          sizeIndex: item.sizeIndex,
+          sizeName: item.sizeName,
         },
       };
 

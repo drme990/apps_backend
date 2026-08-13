@@ -1,13 +1,17 @@
 /**
  * Structured request/event logger.
  *
- * Outputs newline-delimited JSON so Vercel Log Drain, Datadog,
- * and any standard log aggregator can parse it automatically.
+ * Routes all log output through the pino server logger
+ * (lib/services/server-logger.ts). In development, logs are
+ * pretty-printed to the terminal. In production, they go to
+ * stdout (JSON) + rotating log files.
  *
  * Usage:
  *   import { log } from '@/lib/request-logger';
  *   log('info', 'checkout.initiated', { orderId, traceId });
  */
+
+import { logger } from './services/server-logger';
 
 type LogLevel = 'info' | 'warn' | 'error';
 
@@ -31,13 +35,10 @@ export function log(
     ...meta,
   };
 
-  const output = JSON.stringify(entry);
-
-  if (level === 'error') {
-    console.error(output);
-  } else if (level === 'warn') {
-    console.warn(output);
-  } else {
-    console.log(output);
-  }
+  // pino expects the message as the second arg and context as the first
+  // strip `level` and `ts` from the entry — pino adds its own timestamp + level
+  const { level: _l, ts: _t, ...context } = entry;
+  void _l;
+  void _t;
+  logger[level](context, event);
 }

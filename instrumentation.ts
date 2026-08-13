@@ -6,8 +6,12 @@
  * throw immediately so the deployment fails loudly rather than serving
  * broken responses silently.
  *
+ * All startup logs go through the pino server logger.
+ *
  * @see https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
+
+import { logger } from './lib/services/server-logger';
 
 /** Variables that must be set for the application to work correctly. */
 const REQUIRED_ENV_VARS: string[] = [
@@ -32,27 +36,18 @@ export async function register(): Promise<void> {
   const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 
   if (missing.length === 0) {
-    console.log(
-      JSON.stringify({
-        ts: new Date().toISOString(),
-        level: 'info',
-        event: 'startup.env_ok',
-        message: 'All required environment variables are set.',
-      }),
+    logger.info(
+      { event: 'startup.env_ok' },
+      'All required environment variables are set.',
     );
     return;
   }
 
   const message = `Missing required environment variables: ${missing.join(', ')}`;
 
-  console.error(
-    JSON.stringify({
-      ts: new Date().toISOString(),
-      level: 'error',
-      event: 'startup.env_missing',
-      missing,
-      message,
-    }),
+  logger.error(
+    { event: 'startup.env_missing', missing },
+    message,
   );
 
   // In production, fail fast so the deployment is rejected immediately.

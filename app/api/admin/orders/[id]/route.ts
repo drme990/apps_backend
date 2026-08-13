@@ -6,6 +6,10 @@ import OrderChangeHistory, { type IOrderChangeHistory } from '@/lib/models/Order
 import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
+import {
+  shouldTriggerAutoDesignGeneration,
+  triggerAutoDesignGeneration,
+} from '@/lib/services/auto-design-generation';
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
 
@@ -235,6 +239,18 @@ export async function PUT(
 
     if (nextStatus === 'paid' && changes.includes('status → paid')) {
       sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
+    }
+
+    // ── Auto design generation ──────────────────────────────────────
+    // Triggered when the admin manually changes the order status to
+    // 'paid' or 'partial-paid' from a non-paid state. Fire-and-forget.
+    if (shouldTriggerAutoDesignGeneration(previousStatus, nextStatus)) {
+      triggerAutoDesignGeneration(String(order._id)).catch((err) => {
+        console.error(
+          `[admin PUT] Auto design generation failed for order ${order.orderNumber}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
 
     await logActivity({
