@@ -20,6 +20,10 @@ import TerminalLog from '@/lib/models/TerminalLog';
 import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
 import { evaluateAndUpdateUserTier } from '@/lib/services/user-tier-evaluator';
+import {
+  shouldTriggerAutoDesignGeneration,
+  triggerAutoDesignGeneration,
+} from '@/lib/services/auto-design-generation';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -534,6 +538,20 @@ export async function POST(request: NextRequest) {
       order.status === 'paid' &&
       orderStatusBefore !== 'paid' &&
       orderStatusBefore !== 'completed';
+
+    // ── Auto design generation ──────────────────────────────────────
+    // Triggered when the order FIRST enters a paid state (paid or
+    // partial-paid) from a non-paid state. Fire-and-forget — does NOT
+    // block the webhook response. If it fails, the admin can manually
+    // generate designs via the admin panel button.
+    if (shouldTriggerAutoDesignGeneration(orderStatusBefore, order.status)) {
+      triggerAutoDesignGeneration(String(order._id)).catch((err) => {
+        console.error(
+          `[webhook] Auto design generation failed for order ${order.orderNumber}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+    }
 
     if (transitionedToPaid) {
       const item = order.items?.[0];
