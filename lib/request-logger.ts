@@ -3,8 +3,8 @@
  *
  * Routes all log output through the pino server logger
  * (lib/services/server-logger.ts). In development, logs are
- * pretty-printed to the terminal. In production, they go to
- * stdout (JSON) + rotating log files.
+ * pretty-printed to the terminal. In production on VPS, they go to
+ * stdout (JSON) + rotating log files. On Vercel, stdout only.
  *
  * Usage:
  *   import { log } from '@/lib/request-logger';

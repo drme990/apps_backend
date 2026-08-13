@@ -2,8 +2,8 @@
  * Error Monitoring Service
  *
  * Captures exceptions and routes them through the pino server logger.
- * In production, logs are written to stdout (JSON) + rotating log files.
- * In development, logs are pretty-printed to the terminal.
+ * In production on VPS, logs are written to stdout (JSON) + rotating
+ * log files. On Vercel, stdout only. In development, pretty-printed.
  *
  * The ActivityLog (MongoDB) is separate — it tracks admin user actions.
  * This service tracks server-side errors and operational failures.
