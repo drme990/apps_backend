@@ -18,7 +18,7 @@ const BRANDS = {
   },
   ghadaq: {
     name: 'Ghadaq Association',
-    nameAr: 'جمعية غداق',
+    nameAr: 'جمعية غدق',
     tagline: 'Islamic Religious Services',
     taglineAr: 'الخدمات الدينية الإسلامية',
     gradientFrom: '#ffa401',
