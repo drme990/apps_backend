@@ -25,6 +25,16 @@
  *   We only trigger when the order FIRST enters a paid state. If the
  *   order was already `partial-paid` and transitions to `paid`, we do
  *   NOT regenerate — the design was already created at `partial-paid`.
+ *
+ * Burst protection:
+ *   When a batch of payments settles simultaneously (e.g. EasyKash
+ *   reconciles a batch), the webhook fires N auto-generation calls at
+ *   once. Without a queue, all N hit the design app simultaneously,
+ *   filling its render queue. Later requests wait so long they hit
+ *   the backend's 300s timeout — even though the render itself only
+ *   takes 7-30s. The `autoGenQueue` below caps how many orders are
+ *   processed at once (default 3), keeping the design app's queue
+ *   short and each request within the timeout window.
  */
 
 import { connectDB } from '@/lib/db';
@@ -34,6 +44,44 @@ import { recordDesignGenLog } from '@/lib/services/design-log-service';
 
 /** Statuses that count as "already paid" — no need to auto-generate. */
 const PAID_LIKE_STATUSES = new Set(['paid', 'partial-paid', 'completed']);
+
+// ── Backend-side auto-generation queue ──────────────────────────────
+// Limits how many orders are sent to the design app simultaneously.
+// The design app has its own render limiter (10 concurrent), but if
+// 50 orders fire at once, 50 requests pile up in the design app's
+// queue — the last ones wait 50/10 × 30s = 150s before they even
+// START rendering, then another 30s to render = 180s total. With
+// slower renders or more orders, this exceeds the 300s timeout.
+//
+// By processing only 3 orders at a time on the backend side, the
+// design app's queue stays short (at most 3 orders × ~2 products =
+// 6 renders queued), and each request completes well within the
+// timeout. Excess orders wait in the backend's queue — they don't
+// hold any design-app resources while waiting.
+const AUTO_GEN_CONCURRENCY = parseInt(
+  process.env.AUTO_GEN_CONCURRENCY || '3',
+  10,
+);
+let autoGenActive = 0;
+const autoGenQueue: Array<() => void> = [];
+
+async function acquireAutoGenSlot(): Promise<void> {
+  if (autoGenActive < AUTO_GEN_CONCURRENCY) {
+    autoGenActive++;
+    return;
+  }
+  await new Promise<void>((resolve) => autoGenQueue.push(resolve));
+  autoGenActive++;
+}
+
+function releaseAutoGenSlot(): void {
+  const next = autoGenQueue.shift();
+  if (next) {
+    next(); // hand the slot to the next waiter
+  } else {
+    autoGenActive--;
+  }
+}
 
 /**
  * Check whether a status transition should trigger auto design generation.
@@ -77,6 +125,10 @@ export async function triggerAutoDesignGeneration(
   const logPrefix = `[auto-design-gen order=${orderId}]`;
   const startedAt = new Date();
 
+  // Wait for a backend-side slot before doing anything. This keeps
+  // the design app's render queue short even when a burst of orders
+  // transitions to paid simultaneously.
+  await acquireAutoGenSlot();
   try {
     await connectDB();
 
@@ -149,5 +201,7 @@ export async function triggerAutoDesignGeneration(
     } catch {
       // If even the log write fails, the console.error above is enough
     }
+  } finally {
+    releaseAutoGenSlot();
   }
 }

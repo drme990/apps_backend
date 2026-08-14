@@ -97,31 +97,31 @@ export async function generateDesignsForOrder(
   // backend side.
   const productItems = (order.items || []).filter((item) => item.productId);
 
+  const buildItemOrderData = (item: (typeof productItems)[number]) => ({
+    ...orderData,
+    item: {
+      productId: item.productId,
+      productName: item.productName,
+      quantity: item.quantity,
+      sizeIndex: item.sizeIndex,
+      sizeName: item.sizeName,
+    },
+  });
+
   const settled = await Promise.allSettled(
     productItems.map((item, i) => {
       const productId = String(item.productId);
       const itemIndex = i + 1; // 1-based
-
-      const itemOrderData = {
-        ...orderData,
-        item: {
-          productId: item.productId,
-          productName: item.productName,
-          quantity: item.quantity,
-          sizeIndex: item.sizeIndex,
-          sizeName: item.sizeName,
-        },
-      };
 
       return generateDesignForProduct({
         orderNumber: order.orderNumber,
         productId,
         hasReservationPhoto,
         itemIndex,
-        orderData: itemOrderData,
+        orderData: buildItemOrderData(item),
       });
     }),
-  );
+  ); 3
 
   // Map settled results back to DesignAppResult[], treating rejections
   // as failures so the partition logic below handles them uniformly.
@@ -134,6 +134,49 @@ export async function generateDesignsForOrder(
       message: s.reason instanceof Error ? s.reason.message : String(s.reason),
     };
   });
+
+  // ── Retry timed-out products once ─────────────────────────────────
+  // A timeout usually means the design app's render queue was full at
+  // the time of the request. By the time the first attempt times out,
+  // the queue has likely cleared. We retry just the timed-out products
+  // once — no retry for other errors (noTemplate, noBookingProduct,
+  // etc.) since those won't fix themselves.
+  const timedOutIndices = results
+    .map((r, i) => (r.error === 'timeout' ? i : -1))
+    .filter((i) => i >= 0);
+
+  if (timedOutIndices.length > 0) {
+    console.log(
+      `[design-gen order=${order.orderNumber}] Retrying ${timedOutIndices.length} timed-out product(s)…`,
+    );
+
+    const retrySettled = await Promise.allSettled(
+      timedOutIndices.map((idx) => {
+        const item = productItems[idx];
+        return generateDesignForProduct({
+          orderNumber: order.orderNumber,
+          productId: String(item.productId),
+          hasReservationPhoto,
+          itemIndex: idx + 1,
+          orderData: buildItemOrderData(item),
+        });
+      }),
+    );
+
+    // Replace timed-out results with retry results
+    timedOutIndices.forEach((idx, retryIdx) => {
+      const s = retrySettled[retryIdx];
+      if (s.status === 'fulfilled') {
+        results[idx] = s.value;
+      } else {
+        // Keep the original timeout error — retry also failed
+        results[idx] = {
+          ...results[idx],
+          message: `Retry also failed: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`,
+        };
+      }
+    });
+  }
 
   // ── Partition results ────────────────────────────────────────────
   const generated: IOrderDesignUrl[] = [];
