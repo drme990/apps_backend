@@ -1,0 +1,219 @@
+name: Deploy Backend App
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+concurrency:
+  group: backend-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Backend to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup SSH
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          echo "===== SSH SETUP ====="
+          echo "Deploy host: ${DEPLOY_HOST}"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          echo "===== SSH KEYSCAN ====="
+
+          if ! ssh-keyscan -T 10 -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "ERROR: ssh-keyscan failed for ${DEPLOY_HOST}"
+            exit 1
+          fi
+
+          chmod 600 ~/.ssh/known_hosts
+
+          echo "SSH host key successfully added."
+
+      - name: Deploy
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "COMMIT_SHA='${COMMIT_SHA}' bash -s" <<'REMOTE_SCRIPT'
+
+          set -euo pipefail
+
+          APP_DIR="/var/www/backend"
+          RELEASES_DIR="$APP_DIR/releases"
+          SHARED_DIR="$APP_DIR/shared"
+
+          cd "$APP_DIR"
+
+          echo
+          echo "===== DEPLOYMENT ====="
+          echo "Commit: $COMMIT_SHA"
+
+          echo
+          echo "===== NODE ENVIRONMENT ====="
+
+          export NVM_DIR="/home/deploy/.nvm"
+
+          if [ ! -f "$NVM_DIR/nvm.sh" ]; then
+            echo "ERROR: NVM was not found at $NVM_DIR"
+            exit 1
+          fi
+
+          source "$NVM_DIR/nvm.sh"
+          nvm use 22
+
+          echo "Node: $(node -v)"
+          echo "npm:  $(npm -v)"
+
+          echo
+          echo "===== FETCH ====="
+
+          git fetch origin main
+
+          REMOTE_SHA="$(git rev-parse origin/main)"
+
+          echo "GitHub commit: $COMMIT_SHA"
+          echo "origin/main:  $REMOTE_SHA"
+
+          if [ "$REMOTE_SHA" != "$COMMIT_SHA" ]; then
+            echo "ERROR: GitHub commit and origin/main do not match."
+            exit 1
+          fi
+
+          echo
+          echo "===== RELEASE ====="
+
+          RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short "$COMMIT_SHA")"
+          RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
+
+          echo "Release: $RELEASE_DIR"
+
+          mkdir -p "$RELEASE_DIR"
+
+          echo
+          echo "===== ARCHIVE ====="
+
+          git archive "$COMMIT_SHA" | tar -x -C "$RELEASE_DIR"
+
+          echo
+          echo "===== ENV ====="
+
+          if [ ! -f "$SHARED_DIR/.env" ]; then
+            echo "ERROR: Backend .env does not exist:"
+            echo "$SHARED_DIR/.env"
+            exit 1
+          fi
+
+          ln -s "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
+
+          echo
+          echo "===== INSTALL ====="
+
+          cd "$RELEASE_DIR"
+
+          npm ci
+
+          echo
+          echo "===== BUILD ====="
+
+          npm run build
+
+          echo
+          echo "===== BUILD SUCCESS ====="
+
+          echo
+          echo "===== PM2 ====="
+
+          pm2 delete backend || true
+
+          pm2 start npm \
+            --name backend \
+            --cwd "$RELEASE_DIR" \
+            -- start -- -p 3000 -H 127.0.0.1
+
+          echo
+          echo "===== PM2 STATUS ====="
+
+          pm2 status
+
+          echo
+          echo "===== SAVE PM2 ====="
+
+          pm2 save
+
+          echo
+          echo "===== HEALTH CHECK ====="
+
+          HEALTH_CHECK_PASSED=false
+
+          for i in {1..20}; do
+            if curl -fsS -o /dev/null http://127.0.0.1:3000; then
+              echo "Health check passed on attempt $i."
+              HEALTH_CHECK_PASSED=true
+              break
+            fi
+
+            echo "Health check attempt $i failed. Waiting..."
+
+            if [ "$i" -eq 20 ]; then
+              echo "ERROR: Health check failed."
+
+              echo
+              echo "===== PM2 STATUS ====="
+              pm2 status || true
+
+              echo
+              echo "===== BACKEND LOGS ====="
+              pm2 logs backend --lines 100 --nostream || true
+
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          if [ "$HEALTH_CHECK_PASSED" != "true" ]; then
+            echo "ERROR: Backend health check failed."
+            exit 1
+          fi
+
+          echo
+          echo "===== CLEAN OLD RELEASES ====="
+
+          cd "$RELEASES_DIR"
+
+          ls -1dt */ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+
+          echo "Remaining releases:"
+          ls -lah
+
+          echo
+          echo "===== DEPLOYMENT COMPLETE ====="
+          echo "Commit:  $COMMIT_SHA"
+          echo "Release: $RELEASE_DIR"
+
+          REMOTE_SCRIPT
