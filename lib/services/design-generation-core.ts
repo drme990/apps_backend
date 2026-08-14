@@ -89,35 +89,51 @@ export async function generateDesignsForOrder(
   // ── Build the order data payload for the design app ──────────────
   const orderData = await buildOrderDataPayload(order);
 
-  // ── Call the design app for each product ─────────────────────────
+  // ── Call the design app for all products in parallel ─────────────
+  // Instead of rendering products one-by-one (which doubles the time
+  // for 2-product orders), we fire all requests simultaneously. The
+  // design app's concurrency limiter handles queueing on its end —
+  // this just ensures we don't add extra sequential wait time on the
+  // backend side.
   const productItems = (order.items || []).filter((item) => item.productId);
-  const results: DesignAppResult[] = [];
 
-  for (let i = 0; i < productItems.length; i++) {
-    const item = productItems[i];
-    const productId = String(item.productId);
-    const itemIndex = i + 1; // 1-based
+  const settled = await Promise.allSettled(
+    productItems.map((item, i) => {
+      const productId = String(item.productId);
+      const itemIndex = i + 1; // 1-based
 
-    const itemOrderData = {
-      ...orderData,
-      item: {
-        productId: item.productId,
-        productName: item.productName,
-        quantity: item.quantity,
-        sizeIndex: item.sizeIndex,
-        sizeName: item.sizeName,
-      },
+      const itemOrderData = {
+        ...orderData,
+        item: {
+          productId: item.productId,
+          productName: item.productName,
+          quantity: item.quantity,
+          sizeIndex: item.sizeIndex,
+          sizeName: item.sizeName,
+        },
+      };
+
+      return generateDesignForProduct({
+        orderNumber: order.orderNumber,
+        productId,
+        hasReservationPhoto,
+        itemIndex,
+        orderData: itemOrderData,
+      });
+    }),
+  );
+
+  // Map settled results back to DesignAppResult[], treating rejections
+  // as failures so the partition logic below handles them uniformly.
+  const results: DesignAppResult[] = settled.map((s, i) => {
+    if (s.status === 'fulfilled') return s.value;
+    return {
+      success: false,
+      productId: String(productItems[i].productId),
+      error: 'fetchFailed',
+      message: s.reason instanceof Error ? s.reason.message : String(s.reason),
     };
-
-    const result = await generateDesignForProduct({
-      orderNumber: order.orderNumber,
-      productId,
-      hasReservationPhoto,
-      itemIndex,
-      orderData: itemOrderData,
-    });
-    results.push(result);
-  }
+  });
 
   // ── Partition results ────────────────────────────────────────────
   const generated: IOrderDesignUrl[] = [];
