@@ -121,7 +121,7 @@ export async function generateDesignsForOrder(
         orderData: buildItemOrderData(item),
       });
     }),
-  ); 3
+  );
 
   // Map settled results back to DesignAppResult[], treating rejections
   // as failures so the partition logic below handles them uniformly.
