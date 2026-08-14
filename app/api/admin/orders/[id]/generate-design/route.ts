@@ -8,6 +8,10 @@ import {
   generateDesignForProduct,
   type DesignAppResult,
 } from '@/lib/services/design-app-callback';
+import {
+  recordDesignGenLog,
+} from '@/lib/services/design-log-service';
+import type { IOrderDesignLogResult } from '@/lib/models/OrderDesignLog';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -73,6 +77,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       (r) => r.key === 'photo' && r.value && r.value.trim().length > 0,
     );
     const hasReservationPhoto = Boolean(reservationPhoto);
+    const startedAt = new Date();
 
     // ── Build the order data payload for the design app ──────────────
     // The design app's dynamic field resolver expects paths like
@@ -124,6 +129,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       reasonCode: string;
       reason: string;
     }> = [];
+    const logResults: IOrderDesignLogResult[] = [];
 
     for (const result of results) {
       const item = productItems.find(
@@ -139,6 +145,14 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           templateType: result.templateType ?? 'text',
           projectId: result.projectId,
           createdAt: new Date(),
+        });
+        logResults.push({
+          productId: result.productId,
+          productName,
+          success: true,
+          url: result.url,
+          templateType: result.templateType ?? 'text',
+          projectId: result.projectId,
         });
       } else {
         // Map design-app error codes to machine-readable reasonCode +
@@ -176,6 +190,13 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
             reason = result.message || result.error || 'فشل غير معروف';
         }
         skipped.push({ productId: result.productId, productName, reasonCode, reason });
+        logResults.push({
+          productId: result.productId,
+          productName,
+          success: false,
+          errorCode: reasonCode,
+          errorMessage: reason,
+        });
       }
     }
 
@@ -214,6 +235,22 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       // Logging is best-effort — don't fail the request if it errors
       console.error('[generate-design] logActivity failed:', logError);
     }
+
+    // ── Record design generation log ─────────────────────────────────
+    await recordDesignGenLog({
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+      source: order.source,
+      orderStatus: order.status,
+      hasReservationPhoto,
+      trigger: 'manual_admin',
+      startedAt,
+      finishedAt: new Date(),
+      results: logResults,
+      triggeredByUserId: auth.user.userId,
+      triggeredByUserName: auth.user.name,
+      triggeredByUserEmail: auth.user.email,
+    });
 
     return NextResponse.json({
       success: true,

@@ -545,7 +545,7 @@ export async function POST(request: NextRequest) {
     // block the webhook response. If it fails, the admin can manually
     // generate designs via the admin panel button.
     if (shouldTriggerAutoDesignGeneration(orderStatusBefore, order.status)) {
-      triggerAutoDesignGeneration(String(order._id)).catch((err) => {
+      triggerAutoDesignGeneration(String(order._id), 'auto_webhook').catch((err) => {
         console.error(
           `[webhook] Auto design generation failed for order ${order.orderNumber}:`,
           err instanceof Error ? err.message : err,

@@ -31,6 +31,10 @@ import {
   generateDesignForProduct,
   type DesignAppResult,
 } from '@/lib/services/design-app-callback';
+import {
+  recordDesignGenLog,
+} from '@/lib/services/design-log-service';
+import type { IOrderDesignLogResult } from '@/lib/models/OrderDesignLog';
 
 /** Statuses that count as "already paid" — no need to auto-generate. */
 const PAID_LIKE_STATUSES = new Set(['paid', 'partial-paid', 'completed']);
@@ -64,18 +68,24 @@ export function shouldTriggerAutoDesignGeneration(
  *
  * This is fire-and-forget — the caller should NOT await it.
  * It runs entirely in the background and logs results/errors to the
- * server logger.
+ * server logger AND to the OrderDesignLog collection (for the admin
+ * panel's design logs page).
  *
  * The function is idempotent in the sense that if it fails, it simply
  * logs the error — the admin can manually trigger generation later.
  * It does NOT retry on its own (keeping the system simple).
  *
  * @param orderId The MongoDB _id of the order (string or ObjectId)
+ * @param trigger Who/what triggered this — 'auto_webhook' (payment
+ *                webhook) or 'auto_admin' (admin status change).
+ *                Defaults to 'auto_webhook'.
  */
 export async function triggerAutoDesignGeneration(
   orderId: string,
+  trigger: 'auto_webhook' | 'auto_admin' = 'auto_webhook',
 ): Promise<void> {
   const logPrefix = `[auto-design-gen order=${orderId}]`;
+  const startedAt = new Date();
 
   try {
     await connectDB();
@@ -83,6 +93,15 @@ export async function triggerAutoDesignGeneration(
     const order = (await Order.findById(orderId).lean()) as IOrder | null;
     if (!order) {
       console.warn(`${logPrefix} Order not found — skipping.`);
+      await recordDesignGenLog({
+        orderId,
+        orderNumber: 'unknown',
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        error: 'Order not found',
+      });
       return;
     }
 
@@ -92,6 +111,17 @@ export async function triggerAutoDesignGeneration(
       console.warn(
         `${logPrefix} Order status is '${order.status}' (not paid) — skipping.`,
       );
+      await recordDesignGenLog({
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        source: order.source,
+        orderStatus: order.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        error: `Order status is '${order.status}' (not paid) — skipped`,
+      });
       return;
     }
 
@@ -101,6 +131,17 @@ export async function triggerAutoDesignGeneration(
       console.log(
         `${logPrefix} Order already has ${order.designUrls.length} design URL(s) — skipping auto-generation.`,
       );
+      await recordDesignGenLog({
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        source: order.source,
+        orderStatus: order.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        error: `Order already has ${order.designUrls.length} design URL(s) — skipped`,
+      });
       return;
     }
 
@@ -108,16 +149,45 @@ export async function triggerAutoDesignGeneration(
       `${logPrefix} Starting auto design generation for order ${order.orderNumber} (status: ${order.status}).`,
     );
 
-    const generated = await generateDesignsForOrder(order);
+    const { generated, skipped, results } = await generateDesignsForOrder(order);
 
     console.log(
-      `${logPrefix} Done: ${generated.generated.length} generated, ${generated.skipped.length} skipped.`,
+      `${logPrefix} Done: ${generated.length} generated, ${skipped.length} skipped.`,
     );
+
+    await recordDesignGenLog({
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+      source: order.source,
+      orderStatus: order.status,
+      hasReservationPhoto: results.length > 0 ? results.some((r) => r.templateType === 'image') : undefined,
+      trigger,
+      startedAt,
+      finishedAt: new Date(),
+      results,
+    });
   } catch (error) {
-    console.error(
-      `${logPrefix} Unexpected error:`,
-      error instanceof Error ? error.message : error,
-    );
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`${logPrefix} Unexpected error:`, errorMsg);
+
+    // Try to record the error — best-effort
+    try {
+      await connectDB();
+      const order = (await Order.findById(orderId).lean()) as IOrder | null;
+      await recordDesignGenLog({
+        orderId,
+        orderNumber: order?.orderNumber || 'unknown',
+        source: order?.source,
+        orderStatus: order?.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        error: errorMsg,
+      });
+    } catch {
+      // If even the log write fails, just console.error (already done above)
+    }
   }
 }
 
@@ -132,6 +202,7 @@ export async function triggerAutoDesignGeneration(
 async function generateDesignsForOrder(order: IOrder): Promise<{
   generated: IOrderDesignUrl[];
   skipped: Array<{ productId: string; reason: string }>;
+  results: IOrderDesignLogResult[];
 }> {
   // ── Check for a reservation photo ────────────────────────────────
   const reservationPhoto = order.reservationData?.find(
@@ -175,6 +246,7 @@ async function generateDesignsForOrder(order: IOrder): Promise<{
   // ── Partition results ────────────────────────────────────────────
   const generated: IOrderDesignUrl[] = [];
   const skipped: Array<{ productId: string; reason: string }> = [];
+  const logResults: IOrderDesignLogResult[] = [];
 
   for (const result of results) {
     const item = productItems.find(
@@ -191,10 +263,25 @@ async function generateDesignsForOrder(order: IOrder): Promise<{
         projectId: result.projectId,
         createdAt: new Date(),
       });
+      logResults.push({
+        productId: result.productId,
+        productName,
+        success: true,
+        url: result.url,
+        templateType: result.templateType ?? 'text',
+        projectId: result.projectId,
+      });
     } else {
       skipped.push({
         productId: result.productId,
         reason: result.error || result.message || 'unknown',
+      });
+      logResults.push({
+        productId: result.productId,
+        productName,
+        success: false,
+        errorCode: result.error || 'unknown',
+        errorMessage: result.message || result.error || 'unknown',
       });
     }
   }
@@ -215,7 +302,7 @@ async function generateDesignsForOrder(order: IOrder): Promise<{
     );
   }
 
-  return { generated, skipped };
+  return { generated, skipped, results: logResults };
 }
 
 /**

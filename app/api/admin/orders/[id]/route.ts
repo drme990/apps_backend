@@ -245,7 +245,7 @@ export async function PUT(
     // Triggered when the admin manually changes the order status to
     // 'paid' or 'partial-paid' from a non-paid state. Fire-and-forget.
     if (shouldTriggerAutoDesignGeneration(previousStatus, nextStatus)) {
-      triggerAutoDesignGeneration(String(order._id)).catch((err) => {
+      triggerAutoDesignGeneration(String(order._id), 'auto_admin').catch((err) => {
         console.error(
           `[admin PUT] Auto design generation failed for order ${order.orderNumber}:`,
           err instanceof Error ? err.message : err,
