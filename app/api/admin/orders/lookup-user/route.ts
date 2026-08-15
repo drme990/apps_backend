@@ -25,42 +25,6 @@ function phoneNumberRegex(value: string): string {
   return digits.map((digit) => escapeRegex(digit)).join('[^0-9]*');
 }
 
-// Build a regex from all 3-digit substrings of the provided digits.
-// Used to find candidate users for fuzzy matching.
-function buildCandidateRegex(digits: string): string | null {
-  if (digits.length < 3) return null;
-  const substrings = new Set<string>();
-  for (let i = 0; i <= digits.length - 3; i++) {
-    substrings.add(digits.substring(i, i + 3));
-  }
-  if (substrings.size === 0) return null;
-  return Array.from(substrings).map(escapeRegex).join('|');
-}
-
-// Longest Common Subsequence length between two strings.
-function lcsLength(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0 || n === 0) return 0;
-
-  // Use two rows to keep memory usage low.
-  let prev = new Array(n + 1).fill(0);
-  let curr = new Array(n + 1).fill(0);
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (a[i - 1] === b[j - 1]) {
-        curr[j] = prev[j - 1] + 1;
-      } else {
-        curr[j] = Math.max(prev[j], curr[j - 1]);
-      }
-    }
-    [prev, curr] = [curr, prev];
-  }
-
-  return prev[n];
-}
-
 type LookupUserModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
 
 type LookupUser = {
@@ -98,17 +62,24 @@ export async function GET(request: NextRequest) {
       const escapedNormalized = escapeRegex(normalizedPhone);
       const flexibleRegex = phoneNumberRegex(phone);
 
+      // Prefix matching — the DB value must START WITH the search input.
+      // This prevents unrelated results that merely contain the digits
+      // somewhere in the middle.
       const phoneConditions = [
-        { phone: { $regex: escapedPhone, $options: 'i' } },
-        { phone: { $regex: escapedNormalized, $options: 'i' } },
+        { phone: { $regex: `^${escapedPhone}`, $options: 'i' } },
+        { phone: { $regex: `^${escapedNormalized}`, $options: 'i' } },
       ] as Array<Record<string, unknown>>;
+      // Also match if the DB phone starts with + followed by the normalized
+      // digits (e.g. search "201018" matches "+201018326780")
       if (!normalizedPhone.startsWith('+')) {
         phoneConditions.push({
-          phone: { $regex: `\\+${escapedNormalized}`, $options: 'i' },
+          phone: { $regex: `^\\+${escapedNormalized}`, $options: 'i' },
         });
       }
+      // Flexible regex also anchored to the start — digits must appear
+      // from the beginning, ignoring formatting characters
       if (flexibleRegex) {
-        phoneConditions.push({ phone: { $regex: flexibleRegex, $options: 'i' } });
+        phoneConditions.push({ phone: { $regex: `^${flexibleRegex}`, $options: 'i' } });
       }
 
       conditions.push(...phoneConditions);
@@ -116,14 +87,11 @@ export async function GET(request: NextRequest) {
 
     if (email) {
       const escapedEmail = escapeRegex(email);
-      const emailDigitsRegex = phoneNumberRegex(email);
 
+      // Prefix matching — email must START WITH the search input
       conditions.push(
-        { email: { $regex: escapedEmail, $options: 'i' } },
+        { email: { $regex: `^${escapedEmail}`, $options: 'i' } },
       );
-      if (emailDigitsRegex) {
-        conditions.push({ email: { $regex: emailDigitsRegex, $options: 'i' } });
-      }
     }
 
     // Search the requested app, or both if no source is provided
@@ -133,73 +101,31 @@ export async function GET(request: NextRequest) {
     const users: LookupUser[] = [];
     const seenIds = new Set<string>();
 
-    // Fuzzy search is scoped to the same field the admin typed in:
-    // phone input -> phone field only, email input -> email field only.
-    const fuzzyField = phone ? 'phone' : email ? 'email' : null;
-    const fuzzyDigits = phone ? extractDigits(phone) : email ? extractDigits(email) : '';
-    const candidateRegex =
-      fuzzyField && fuzzyDigits.length >= 3 ? buildCandidateRegex(fuzzyDigits) : null;
-
     for (const appId of apps) {
       if (users.length >= 10) break;
 
       const Model = getUserModelByAppId(appId) as unknown as LookupUserModel;
 
-      // 1. Exact / substring matches
-      const exactUsers = await Model.find({ $or: conditions })
+      // Prefix matches only — no fuzzy fallback. The DB value must
+      // start with the search input.
+      const matchedUsers = await Model.find({ $or: conditions })
         .select('_id name email phone country appId')
         .limit(10)
         .lean();
 
-      if (exactUsers.length > 0) {
-        exactUsers.forEach((user) => {
-          const id = String(user._id);
-          if (!seenIds.has(id)) {
-            seenIds.add(id);
-            users.push({
-              _id: id,
-              name: user.name || '',
-              email: user.email || '',
-              phone: user.phone || '',
-              country: user.country || '',
-              appId: user.appId,
-            });
-          }
-        });
-        continue;
-      }
-
-      // 2. Fuzzy fallback: find candidates that share any 3-digit substring,
-      // then keep those whose digit LCS is at least 75% of the search length.
-      if (fuzzyField && candidateRegex && fuzzyDigits.length > 3) {
-        const threshold = Math.ceil(fuzzyDigits.length * 0.75);
-        const candidateQuery =
-          fuzzyField === 'phone'
-            ? { phone: { $regex: candidateRegex, $options: 'i' } }
-            : { email: { $regex: candidateRegex, $options: 'i' } };
-        const candidates = await Model.find(candidateQuery)
-          .select('_id name email phone country appId')
-          .limit(100)
-          .lean();
-
-        for (const user of candidates) {
-          const candidateValue = fuzzyField === 'phone' ? user.phone || '' : user.email || '';
-          const candidateDigits = extractDigits(candidateValue);
-          if (lcsLength(fuzzyDigits, candidateDigits) >= threshold) {
-            const id = String(user._id);
-            if (!seenIds.has(id)) {
-              seenIds.add(id);
-              users.push({
-                _id: id,
-                name: user.name || '',
-                email: user.email || '',
-                phone: user.phone || '',
-                country: user.country || '',
-                appId: user.appId,
-              });
-            }
-            if (users.length >= 10) break;
-          }
+      for (const user of matchedUsers) {
+        const id = String(user._id);
+        if (!seenIds.has(id)) {
+          seenIds.add(id);
+          users.push({
+            _id: id,
+            name: user.name || '',
+            email: user.email || '',
+            phone: user.phone || '',
+            country: user.country || '',
+            appId: user.appId,
+          });
+          if (users.length >= 10) break;
         }
       }
     }
