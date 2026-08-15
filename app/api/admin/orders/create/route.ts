@@ -198,6 +198,7 @@ export async function POST(request: NextRequest) {
       quantity: number;
       sizeIndex?: number;
       sizeName?: { ar: string; en: string };
+      sizeDesignName?: string;
       isCustom?: boolean;
       customSize?: string;
     }> = [];
@@ -257,6 +258,7 @@ export async function POST(request: NextRequest) {
       const selectedSize = product.sizes[activeSizeIndex] as {
         manualPrice?: number | null;
         name?: { ar: string; en: string };
+        designName?: string;
         price: number;
         prices?: { currencyCode: string; amount: number }[];
         isAvailable?: boolean;
@@ -340,6 +342,7 @@ export async function POST(request: NextRequest) {
           ar: selectedSize?.name?.ar || '',
           en: selectedSize?.name?.en || '',
         },
+        sizeDesignName: selectedSize?.designName || '',
       });
     }
 

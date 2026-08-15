@@ -16,6 +16,8 @@ export interface ICurrencyMinimumPayment {
 export interface IProductSize {
   _id?: string;
   name: { ar: string; en: string };
+  /** Design-only name — used by the design app instead of `name`. Falls back to `name`. */
+  designName?: string;
   price: number;
   prices: ICurrencyPrice[];
   /** Manual order price in EGP (single currency). Null = use regular price. */
@@ -115,6 +117,7 @@ const ProductSizeSchema = new mongoose.Schema({
     ar: { type: String, required: true, trim: true },
     en: { type: String, required: true, trim: true },
   },
+  designName: { type: String, trim: true, default: '' },
   price: { type: Number, required: true, min: 0, default: 0 },
   prices: [CurrencyPriceSchema],
   manualPrice: { type: Number, min: 0, default: null },

@@ -106,6 +106,8 @@ export interface IOrderItem {
   quantity: number;
   sizeIndex?: number;
   sizeName?: { ar: string; en: string };
+  /** Design-only name snapshot from the product size (for the design app) */
+  sizeDesignName?: string;
   isCustom?: boolean;
   customSize?: string;
 }
@@ -278,6 +280,7 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
       ar: { type: String, trim: true },
       en: { type: String, trim: true },
     },
+    sizeDesignName: { type: String, trim: true, default: '' },
     isCustom: { type: Boolean, default: false },
     customSize: { type: String, trim: true },
   },

@@ -105,6 +105,7 @@ export async function generateDesignsForOrder(
       quantity: item.quantity,
       sizeIndex: item.sizeIndex,
       sizeName: item.sizeName,
+      sizeDesignName: item.sizeDesignName || '',
     },
   });
 

@@ -1155,6 +1155,7 @@ export async function POST(request: NextRequest) {
           ar: selectedSize?.name?.ar || '',
           en: selectedSize?.name?.en || '',
         },
+        sizeDesignName: selectedSize?.designName || '',
       },
     ];
 
@@ -1175,6 +1176,7 @@ export async function POST(request: NextRequest) {
           ar: recSize?.name?.ar || '',
           en: recSize?.name?.en || '',
         },
+        sizeDesignName: recSize?.designName || '',
       });
     }
 
