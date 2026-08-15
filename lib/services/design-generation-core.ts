@@ -290,5 +290,9 @@ export async function buildOrderDataPayload(
     locale: order.locale,
     referralId,
     referrals,
+    // Order's creation timestamp (ms since epoch) — stored on the design
+    // instance's orderMeta so the design app can sort designs in the same
+    // order as the execution page (which sorts by order.createdAt asc).
+    orderCreatedAt: order.createdAt instanceof Date ? order.createdAt.getTime() : undefined,
   };
 }
