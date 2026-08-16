@@ -12,12 +12,18 @@ interface RouteParams {
 /**
  * PATCH /api/admin/orders/[id]/designs
  *
- * Marks a single design (identified by `productId`) as reviewed or
- * not-reviewed. Used by the "order-designs" page and the order detail
- * modal so admins with `orderDesigns` access can track which generated
- * designs have already been checked.
+ * Updates a single design (identified by `productId`). Supports two
+ * independent operations (either or both can be sent in one request):
+ *   - `reviewed` (boolean) — marks the design reviewed / not-reviewed.
+ *     Used by the "order-designs" page and the order detail modal so
+ *     admins with `orderDesigns` access can track which generated
+ *     designs have already been checked.
+ *   - `url` (string) — replaces the design's image with an admin-uploaded
+ *     one (e.g. via the "upload" action on the order-designs page). This
+ *     resets `reviewed` back to `false` unless `reviewed` was explicitly
+ *     provided in the same request, since the image content changed.
  *
- * Body: { productId: string; reviewed: boolean }
+ * Body: { productId: string; reviewed?: boolean; url?: string }
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
@@ -29,6 +35,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const body = await request.json().catch(() => null);
     const productId = body?.productId;
     const reviewed = body?.reviewed;
+    const url = body?.url;
 
     if (typeof productId !== 'string' || !productId) {
       return NextResponse.json(
@@ -36,9 +43,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         { status: 400 },
       );
     }
-    if (typeof reviewed !== 'boolean') {
+    const hasReviewed = typeof reviewed === 'boolean';
+    const hasUrl = typeof url === 'string' && url.trim().length > 0;
+    if (!hasReviewed && !hasUrl) {
       return NextResponse.json(
-        { success: false, error: { code: 'ERR_VALIDATION', message: 'Missing reviewed flag' } },
+        { success: false, error: { code: 'ERR_VALIDATION', message: 'Nothing to update' } },
         { status: 400 },
       );
     }
@@ -60,15 +69,22 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // Replacing the image resets the review status, unless the caller
+    // also explicitly set `reviewed` in the same request.
+    const nextReviewed = hasReviewed ? reviewed : (hasUrl ? false : designUrls[designIndex].reviewed);
+
+    const setFields: Record<string, unknown> = {
+      'designUrls.$.reviewed': nextReviewed,
+      'designUrls.$.reviewedAt': nextReviewed ? new Date() : null,
+      'designUrls.$.reviewedBy': nextReviewed ? (auth.user.name || auth.user.email) : null,
+    };
+    if (hasUrl) {
+      setFields['designUrls.$.url'] = url;
+    }
+
     const result = await Order.updateOne(
       { _id: id, 'designUrls.productId': productId },
-      {
-        $set: {
-          'designUrls.$.reviewed': reviewed,
-          'designUrls.$.reviewedAt': reviewed ? new Date() : null,
-          'designUrls.$.reviewedBy': reviewed ? (auth.user.name || auth.user.email) : null,
-        },
-      },
+      { $set: setFields },
     );
 
     if (result.matchedCount === 0) {
@@ -80,23 +96,28 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     try {
       await logActivity({
-        action: reviewed ? 'review_design' : 'unreview_design',
+        action: hasUrl ? 'update' : (nextReviewed ? 'review_design' : 'unreview_design'),
         resource: 'order',
         resourceId: id,
         userId: auth.user.userId,
         userName: auth.user.name,
         userEmail: auth.user.email,
-        details: JSON.stringify({ orderNumber: order.orderNumber, productId, reviewed }),
+        details: JSON.stringify({
+          orderNumber: order.orderNumber,
+          productId,
+          ...(hasUrl ? { replacedImage: true } : {}),
+          reviewed: nextReviewed,
+        }),
       });
     } catch (logError) {
       console.error('[PATCH /api/admin/orders/[id]/designs] logActivity failed:', logError);
     }
 
-    return NextResponse.json({ success: true, data: { productId, reviewed } });
+    return NextResponse.json({ success: true, data: { productId, reviewed: nextReviewed, url: hasUrl ? url : undefined } });
   } catch (error) {
     console.error('[PATCH /api/admin/orders/[id]/designs]', error);
     return NextResponse.json(
-      { success: false, error: { code: 'internalError', message: 'Failed to update design review status' } },
+      { success: false, error: { code: 'internalError', message: 'Failed to update design' } },
       { status: 500 },
     );
   }

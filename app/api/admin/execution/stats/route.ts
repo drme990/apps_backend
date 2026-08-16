@@ -8,7 +8,7 @@
  * 2. Legacy fallback: `createdAt + 1 day` for pre-auto-fill orders.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import mongoose from 'mongoose';
+import mongoose, { type PipelineStage } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
@@ -17,7 +17,7 @@ import Category from '@/lib/models/Categories';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess(['orders', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const prePipeline: any[] = [
+    const prePipeline = [
       { $match: baseMatch },
       ...(searchMatch ? [{ $match: searchMatch }] : []),
       ...(categoryProductIds && categoryProductIds.length > 0
@@ -251,7 +251,7 @@ export async function GET(request: NextRequest) {
           products: 1,
         },
       },
-    ];
+    ] as PipelineStage[];
 
     const results = await Order.aggregate(prePipeline);
 
