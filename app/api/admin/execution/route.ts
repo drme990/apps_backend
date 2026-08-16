@@ -241,14 +241,26 @@ export async function GET(request: NextRequest) {
           isWhatsappButtonClicked: 1,
           statusUpdateTime: 1,
           updatedAt: 1,
+          executionNumber: 1,
           invoiceUrls: 1,
           designUrls: 1,
           payments: 1,
         },
       },
 
-      // 6. Sort oldest first
-      { $sort: { createdAt: 1 } },
+      // 5b. Normalize executionNumber for sorting so unnumbered orders don't
+      // appear before numbered ones while the backfill is still running.
+      {
+        $addFields: {
+          sortExecutionNumber: {
+            $ifNull: ['$executionNumber', Number.MAX_SAFE_INTEGER],
+          },
+        },
+      },
+
+      // 6. Sort by execution date, then execution number, then creation time.
+      // This keeps the 1..N daily sequence visually consistent in the table.
+      { $sort: { effectiveExecutionDate: 1, sortExecutionNumber: 1, createdAt: 1 } },
     );
 
     // Use $facet to get total count and paginated orders in one query

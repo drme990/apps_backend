@@ -4,6 +4,7 @@ import Category from '@/lib/models/Categories';
 import Booking from '@/lib/models/Booking';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { updateOrderExecutionDateOnPaid } from '@/lib/execution-date';
+import { getOrderExecutionDate, allocateExecutionNumber } from '@/lib/services/execution-number';
 
 function getMonthKey(): string {
   const now = new Date();
@@ -259,6 +260,12 @@ export interface IOrder {
   locale?: string;
   statusUpdateTime: Date;
   /**
+   * Daily execution sequence number. Assigned the first time an order
+   * gets an execution date, and re-assigned whenever the execution date
+   * changes. Numbers reset to 1 for each execution date.
+   */
+  executionNumber?: number;
+  /**
    * Server-side conversion send tracking — set once after the matching
    * Events API / Conversions API call succeeds. Prevents duplicate
    * server sends when the webhook retries. The order number is used as
@@ -271,6 +278,7 @@ export interface IOrder {
   createdAt?: Date;
   updatedAt?: Date;
   _previousStatus?: OrderStatus;
+  _previousExecutionDate?: string;
 }
 
 const OrderItemSchema = new mongoose.Schema<IOrderItem>(
@@ -612,6 +620,12 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       default: () => new Date(),
       index: true,
     },
+    executionNumber: {
+      type: Number,
+      min: 1,
+      index: true,
+      sparse: true,
+    },
     fbPurchaseServerSentAt: { type: Date },
     tiktokPurchaseServerSentAt: { type: Date },
     termsAgreedAt: { type: Date },
@@ -680,6 +694,30 @@ OrderSchema.pre('save', async function () {
     }
   }
 
+  // Assign / re-assign execution number whenever the execution date changes
+  // for a paid/partial-paid order. Numbers are per execution date and only
+  // allocated once an order is payable, so the execution table shows a clean
+  // 1..N sequence for the active orders of each day.
+  // This is a best-effort display convenience: if the counter allocation
+  // fails, we still save the order and log the error.
+  try {
+    const isPaidStatus = this.status === 'paid' || this.status === 'partial-paid';
+    if (isPaidStatus) {
+      const currentExecutionDate = getOrderExecutionDate(this);
+      if (currentExecutionDate) {
+        const previousExecutionDate = this._previousExecutionDate;
+        const hasExecutionDateChanged =
+          !this.executionNumber || currentExecutionDate !== previousExecutionDate;
+        if (hasExecutionDateChanged) {
+          this.executionNumber = await allocateExecutionNumber(currentExecutionDate);
+          this._previousExecutionDate = currentExecutionDate;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[Order pre-save] Failed to allocate execution number:', error);
+  }
+
   this.paymentType = inferPaymentType(this);
   this.isPartialPayment = this.paymentType !== 'full';
 
@@ -698,6 +736,7 @@ OrderSchema.pre('save', async function () {
 
 OrderSchema.post('init', function (doc) {
   doc._previousStatus = doc.status;
+  doc._previousExecutionDate = getOrderExecutionDate(doc) || undefined;
 });
 
 OrderSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function () {

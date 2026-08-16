@@ -50,60 +50,41 @@ export async function PUT(request: NextRequest) {
       oldDates.set(String(o._id), dateField?.value || null);
     }
 
-    const result = await Order.updateMany(
-      { _id: { $in: validIds } },
-      [
-        {
-          $set: {
-            reservationData: {
-              $cond: {
-                if: {
-                  $anyElementTrue: {
-                    $map: {
-                      input: { $ifNull: ['$reservationData', []] },
-                      as: 'f',
-                      in: { $eq: ['$$f.key', 'executionDate'] },
-                    },
-                  },
-                },
-                then: {
-                  $map: {
-                    input: '$reservationData',
-                    as: 'f',
-                    in: {
-                      $cond: {
-                        if: { $eq: ['$$f.key', 'executionDate'] },
-                        then: {
-                          $mergeObjects: [
-                            '$$f',
-                            { value: executionDate },
-                          ],
-                        },
-                        else: '$$f',
-                      },
-                    },
-                  },
-                },
-                else: {
-                  $concatArrays: [
-                    { $ifNull: ['$reservationData', []] },
-                    [
-                      {
-                        key: 'executionDate',
-                        label: { ar: 'تاريخ التنفيذ', en: 'Execution Date' },
-                        value: executionDate,
-                        type: 'date',
-                      },
-                    ],
-                  ],
-                },
-              },
-            },
-          },
-        },
-      ],
-      { updatePipeline: true },
-    );
+    // Load and save each order so the pre-save hook can re-assign the
+    // execution number (per-date, atomic counter) and fire other hooks.
+    const CONCURRENCY = 10;
+    let updatedCount = 0;
+    for (let i = 0; i < validIds.length; i += CONCURRENCY) {
+      const chunk = validIds.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        chunk.map(async (id) => {
+          const order = await Order.findById(id);
+          if (!order) return;
+
+          const reservationData = Array.isArray(order.reservationData)
+            ? order.reservationData
+            : [];
+          const idx = reservationData.findIndex(
+            (f: { key?: string }) => f.key === 'executionDate',
+          );
+          if (idx >= 0) {
+            reservationData[idx].value = executionDate;
+          } else {
+            reservationData.push({
+              key: 'executionDate',
+              label: { ar: 'تاريخ التنفيذ', en: 'Execution Date' },
+              value: executionDate,
+              type: 'date',
+            });
+          }
+          order.reservationData = reservationData;
+
+          // Trigger pre-save hook (recomputes execution number if needed)
+          await order.save();
+          updatedCount += 1;
+        }),
+      );
+    }
 
     // Create order change history for each modified order
     const historyEntries = [];
@@ -133,13 +114,13 @@ export async function PUT(request: NextRequest) {
       action: 'update',
       resource: 'order',
       resourceId: validIds.map((id) => id.toString()).join(', '),
-      details: `Bulk updated execution date for ${result.modifiedCount} orders → ${executionDate}`,
+      details: `Bulk updated execution date for ${updatedCount} orders → ${executionDate}`,
     });
 
     return NextResponse.json({
       success: true,
       data: {
-        updatedCount: result.modifiedCount,
+        updatedCount,
       },
     });
   } catch (error) {

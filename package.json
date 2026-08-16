@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "test:webhook": "node scripts/test-payment-webhook.mjs"
+    "lint": "eslint"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1019.0",
