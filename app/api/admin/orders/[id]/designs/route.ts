@@ -10,6 +10,99 @@ interface RouteParams {
 }
 
 /**
+ * PATCH /api/admin/orders/[id]/designs
+ *
+ * Marks a single design (identified by `productId`) as reviewed or
+ * not-reviewed. Used by the "order-designs" page and the order detail
+ * modal so admins with `orderDesigns` access can track which generated
+ * designs have already been checked.
+ *
+ * Body: { productId: string; reviewed: boolean }
+ */
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  try {
+    await connectDB();
+    const auth = await requireAdminPageAccess(['orders', 'orderDesigns']);
+    if ('error' in auth) return auth.error;
+
+    const { id } = await params;
+    const body = await request.json().catch(() => null);
+    const productId = body?.productId;
+    const reviewed = body?.reviewed;
+
+    if (typeof productId !== 'string' || !productId) {
+      return NextResponse.json(
+        { success: false, error: { code: 'ERR_VALIDATION', message: 'Missing productId' } },
+        { status: 400 },
+      );
+    }
+    if (typeof reviewed !== 'boolean') {
+      return NextResponse.json(
+        { success: false, error: { code: 'ERR_VALIDATION', message: 'Missing reviewed flag' } },
+        { status: 400 },
+      );
+    }
+
+    const order = (await Order.findById(id).lean()) as IOrder | null;
+    if (!order) {
+      return NextResponse.json(
+        { success: false, error: { code: 'ERR_NOT_FOUND', message: 'Order not found' } },
+        { status: 404 },
+      );
+    }
+
+    const designUrls = order.designUrls || [];
+    const designIndex = designUrls.findIndex((d) => d.productId === productId);
+    if (designIndex === -1) {
+      return NextResponse.json(
+        { success: false, error: { code: 'ERR_NOT_FOUND', message: 'Design not found' } },
+        { status: 404 },
+      );
+    }
+
+    const result = await Order.updateOne(
+      { _id: id, 'designUrls.productId': productId },
+      {
+        $set: {
+          'designUrls.$.reviewed': reviewed,
+          'designUrls.$.reviewedAt': reviewed ? new Date() : null,
+          'designUrls.$.reviewedBy': reviewed ? (auth.user.name || auth.user.email) : null,
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return NextResponse.json(
+        { success: false, error: { code: 'ERR_NOT_FOUND', message: 'Order not found' } },
+        { status: 404 },
+      );
+    }
+
+    try {
+      await logActivity({
+        action: reviewed ? 'review_design' : 'unreview_design',
+        resource: 'order',
+        resourceId: id,
+        userId: auth.user.userId,
+        userName: auth.user.name,
+        userEmail: auth.user.email,
+        details: JSON.stringify({ orderNumber: order.orderNumber, productId, reviewed }),
+      });
+    } catch (logError) {
+      console.error('[PATCH /api/admin/orders/[id]/designs] logActivity failed:', logError);
+    }
+
+    return NextResponse.json({ success: true, data: { productId, reviewed } });
+  } catch (error) {
+    console.error('[PATCH /api/admin/orders/[id]/designs]', error);
+    return NextResponse.json(
+      { success: false, error: { code: 'internalError', message: 'Failed to update design review status' } },
+      { status: 500 },
+    );
+  }
+}
+
+/**
  * DELETE /api/admin/orders/[id]/designs
  *
  * Deletes all design instance projects and R2 assets for an order.
@@ -28,7 +121,7 @@ interface RouteParams {
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders']);
+    const auth = await requireAdminPageAccess(['orders', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;

@@ -198,6 +198,7 @@ export async function generateDesignsForOrder(
         templateType: result.templateType ?? 'text',
         projectId: result.projectId,
         createdAt: new Date(),
+        reviewed: false,
       });
       logResults.push({
         productId: result.productId,

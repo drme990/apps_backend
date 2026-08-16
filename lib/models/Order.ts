@@ -203,6 +203,16 @@ export interface IOrderDesignUrl {
   projectId?: string;
   /** When the design was generated (UTC) */
   createdAt: Date;
+  /**
+   * Whether an admin (with `orderDesigns` access) has marked this design
+   * as reviewed. Newly generated designs default to `false` ("waiting
+   * for review").
+   */
+  reviewed?: boolean;
+  /** When the design was marked as reviewed (UTC) */
+  reviewedAt?: Date;
+  /** Name/email of the admin who marked it reviewed, for audit purposes */
+  reviewedBy?: string;
 }
 
 export interface IOrder {
@@ -417,6 +427,9 @@ const OrderDesignUrlSchema = new mongoose.Schema<IOrderDesignUrl>(
     },
     projectId: { type: String, trim: true },
     createdAt: { type: Date, required: true, default: () => new Date() },
+    reviewed: { type: Boolean, default: false },
+    reviewedAt: { type: Date },
+    reviewedBy: { type: String, trim: true },
   },
   { _id: false },
 );
