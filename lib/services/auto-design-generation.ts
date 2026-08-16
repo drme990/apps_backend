@@ -40,7 +40,7 @@
 import { connectDB } from '@/lib/db';
 import Order, { type IOrder } from '@/lib/models/Order';
 import { generateDesignsForOrder } from '@/lib/services/design-generation-core';
-import { recordDesignGenLog } from '@/lib/services/design-log-service';
+import { recordDesignGenLog, type DesignGenTrigger } from '@/lib/services/design-log-service';
 
 /** Statuses that count as "already paid" — no need to auto-generate. */
 const PAID_LIKE_STATUSES = new Set(['paid', 'partial-paid', 'completed']);
@@ -200,6 +200,92 @@ export async function triggerAutoDesignGeneration(
       });
     } catch {
       // If even the log write fails, the console.error above is enough
+    }
+  } finally {
+    releaseAutoGenSlot();
+  }
+}
+
+/**
+ * Trigger design re-generation after a non-status order edit.
+ *
+ * Unlike the auto-payment trigger, this always re-renders for existing
+ * products (it does not skip when designUrls already exist). It is still
+ * fire-and-forget and uses the same backend queue so bursts of admin edits
+ * don't overwhelm the design app.
+ *
+ * It runs for any paid/partial-paid/completed order, or for any order that
+ * already has generated designs, so existing designs are refreshed when the
+ * admin changes names, duaa, reservation data, or items.
+ */
+export async function triggerDesignRegeneration(
+  orderId: string,
+  trigger: DesignGenTrigger = 'auto_admin',
+): Promise<void> {
+  const logPrefix = `[design-regen order=${orderId}]`;
+  const startedAt = new Date();
+
+  await acquireAutoGenSlot();
+  try {
+    await connectDB();
+
+    const order = (await Order.findById(orderId).lean()) as IOrder | null;
+    if (!order) {
+      console.warn(`${logPrefix} Order not found — skipping.`);
+      return;
+    }
+
+    const hasExistingDesigns = (order.designUrls || []).length > 0;
+    const isPaid = PAID_LIKE_STATUSES.has(order.status);
+    if (!isPaid && !hasExistingDesigns) {
+      console.log(
+        `${logPrefix} Order status is '${order.status}' and has no designs — skipping.`,
+      );
+      return;
+    }
+
+    console.log(
+      `${logPrefix} Starting design re-generation for order ${order.orderNumber} (status: ${order.status}).`,
+    );
+
+    const { generated, skipped, logResults, hasReservationPhoto } =
+      await generateDesignsForOrder(order);
+
+    console.log(
+      `${logPrefix} Done: ${generated.length} generated, ${skipped.length} skipped.`,
+    );
+
+    await recordDesignGenLog({
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+      source: order.source,
+      orderStatus: order.status,
+      hasReservationPhoto,
+      trigger,
+      startedAt,
+      finishedAt: new Date(),
+      results: logResults,
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`${logPrefix} Unexpected error:`, errorMsg);
+
+    try {
+      await connectDB();
+      const order = (await Order.findById(orderId).lean()) as IOrder | null;
+      await recordDesignGenLog({
+        orderId,
+        orderNumber: order?.orderNumber || 'unknown',
+        source: order?.source,
+        orderStatus: order?.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        error: errorMsg,
+      });
+    } catch {
+      // logging failed — already console.error'd above
     }
   } finally {
     releaseAutoGenSlot();

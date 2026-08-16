@@ -9,6 +9,7 @@ import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import {
   shouldTriggerAutoDesignGeneration,
   triggerAutoDesignGeneration,
+  triggerDesignRegeneration,
 } from '@/lib/services/auto-design-generation';
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
@@ -594,9 +595,25 @@ export async function PATCH(
       details: `Updated order ${order.orderNumber}: ${changeLabels}`,
     });
 
+    // ── Auto design re-generation ────────────────────────────────────
+    // When the admin edits names, duaa, items, or reservation data,
+    // re-generate the design images in the background so they stay
+    // in sync with the order data. Invoices and status-only edits do
+    // not trigger this.
+    const DESIGN_RELEVANT_CHANGE_TYPES = new Set(['name', 'duaa', 'photo', 'gender', 'isAlive', 'intention', 'items']);
+    const shouldRegenerateDesigns = changes.some((c) => DESIGN_RELEVANT_CHANGE_TYPES.has(c.changeType));
+    if (shouldRegenerateDesigns) {
+      triggerDesignRegeneration(String(order._id), 'auto_admin').catch((err) => {
+        console.error(`[PATCH /api/admin/orders/${order._id}] Design re-generation failed:`, err);
+      });
+    }
+
     return NextResponse.json({
       success: true,
-      data: sanitizeOrderForAdmin(order.toObject() as unknown as Record<string, unknown>),
+      data: {
+        ...sanitizeOrderForAdmin(order.toObject() as unknown as Record<string, unknown>),
+        regeneratingDesigns: shouldRegenerateDesigns,
+      },
       changed: true,
     });
   } catch (error) {
