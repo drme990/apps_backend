@@ -3,7 +3,7 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
-import { deleteDesignProjects } from '@/lib/services/design-app-callback';
+import { deleteMultipleR2Objects, extractR2Key } from '@/lib/services/r2';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -125,27 +125,36 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
 /**
  * DELETE /api/admin/orders/[id]/designs
+ * DELETE /api/admin/orders/[id]/designs?productId={productId}
  *
- * Deletes all design instance projects and R2 assets for an order.
- * This is used before regenerating designs (the admin panel calls
- * DELETE then POST generate-design).
+ * Deletes generated design(s) for an order. The backend owns this
+ * end-to-end — it deletes the JPG(s) directly from R2 storage and
+ * removes the entry/entries from the order's `designUrls` array. The
+ * design app is NOT involved; there is no callback for this.
+ *
+ * - Without `productId`: deletes ALL designs on the order. Used before
+ *   regenerating designs (the admin panel calls DELETE then POST
+ *   generate-design).
+ * - With `productId`: deletes only that single design. Used by the
+ *   "delete design" action on the /order-designs page.
  *
  * Flow:
  *   1. Verify admin auth.
  *   2. Load the order.
- *   3. Collect all projectIds from designUrls.
- *   4. Call the design app callback to delete the project documents
- *      and their R2 assets (order design JPG, thumbnails, layer images).
- *   5. Clear the order's designUrls array.
+ *   3. Resolve which design(s) to remove (all, or the one matching
+ *      `productId`).
+ *   4. Delete the corresponding R2 objects directly.
+ *   5. Remove the entry/entries from the order's designUrls array.
  *   6. Log the action.
  */
-export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
     const auth = await requireAdminPageAccess(['orders', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
+    const productId = request.nextUrl.searchParams.get('productId');
 
     const order = (await Order.findById(id).lean()) as IOrder | null;
     if (!order) {
@@ -160,25 +169,43 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: true, data: { deleted: 0 } });
     }
 
-    // Collect projectIds to delete on the design app
-    const projectIds = designUrls
-      .map((d) => d.projectId)
-      .filter((pid): pid is string => Boolean(pid));
+    const toDelete = productId
+      ? designUrls.filter((d) => d.productId === productId)
+      : designUrls;
 
-    // Call the design app to delete project documents + R2 assets
-    if (projectIds.length > 0) {
-      const result = await deleteDesignProjects(projectIds);
-      if (!result.success) {
-        console.error('[DELETE /api/admin/orders/[id]/designs] design app deletion failed:', result.error);
-        // Continue anyway — we still clear designUrls on the order
+    if (productId && toDelete.length === 0) {
+      return NextResponse.json(
+        { success: false, error: { code: 'ERR_NOT_FOUND', message: 'Design not found' } },
+        { status: 404 },
+      );
+    }
+
+    // Delete the JPG(s) directly from R2 storage
+    const keys = toDelete
+      .map((d) => extractR2Key(d.url))
+      .filter((key): key is string => Boolean(key));
+
+    if (keys.length > 0) {
+      try {
+        await deleteMultipleR2Objects(keys);
+      } catch (r2Error) {
+        console.error('[DELETE /api/admin/orders/[id]/designs] R2 deletion failed:', r2Error);
+        // Continue anyway — we still remove the entry/entries from the order
       }
     }
 
-    // Clear designUrls on the order
-    await Order.updateOne(
-      { _id: order._id },
-      { $set: { designUrls: [] } },
-    );
+    // Remove the entry/entries from the order
+    if (productId) {
+      await Order.updateOne(
+        { _id: order._id },
+        { $pull: { designUrls: { productId } } },
+      );
+    } else {
+      await Order.updateOne(
+        { _id: order._id },
+        { $set: { designUrls: [] } },
+      );
+    }
 
     // Log the action
     try {
@@ -191,8 +218,8 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
         userEmail: auth.user.email,
         details: JSON.stringify({
           orderNumber: order.orderNumber,
-          deletedCount: designUrls.length,
-          projectIds,
+          deletedCount: toDelete.length,
+          productId: productId || undefined,
         }),
       });
     } catch (logError) {
@@ -201,7 +228,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       success: true,
-      data: { deleted: designUrls.length },
+      data: { deleted: toDelete.length },
     });
   } catch (error) {
     console.error('[DELETE /api/admin/orders/[id]/designs]', error);

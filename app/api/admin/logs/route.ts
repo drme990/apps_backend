@@ -13,8 +13,10 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '50');
     const maxLimit = limit > 200 ? 200 : limit;
     const skip = (page - 1) * maxLimit;
+    const action = request.nextUrl.searchParams.get('action');
+    const resource = request.nextUrl.searchParams.get('resource');
 
-    const logs = await ActivityLog.find({
+    const query: Record<string, unknown> = {
       $or: [
         { resource: { $ne: 'auth' } },
         {
@@ -23,7 +25,11 @@ export async function GET(request: NextRequest) {
           },
         },
       ],
-    })
+    };
+    if (action) query.action = action;
+    if (resource) query.resource = resource;
+
+    const logs = await ActivityLog.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(maxLimit)
