@@ -270,6 +270,7 @@ export interface IOrder {
   tiktokPurchaseServerSentAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
+  _previousStatus?: OrderStatus;
 }
 
 const OrderItemSchema = new mongoose.Schema<IOrderItem>(
@@ -658,9 +659,16 @@ OrderSchema.pre('save', async function () {
   // Recompute execution date when the order reaches a paid/partial-paid status,
   // using the payment moment and the configured cutoff time. This ensures orders
   // paid after the daily cutoff are pushed to the next available day.
+  // We only do this when transitioning from a non-paid status (failed, processing, pending, or new).
+  // We do not recompute if changing from partial-paid to paid/completed, or any other transition.
+  const NON_PAID_STATUSES = ['pending', 'processing', 'failed'];
+  const prevStatus = this._previousStatus;
+  const isTransitionFromNonPaid = this.isNew || !prevStatus || NON_PAID_STATUSES.includes(prevStatus);
+
   const isPaidStatus =
     this.isModified('status') &&
-    (this.status === 'paid' || this.status === 'partial-paid');
+    (this.status === 'paid' || this.status === 'partial-paid') &&
+    isTransitionFromNonPaid;
 
   if (isPaidStatus) {
     const booking = await Booking.findOne({ key: 'global' }).lean();
@@ -686,6 +694,10 @@ OrderSchema.pre('save', async function () {
 
   if (normalizedIp) this.latestClientIp = normalizedIp;
   if (normalizedFingerprint) this.deviceFingerprint = normalizedFingerprint;
+});
+
+OrderSchema.post('init', function (doc) {
+  doc._previousStatus = doc.status;
 });
 
 OrderSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function () {
