@@ -28,6 +28,8 @@ export const ADMIN_ALLOWED_PAGES = [
   'suppliers',
   'crm',
   'accounts',
+  'storage-manager',
+  'orderDesigns',
   'orderDesignLogs'
 ] as const;
 

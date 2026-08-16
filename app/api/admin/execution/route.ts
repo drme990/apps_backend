@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import mongoose from 'mongoose';
+import mongoose, { type PipelineStage } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
@@ -22,7 +22,7 @@ import Category from '@/lib/models/Categories';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('orders');
+    const auth = await requireAdminPageAccess(['orders', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;
@@ -46,7 +46,8 @@ export async function GET(request: NextRequest) {
     const limit = Math.max(1, Math.min(10000, parseInt(limitParam || '50', 10)));
     const offset = Math.max(0, parseInt(offsetParam || '0', 10));
     const skip = offset > 0 ? offset : (page - 1) * limit;
-    const useGlobalSlice = globalSliceParam === 'true';
+    const _useGlobalSlice = globalSliceParam === 'true';
+    void _useGlobalSlice;
 
     const isoPattern = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -134,7 +135,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Aggregation pipeline (before pagination)
-    const prePipeline: any[] = [
+    const prePipeline: PipelineStage[] = [
       // 1. Base filter: paid statuses + source + referral
       { $match: baseMatch },
     ];

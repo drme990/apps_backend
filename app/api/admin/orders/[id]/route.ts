@@ -104,7 +104,7 @@ export async function GET(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'invoices']);
+    const auth = await requireAdminPageAccess(['orders', 'invoices', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -150,7 +150,7 @@ export async function PUT(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'invoices']);
+    const auth = await requireAdminPageAccess(['orders', 'invoices', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
@@ -312,7 +312,7 @@ export async function PATCH(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'invoices']);
+    const auth = await requireAdminPageAccess(['orders', 'invoices', 'orderDesigns']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;
