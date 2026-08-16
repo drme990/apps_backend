@@ -1,5 +1,6 @@
 import type { IBooking } from '@/lib/models/Booking';
 import Booking from '@/lib/models/Booking';
+import type { IOrder } from '@/lib/models/Order';
 
 const EGYPT_TIMEZONE = 'Africa/Cairo';
 
@@ -253,6 +254,128 @@ export async function refreshDefaultExecutionDateCache(): Promise<string> {
     );
   }
   return computed;
+}
+
+/**
+ * Check if the given reference time is at or after the cutoff on the given date.
+ *
+ * cutoffTime is HH:mm (e.g. "02:00").
+ * baseDate is YYYY-MM-DD.
+ * refTime is a Date instance in any timezone (we compare absolute timestamps).
+ */
+function isRefAtOrAfterCutoff(
+  cutoffTime: string | null | undefined,
+  baseDate: string,
+  refTime: Date,
+): boolean {
+  if (!cutoffTime || !baseDate) return false;
+
+  const iso = `${baseDate}T${cutoffTime}:00+02:00`;
+  const cutoffDate = new Date(iso);
+  if (Number.isNaN(cutoffDate.getTime())) return false;
+
+  return refTime.getTime() >= cutoffDate.getTime();
+}
+
+/**
+ * Get a YYYY-MM-DD string from a Date in the Egypt timezone.
+ */
+function getEgyptDateString(date: Date): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: EGYPT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(date);
+}
+
+/**
+ * Recompute an order's execution date when its status changes to paid/partial-paid.
+ *
+ * Rules:
+ * 1. The relevant moment is the order's statusUpdateTime (when it became paid).
+ * 2. Use the date part of that moment as the base.
+ * 3. If the time is at or after the cutoff, push to the next day (because orders
+ *    paid after the cutoff cannot be processed on that day).
+ * 4. The result cannot be earlier than the order's createdAt date or the current
+ *    executionDate value (preserves user-selected future dates).
+ * 5. Skip any blocked dates.
+ */
+export function recomputeOrderExecutionDate(
+  order: Pick<IOrder, 'createdAt' | 'statusUpdateTime' | 'reservationData'>,
+  cutoffTime: string | null | undefined,
+  blockedExecutionDates: string[],
+  defaultExecutionDate: string | null | undefined,
+): string | null {
+  if (!order.statusUpdateTime) return null;
+
+  const paidAt = new Date(order.statusUpdateTime);
+  const createdAt = new Date(order.createdAt || paidAt);
+
+  const paidDate = getEgyptDateString(paidAt);
+  const nextDay = addDays(paidDate, 1);
+
+  const afterCutoff = isRefAtOrAfterCutoff(cutoffTime, paidDate, paidAt);
+  let candidate = afterCutoff ? nextDay : paidDate;
+
+  // Cannot execute before the order was created
+  const createdAtDate = getEgyptDateString(createdAt);
+  if (candidate < createdAtDate) {
+    candidate = createdAtDate;
+  }
+
+  // Preserve any user-selected future execution date (can't be earlier)
+  const currentExecutionDate = (order.reservationData || [])
+    .find((r) => r.key === 'executionDate')?.value;
+  if (
+    currentExecutionDate &&
+    /^\d{4}-\d{2}-\d{2}$/.test(currentExecutionDate) &&
+    currentExecutionDate > candidate
+  ) {
+    candidate = currentExecutionDate;
+  }
+
+  // Also respect the global default execution date (can't execute before today)
+  if (defaultExecutionDate && candidate < defaultExecutionDate) {
+    candidate = defaultExecutionDate;
+  }
+
+  const blockedDates = new Set(
+    (blockedExecutionDates || []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  );
+
+  return skipBlockedDates(candidate, blockedDates);
+}
+
+/**
+ * Update an order's reservationData with the recomputed execution date.
+ * Mutates the order document in place (Mongoose subdocuments are mutable arrays).
+ * Returns the new execution date or null if no change was needed.
+ */
+export function updateOrderExecutionDateOnPaid(
+  order: IOrder,
+  booking: IBooking,
+): string | null {
+  if (!order.statusUpdateTime) return null;
+
+  const newExecutionDate = recomputeOrderExecutionDate(
+    order,
+    booking.cutoffTime,
+    booking.blockedExecutionDates || [],
+    booking.defaultExecutionDate,
+  );
+  if (!newExecutionDate) return null;
+
+  const reservation = (order.reservationData || []).find(
+    (r) => r.key === 'executionDate',
+  );
+  if (!reservation) return null;
+
+  if (reservation.value === newExecutionDate) return null;
+
+  reservation.value = newExecutionDate;
+  return newExecutionDate;
 }
 
 /**

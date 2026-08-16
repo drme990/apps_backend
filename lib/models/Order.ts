@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 import OrderSequence from '@/lib/models/OrderSequence';
 import Category from '@/lib/models/Categories';
+import Booking from '@/lib/models/Booking';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
+import { updateOrderExecutionDateOnPaid } from '@/lib/execution-date';
 
 function getMonthKey(): string {
   const now = new Date();
@@ -635,9 +637,26 @@ OrderSchema.pre('validate', async function () {
   }
 });
 
-OrderSchema.pre('save', function () {
+OrderSchema.pre('save', async function () {
   if (this.isNew || this.isModified('status')) {
     this.statusUpdateTime = new Date();
+  }
+
+  // Recompute execution date when the order reaches a paid/partial-paid status,
+  // using the payment moment and the configured cutoff time. This ensures orders
+  // paid after the daily cutoff are pushed to the next available day.
+  const isPaidStatus =
+    this.isModified('status') &&
+    (this.status === 'paid' || this.status === 'partial-paid');
+
+  if (isPaidStatus) {
+    const booking = await Booking.findOne({ key: 'global' }).lean();
+    if (booking) {
+      const updatedExecutionDate = updateOrderExecutionDateOnPaid(this, booking);
+      if (updatedExecutionDate) {
+        this.markModified('reservationData');
+      }
+    }
   }
 
   this.paymentType = inferPaymentType(this);
