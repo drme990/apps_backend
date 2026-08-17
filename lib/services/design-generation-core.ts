@@ -136,23 +136,28 @@ export async function generateDesignsForOrder(
     };
   });
 
-  // ── Retry timed-out products once ─────────────────────────────────
+  // ── Retry retriable products once ──────────────────────────────────
   // A timeout usually means the design app's render queue was full at
-  // the time of the request. By the time the first attempt times out,
-  // the queue has likely cleared. We retry just the timed-out products
-  // once — no retry for other errors (noTemplate, noBookingProduct,
-  // etc.) since those won't fix themselves.
-  const timedOutIndices = results
-    .map((r, i) => (r.error === 'timeout' ? i : -1))
+  // the time of the request. fetchFailed usually means a transient
+  // network drop. By the time the first attempt finishes, the queue or
+  // the network has likely recovered. We retry just the products that
+  // hit these retriable errors once — no retry for other errors
+  // (noTemplate, noBookingProduct, etc.) since those won't fix themselves.
+  const retriableErrorCodes = new Set(['timeout', 'fetchFailed']);
+  const retryIndices = results
+    .map((r, i) => (r.error && retriableErrorCodes.has(r.error) ? i : -1))
     .filter((i) => i >= 0);
 
-  if (timedOutIndices.length > 0) {
+  if (retryIndices.length > 0) {
     console.log(
-      `[design-gen order=${order.orderNumber}] Retrying ${timedOutIndices.length} timed-out product(s)…`,
+      `[design-gen order=${order.orderNumber}] Retrying ${retryIndices.length} product(s) after timeout/fetch failure…`,
     );
 
+    // Short pause to let the design app queue/network settle before retrying.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
     const retrySettled = await Promise.allSettled(
-      timedOutIndices.map((idx) => {
+      retryIndices.map((idx) => {
         const item = productItems[idx];
         return generateDesignForProduct({
           orderNumber: order.orderNumber,
@@ -164,13 +169,13 @@ export async function generateDesignsForOrder(
       }),
     );
 
-    // Replace timed-out results with retry results
-    timedOutIndices.forEach((idx, retryIdx) => {
+    // Replace retriable results with retry results
+    retryIndices.forEach((idx, retryIdx) => {
       const s = retrySettled[retryIdx];
       if (s.status === 'fulfilled') {
         results[idx] = s.value;
       } else {
-        // Keep the original timeout error — retry also failed
+        // Keep the original error — retry also failed
         results[idx] = {
           ...results[idx],
           message: `Retry also failed: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`,
