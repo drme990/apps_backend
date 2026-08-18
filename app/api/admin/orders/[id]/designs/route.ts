@@ -62,6 +62,45 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const designUrls = order.designUrls || [];
     const designIndex = designUrls.findIndex((d) => d.productId === productId);
+
+    // If the design doesn't exist yet and a URL is provided, ADD it
+    // (used by the "upload design" action when there's no generated design).
+    if (designIndex === -1 && hasUrl) {
+      const newDesign = {
+        productId,
+        url,
+        templateType: 'text' as const,
+        reviewed: hasReviewed ? reviewed : false,
+        reviewedAt: hasReviewed && reviewed ? new Date() : undefined,
+        reviewedBy: hasReviewed && reviewed ? (auth.user.name || auth.user.email) : undefined,
+        createdAt: new Date(),
+      };
+      await Order.updateOne(
+        { _id: id },
+        { $push: { designUrls: newDesign as Record<string, unknown> } },
+      );
+
+      try {
+        await logActivity({
+          action: 'upload_design',
+          resource: 'order',
+          resourceId: id,
+          userId: auth.user.userId,
+          userName: auth.user.name,
+          userEmail: auth.user.email,
+          details: JSON.stringify({
+            orderNumber: order.orderNumber,
+            productId,
+            uploadedImage: true,
+          }),
+        });
+      } catch (logError) {
+        console.error('[PATCH /api/admin/orders/[id]/designs] logActivity failed:', logError);
+      }
+
+      return NextResponse.json({ success: true, data: { productId, reviewed: newDesign.reviewed, url } });
+    }
+
     if (designIndex === -1) {
       return NextResponse.json(
         { success: false, error: { code: 'ERR_NOT_FOUND', message: 'Design not found' } },
