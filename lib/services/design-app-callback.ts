@@ -40,6 +40,13 @@ export interface DesignAppResult {
    * the admin edits THIS design, not the template.
    */
   projectId?: string;
+  /**
+   * The saved-version number assigned by the design app (see
+   * `order-history-enhanced.md`). The backend stores this on
+   * `designUrls[].currentVersion` so the admin panel can mark the
+   * current version in the history UI.
+   */
+  version?: number;
   /** Error code from the design app (when success=false) */
   error?: string;
   /** Human-readable error message */
@@ -59,6 +66,8 @@ interface DesignAppResponseBody {
     templateId?: string;
     templateName?: string;
     templateType?: TemplateType;
+    /** Saved-version number assigned by the design app's history system */
+    version?: number;
   };
   error?: string;
   message?: string;
@@ -91,8 +100,24 @@ export async function generateDesignForProduct(params: {
   /** 1-based index of this item within the order — used for multi-item filenames */
   itemIndex: number;
   orderData: Record<string, unknown>;
+  /**
+   * History trigger (see `order-history-enhanced.md` §7). The backend
+   * knows whether this is an auto generation (webhook) or an admin
+   * regeneration (admin button). The design app records this on the
+   * saved version so the history UI can distinguish them. Defaults to
+   * 'auto' for backward compatibility.
+   */
+  trigger?: 'auto' | 'admin_regenerate';
+  /**
+   * Idempotency key for the saved version. For auto generation, the
+   * backend derives a stable key from (orderNumber, productId, itemIndex)
+   * so webhook retries don't create duplicate versions. For admin
+   * regeneration, a fresh key is generated per request. If omitted, the
+   * design app generates a stable one.
+   */
+  operationId?: string;
 }): Promise<DesignAppResult> {
-  const { orderNumber, productId, hasReservationPhoto, itemIndex, orderData } = params;
+  const { orderNumber, productId, hasReservationPhoto, itemIndex, orderData, trigger, operationId } = params;
 
   const baseUrl = getDesignAppUrl();
   if (!baseUrl) {
@@ -130,6 +155,8 @@ export async function generateDesignForProduct(params: {
         hasReservationPhoto,
         itemIndex,
         orderData,
+        trigger,
+        operationId,
       }),
       signal: controller.signal,
     });
@@ -151,6 +178,7 @@ export async function generateDesignForProduct(params: {
       url: body.data.url,
       templateType: body.data.templateType ?? 'text',
       projectId: body.data.projectId,
+      version: body.data.version,
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {

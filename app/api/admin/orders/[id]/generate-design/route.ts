@@ -5,6 +5,7 @@ import Order, { type IOrder } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { generateDesignsForOrder } from '@/lib/services/design-generation-core';
 import { recordDesignGenLog } from '@/lib/services/design-log-service';
+import { randomUUID } from 'node:crypto';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -46,8 +47,17 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     const startedAt = new Date();
 
     // ── Generate designs (shared core — same logic as the auto trigger)
+    // The admin "Generate Design" button is treated as `admin_regenerate`
+    // for history purposes — the saved version is recorded with that
+    // trigger so the history UI can distinguish auto generation from
+    // admin-initiated regeneration. A fresh operationId prefix is
+    // generated per request so each regeneration is a distinct event
+    // (the admin might click Regenerate multiple times).
     const { generated, skipped, logResults, hasReservationPhoto } =
-      await generateDesignsForOrder(order);
+      await generateDesignsForOrder(order, {
+        trigger: 'admin_regenerate',
+        operationIdPrefix: `regen:${randomUUID()}`,
+      });
 
     // ── Log the action (best-effort)
     try {

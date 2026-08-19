@@ -214,6 +214,18 @@ export interface IOrderDesignUrl {
   reviewedAt?: Date;
   /** Name/email of the admin who marked it reviewed, for audit purposes */
   reviewedBy?: string;
+  /**
+   * The currently-active version number for this design (explicit
+   * pointer). The history UI marks `version === currentVersion` as
+   * "current" — never infer current state from array position.
+   *
+   * Set to `null` when the design has been deleted (the `admin_delete`
+   * event preserves the last snapshot but clears the active pointer).
+   * Undefined for legacy entries created before this field was added.
+   *
+   * See `order-history-enhanced.md` §11.
+   */
+  currentVersion?: number | null;
 }
 
 export interface IOrder {
@@ -439,6 +451,8 @@ const OrderDesignUrlSchema = new mongoose.Schema<IOrderDesignUrl>(
     reviewed: { type: Boolean, default: false },
     reviewedAt: { type: Date },
     reviewedBy: { type: String, trim: true },
+    // Explicit current-version pointer. Null = deleted. Undefined = legacy.
+    currentVersion: { type: Number, default: null, sparse: true },
   },
   { _id: false },
 );

@@ -160,8 +160,14 @@ export async function triggerAutoDesignGeneration(
     );
 
     // ── Generate designs (shared core — same logic as the manual button)
+    // Auto generation uses a stable operationId prefix per order so webhook
+    // retries (or duplicate status-change events) don't create duplicate
+    // saved versions — the design app deduplicates by operationId.
     const { generated, skipped, logResults, hasReservationPhoto } =
-      await generateDesignsForOrder(order);
+      await generateDesignsForOrder(order, {
+        trigger: 'auto',
+        operationIdPrefix: `auto:${order.orderNumber}`,
+      });
 
     console.log(
       `${logPrefix} Done: ${generated.length} generated, ${skipped.length} skipped.`,
@@ -249,7 +255,14 @@ export async function triggerDesignRegeneration(
     );
 
     const { generated, skipped, logResults, hasReservationPhoto } =
-      await generateDesignsForOrder(order);
+      await generateDesignsForOrder(order, {
+        // Re-generation after an admin edit is still 'auto' from the
+        // history's perspective — it's not an admin clicking "Regenerate".
+        // A fresh operationId prefix per call so each re-generation is a
+        // distinct event (the admin might edit the order multiple times).
+        trigger: 'auto',
+        operationIdPrefix: `autoregen:${order.orderNumber}:${Date.now()}`,
+      });
 
     console.log(
       `${logPrefix} Done: ${generated.length} generated, ${skipped.length} skipped.`,

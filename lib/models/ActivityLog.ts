@@ -14,7 +14,8 @@ export interface IActivityLog {
   | 'generate_design'
   | 'delete_designs'
   | 'review_design'
-  | 'unreview_design';
+  | 'unreview_design'
+  | 'restore_design';
   resource:
   | 'product'
   | 'user'
@@ -59,6 +60,7 @@ const ActivityLogSchema = new mongoose.Schema<IActivityLog>(
         'delete_designs',
         'review_design',
         'unreview_design',
+        'restore_design',
       ],
       index: true,
     },

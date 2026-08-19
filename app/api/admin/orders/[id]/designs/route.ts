@@ -4,6 +4,13 @@ import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { deleteMultipleR2Objects, extractR2Key } from '@/lib/services/r2';
+import {
+  buildDeleteOperationId,
+  buildUploadOperationId,
+  recordDeleteEvent,
+  recordUploadEvent,
+  resolveDesignIdentity,
+} from '@/lib/services/design-version-history';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -66,6 +73,41 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // If the design doesn't exist yet and a URL is provided, ADD it
     // (used by the "upload design" action when there's no generated design).
     if (designIndex === -1 && hasUrl) {
+      // ── Record an admin_upload history event ──────────────────────────
+      // The uploaded image is already in R2 at a unique key (the admin
+      // panel's upload helper generates a unique path). We use it as the
+      // archivedUrl — it's effectively immutable since no one will
+      // overwrite that specific key.
+      const uploadedKey = extractR2Key(url) || '';
+      const resolved = resolveDesignIdentity(order, productId);
+      const identity = resolved
+        ? resolved.identity
+        : { orderNumber: order.orderNumber, productId, itemIndex: null };
+      const actor = {
+        userId: auth.user.userId,
+        userName: auth.user.name || auth.user.email,
+        userEmail: auth.user.email,
+        userRole: auth.user.role || 'admin',
+      };
+      let uploadVersion: number | undefined;
+      try {
+        const uploadResult = await recordUploadEvent({
+          order,
+          identity,
+          designIndex: -1,
+          uploadedUrl: url,
+          uploadedKey,
+          actor,
+          operationId: buildUploadOperationId(identity, uploadedKey),
+        });
+        uploadVersion = uploadResult.newVersion;
+      } catch (uploadError) {
+        console.error(
+          '[PATCH /api/admin/orders/[id]/designs] recordUploadEvent failed:',
+          uploadError,
+        );
+      }
+
       const newDesign = {
         productId,
         url,
@@ -74,6 +116,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         reviewedAt: hasReviewed && reviewed ? new Date() : undefined,
         reviewedBy: hasReviewed && reviewed ? (auth.user.name || auth.user.email) : undefined,
         createdAt: new Date(),
+        currentVersion: uploadVersion ?? null,
       };
       await Order.updateOne(
         { _id: id },
@@ -92,13 +135,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             orderNumber: order.orderNumber,
             productId,
             uploadedImage: true,
+            version: uploadVersion,
           }),
         });
       } catch (logError) {
         console.error('[PATCH /api/admin/orders/[id]/designs] logActivity failed:', logError);
       }
 
-      return NextResponse.json({ success: true, data: { productId, reviewed: newDesign.reviewed, url } });
+      return NextResponse.json({ success: true, data: { productId, reviewed: newDesign.reviewed, url, version: uploadVersion } });
     }
 
     if (designIndex === -1) {
@@ -119,6 +163,43 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     };
     if (hasUrl) {
       setFields['designUrls.$.url'] = url;
+    }
+
+    // ── Record an admin_upload history event when replacing the image ──
+    // The uploaded image is already in R2 at a unique key. We record a
+    // new `admin_upload` version so the history reflects the replacement,
+    // and update `currentVersion` to point to it.
+    let uploadVersion: number | undefined;
+    if (hasUrl) {
+      const uploadedKey = extractR2Key(url) || '';
+      const resolved = resolveDesignIdentity(order, productId);
+      const identity = resolved
+        ? resolved.identity
+        : { orderNumber: order.orderNumber, productId, itemIndex: null };
+      const actor = {
+        userId: auth.user.userId,
+        userName: auth.user.name || auth.user.email,
+        userEmail: auth.user.email,
+        userRole: auth.user.role || 'admin',
+      };
+      try {
+        const uploadResult = await recordUploadEvent({
+          order,
+          identity,
+          designIndex,
+          uploadedUrl: url,
+          uploadedKey,
+          actor,
+          operationId: buildUploadOperationId(identity, uploadedKey),
+        });
+        uploadVersion = uploadResult.newVersion;
+        setFields['designUrls.$.currentVersion'] = uploadVersion;
+      } catch (uploadError) {
+        console.error(
+          '[PATCH /api/admin/orders/[id]/designs] recordUploadEvent failed:',
+          uploadError,
+        );
+      }
     }
 
     const result = await Order.updateOne(
@@ -152,7 +233,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       console.error('[PATCH /api/admin/orders/[id]/designs] logActivity failed:', logError);
     }
 
-    return NextResponse.json({ success: true, data: { productId, reviewed: nextReviewed, url: hasUrl ? url : undefined } });
+    return NextResponse.json({ success: true, data: { productId, reviewed: nextReviewed, url: hasUrl ? url : undefined, version: uploadVersion } });
   } catch (error) {
     console.error('[PATCH /api/admin/orders/[id]/designs]', error);
     return NextResponse.json(
@@ -194,6 +275,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const { id } = await params;
     const productId = request.nextUrl.searchParams.get('productId');
+    // When true, skip creating admin_delete version events. Used by the
+    // regenerate flow (DELETE + generate) so we don't end up with both
+    // a delete event AND a regenerate event in the history — only the
+    // regenerate event should be recorded.
+    const skipVersionEvent = request.nextUrl.searchParams.get('skipVersionEvent') === 'true';
 
     const order = (await Order.findById(id).lean()) as IOrder | null;
     if (!order) {
@@ -230,6 +316,50 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       } catch (r2Error) {
         console.error('[DELETE /api/admin/orders/[id]/designs] R2 deletion failed:', r2Error);
         // Continue anyway — we still remove the entry/entries from the order
+      }
+    }
+
+    // ── Record admin_delete history events ──────────────────────────────
+    // Each deleted design gets a new `admin_delete` version that preserves
+    // the last valid snapshot (see `order-history-enhanced.md` §12). The
+    // order's designUrls entry is then removed and `currentVersion` becomes
+    // null. All immutable history remains available for restore.
+    //
+    // Skipped when `skipVersionEvent=true` (used by the regenerate flow:
+    // DELETE + generate in sequence — only the generate's admin_regenerate
+    // event should be recorded, not a delete event).
+    //
+    // Best-effort: if history recording fails, we still remove the
+    // designUrls entry/entries below — the admin's intent (delete the
+    // current design) is honored even if the audit trail can't be written.
+    if (!skipVersionEvent) {
+      const actor = {
+        userId: auth.user.userId,
+        userName: auth.user.name || auth.user.email,
+        userEmail: auth.user.email,
+        userRole: auth.user.role || 'admin',
+      };
+
+      for (const design of toDelete) {
+        try {
+          const resolved = resolveDesignIdentity(order, design.productId);
+          const identity = resolved
+            ? resolved.identity
+            : { orderNumber: order.orderNumber, productId: design.productId, itemIndex: null };
+          const designIndex = resolved?.designIndex ?? -1;
+          await recordDeleteEvent({
+            order,
+            identity,
+            designIndex,
+            actor,
+            operationId: buildDeleteOperationId(identity),
+          });
+        } catch (historyError) {
+          console.error(
+            '[DELETE /api/admin/orders/[id]/designs] recordDeleteEvent failed:',
+            historyError,
+          );
+        }
       }
     }
 

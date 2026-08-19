@@ -34,6 +34,24 @@ export interface DesignGenerationResult {
 }
 
 /**
+ * Options for `generateDesignsForOrder`.
+ *
+ * - `trigger` — the history trigger. 'auto' for webhook/status-change
+ *   generation, 'admin_regenerate' for the admin "Regenerate" button.
+ *   Passed through to the design app so the saved version is recorded
+ *   with the right trigger. Defaults to 'auto'.
+ * - `operationId` — optional idempotency key prefix. When provided, the
+ *   per-product operationId is `${prefix}:${productId}:${itemIndex}`.
+ *   For auto generation, the caller can pass a stable webhook event ID
+ *   so retries don't create duplicate versions. For admin regeneration,
+ *   omit this — a fresh key is generated per request.
+ */
+export interface GenerateDesignsOptions {
+  trigger?: 'auto' | 'admin_regenerate';
+  operationIdPrefix?: string;
+}
+
+/**
  * Map design-app error codes to machine-readable reasonCode +
  * Arabic fallback reason. The admin panel uses reasonCode to show
  * a localized message; reason is for logs/fallback.
@@ -79,7 +97,10 @@ function mapDesignError(
  */
 export async function generateDesignsForOrder(
   order: IOrder,
+  options: GenerateDesignsOptions = {},
 ): Promise<DesignGenerationResult> {
+  const { trigger = 'auto', operationIdPrefix } = options;
+
   // ── Check for a reservation photo ────────────────────────────────
   const reservationPhoto = order.reservationData?.find(
     (r) => r.key === 'photo' && r.value && r.value.trim().length > 0,
@@ -120,6 +141,10 @@ export async function generateDesignsForOrder(
         hasReservationPhoto,
         itemIndex,
         orderData: buildItemOrderData(item),
+        trigger,
+        operationId: operationIdPrefix
+          ? `${operationIdPrefix}:${productId}:${itemIndex}`
+          : undefined,
       });
     }),
   );
@@ -159,12 +184,18 @@ export async function generateDesignsForOrder(
     const retrySettled = await Promise.allSettled(
       retryIndices.map((idx) => {
         const item = productItems[idx];
+        const productId = String(item.productId);
+        const itemIndex = idx + 1;
         return generateDesignForProduct({
           orderNumber: order.orderNumber,
-          productId: String(item.productId),
+          productId,
           hasReservationPhoto,
-          itemIndex: idx + 1,
+          itemIndex,
           orderData: buildItemOrderData(item),
+          trigger,
+          operationId: operationIdPrefix
+            ? `${operationIdPrefix}:${productId}:${itemIndex}`
+            : undefined,
         });
       }),
     );
@@ -204,6 +235,10 @@ export async function generateDesignsForOrder(
         projectId: result.projectId,
         createdAt: new Date(),
         reviewed: false,
+        // Explicit current-version pointer — the design app assigned this
+        // version number when it saved the immutable snapshot. The admin
+        // panel's history UI marks `version === currentVersion` as current.
+        currentVersion: result.version ?? null,
       });
       logResults.push({
         productId: result.productId,

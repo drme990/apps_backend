@@ -4,6 +4,7 @@ import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import OrderChangeHistory from '@/lib/models/OrderChangeHistory';
 import { logActivity } from '@/lib/services/logger';
+import { triggerDesignRegeneration } from '@/lib/services/auto-design-generation';
 
 export async function PUT(request: NextRequest) {
   try {
@@ -117,10 +118,27 @@ export async function PUT(request: NextRequest) {
       details: `Bulk updated execution date for ${updatedCount} orders → ${executionDate}`,
     });
 
+    // ── Auto design re-generation ────────────────────────────────────
+    // The execution date appears on the design as a dynamic field
+    // ("تاريخ التنفيذ"). When it changes in bulk, re-generate the design
+    // images for each affected order so they stay in sync. Fire-and-forget
+    // — the response returns immediately; each regeneration runs in the
+    // background via the backend's design queue (serialized by the
+    // concurrency slot, so bursts don't overwhelm the design app).
+    for (const order of existingOrders) {
+      const oldDate = oldDates.get(String(order._id));
+      if (oldDate !== executionDate) {
+        triggerDesignRegeneration(String(order._id), 'auto_admin').catch(() => {
+          // Best-effort — the design will be synced on the next window focus
+        });
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
         updatedCount,
+        regeneratingDesigns: updatedCount,
       },
     });
   } catch (error) {
