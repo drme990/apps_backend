@@ -51,22 +51,27 @@ export async function GET(request: NextRequest) {
     // Category filter: look up category products then match order items.
     // The special value '__uncategorized__' matches orders whose product
     // is not assigned to any category.
-    let categoryProductIds: mongoose.Types.ObjectId[] | undefined;
+    //
+    // NOTE: items.productId in the Order schema is Mixed type — some orders
+    // store it as a string, others as an ObjectId. MongoDB does NOT coerce
+    // between strings and ObjectIds in $in/$nin, so we include BOTH forms
+    // in the filter arrays to match regardless of how the order was stored.
+    let categoryProductIds: (mongoose.Types.ObjectId | string)[] | undefined;
     let isUncategorizedFilter = false;
     if (categoryId && categoryId !== 'all') {
       if (categoryId === '__uncategorized__') {
         isUncategorizedFilter = true;
         const allCategorizedProductIds = await Category.distinct('products');
-        categoryProductIds = allCategorizedProductIds.map((p) => {
+        categoryProductIds = allCategorizedProductIds.flatMap((p) => {
           const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
-          return new mongoose.Types.ObjectId(str);
+          return [str, new mongoose.Types.ObjectId(str)];
         });
       } else {
         const category = await Category.findById(categoryId).select('products').lean();
         if (category && Array.isArray(category.products)) {
-          categoryProductIds = category.products.map((p) => {
+          categoryProductIds = category.products.flatMap((p) => {
             const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
-            return new mongoose.Types.ObjectId(str);
+            return [str, new mongoose.Types.ObjectId(str)];
           });
         }
       }
@@ -177,25 +182,36 @@ export async function GET(request: NextRequest) {
       },
       ...(dateFilter ? [{ $match: dateFilter }] : []),
       { $unwind: '$items' },
-      {
-        $lookup: {
-          from: 'products',
-          localField: 'items.productId',
-          foreignField: '_id',
-          as: 'productInfo',
-        },
-      },
-      {
-        $addFields: {
-          categoryId: { $arrayElemAt: ['$productInfo.categoryId', 0] },
-        },
-      },
+      // Look up the category that contains this product ID.
+      // The data model uses Category.products[] (reverse reference),
+      // so we query the categories collection for a category whose
+      // products array contains this product ID.
+      //
+      // NOTE: items.productId is Mixed type (string or ObjectId), and
+      // Category.products contains ObjectIds. MongoDB does NOT coerce
+      // between strings and ObjectIds in $in, so we convert both sides
+      // to strings for a reliable comparison.
       {
         $lookup: {
           from: 'categories',
-          let: { catId: '$categoryId' },
+          let: { pid: { $toString: '$items.productId' } },
           pipeline: [
-            { $match: { $expr: { $eq: ['$_id', '$$catId'] } } },
+            {
+              $match: {
+                $expr: {
+                  $in: [
+                    '$$pid',
+                    {
+                      $map: {
+                        input: { $ifNull: ['$products', []] },
+                        as: 'p',
+                        in: { $toString: '$$p' },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
             { $project: { name: 1, categoryNumber: 1, color: 1 } },
           ],
           as: 'categoryInfo',
@@ -203,6 +219,7 @@ export async function GET(request: NextRequest) {
       },
       {
         $addFields: {
+          categoryId: { $arrayElemAt: ['$categoryInfo._id', 0] },
           categoryName: { $arrayElemAt: ['$categoryInfo.name', 0] },
           categoryNumber: {
             $ifNull: [

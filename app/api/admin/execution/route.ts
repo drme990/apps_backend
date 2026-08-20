@@ -97,23 +97,28 @@ export async function GET(request: NextRequest) {
     // Category filter: look up category products then match order items.
     // The special value '__uncategorized__' matches orders whose product
     // is not assigned to any category (categoryId is null or missing).
-    let categoryProductIds: mongoose.Types.ObjectId[] | undefined;
+    //
+    // NOTE: items.productId in the Order schema is Mixed type — some orders
+    // store it as a string, others as an ObjectId. MongoDB does NOT coerce
+    // between strings and ObjectIds in $in/$nin, so we include BOTH forms
+    // in the filter arrays to match regardless of how the order was stored.
+    let categoryProductIds: (mongoose.Types.ObjectId | string)[] | undefined;
     let isUncategorizedFilter = false;
     if (categoryId && categoryId !== 'all') {
       if (categoryId === '__uncategorized__') {
         // Find all product IDs that ARE in a category, so we can exclude them
         isUncategorizedFilter = true;
         const allCategorizedProductIds = await Category.distinct('products');
-        categoryProductIds = allCategorizedProductIds.map((p) => {
+        categoryProductIds = allCategorizedProductIds.flatMap((p) => {
           const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
-          return new mongoose.Types.ObjectId(str);
+          return [str, new mongoose.Types.ObjectId(str)];
         });
       } else {
         const category = await Category.findById(categoryId).select('products').lean();
         if (category && Array.isArray(category.products)) {
-          categoryProductIds = category.products.map((p) => {
+          categoryProductIds = category.products.flatMap((p) => {
             const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
-            return new mongoose.Types.ObjectId(str);
+            return [str, new mongoose.Types.ObjectId(str)];
           });
         }
       }
