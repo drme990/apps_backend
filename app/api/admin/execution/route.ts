@@ -94,15 +94,28 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    // Category filter: look up category products then match order items
+    // Category filter: look up category products then match order items.
+    // The special value '__uncategorized__' matches orders whose product
+    // is not assigned to any category (categoryId is null or missing).
     let categoryProductIds: mongoose.Types.ObjectId[] | undefined;
+    let isUncategorizedFilter = false;
     if (categoryId && categoryId !== 'all') {
-      const category = await Category.findById(categoryId).select('products').lean();
-      if (category && Array.isArray(category.products)) {
-        categoryProductIds = category.products.map((p) => {
+      if (categoryId === '__uncategorized__') {
+        // Find all product IDs that ARE in a category, so we can exclude them
+        isUncategorizedFilter = true;
+        const allCategorizedProductIds = await Category.distinct('products');
+        categoryProductIds = allCategorizedProductIds.map((p) => {
           const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
           return new mongoose.Types.ObjectId(str);
         });
+      } else {
+        const category = await Category.findById(categoryId).select('products').lean();
+        if (category && Array.isArray(category.products)) {
+          categoryProductIds = category.products.map((p) => {
+            const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
+            return new mongoose.Types.ObjectId(str);
+          });
+        }
       }
     }
 
@@ -141,7 +154,16 @@ export async function GET(request: NextRequest) {
     ];
 
     // 1b. Category filter (if applicable)
-    if (categoryProductIds && categoryProductIds.length > 0) {
+    if (isUncategorizedFilter) {
+      // Uncategorized: exclude orders that have ANY item with a categorized
+      // product. An order is "uncategorized" only if ALL its items are
+      // products not in any category.
+      prePipeline.push({
+        $match: {
+          'items.productId': { $nin: categoryProductIds },
+        },
+      });
+    } else if (categoryProductIds && categoryProductIds.length > 0) {
       prePipeline.push({
         $match: {
           'items.productId': { $in: categoryProductIds },

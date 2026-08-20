@@ -48,15 +48,27 @@ export async function GET(request: NextRequest) {
       baseMatch.referralId = referralId;
     }
 
-    // Category filter: look up category products then match order items
+    // Category filter: look up category products then match order items.
+    // The special value '__uncategorized__' matches orders whose product
+    // is not assigned to any category.
     let categoryProductIds: mongoose.Types.ObjectId[] | undefined;
+    let isUncategorizedFilter = false;
     if (categoryId && categoryId !== 'all') {
-      const category = await Category.findById(categoryId).select('products').lean();
-      if (category && Array.isArray(category.products)) {
-        categoryProductIds = category.products.map((p) => {
+      if (categoryId === '__uncategorized__') {
+        isUncategorizedFilter = true;
+        const allCategorizedProductIds = await Category.distinct('products');
+        categoryProductIds = allCategorizedProductIds.map((p) => {
           const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
           return new mongoose.Types.ObjectId(str);
         });
+      } else {
+        const category = await Category.findById(categoryId).select('products').lean();
+        if (category && Array.isArray(category.products)) {
+          categoryProductIds = category.products.map((p) => {
+            const str = typeof p === 'string' ? p : (p as { toString(): string }).toString();
+            return new mongoose.Types.ObjectId(str);
+          });
+        }
       }
     }
 
@@ -90,15 +102,23 @@ export async function GET(request: NextRequest) {
     const prePipeline = [
       { $match: baseMatch },
       ...(searchMatch ? [{ $match: searchMatch }] : []),
-      ...(categoryProductIds && categoryProductIds.length > 0
+      ...(isUncategorizedFilter
         ? [
           {
             $match: {
-              'items.productId': { $in: categoryProductIds },
+              'items.productId': { $nin: categoryProductIds },
             },
           },
         ]
-        : []),
+        : categoryProductIds && categoryProductIds.length > 0
+          ? [
+            {
+              $match: {
+                'items.productId': { $in: categoryProductIds },
+              },
+            },
+          ]
+          : []),
       ...(intention && intention !== 'all'
         ? [
           {

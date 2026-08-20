@@ -18,6 +18,10 @@ import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } fro
 import { MANUAL_ORDER_PRODUCT_ID } from '@/lib/constants/manual-order';
 import { randomBytes } from 'crypto';
 
+// Manual order creation involves multiple DB operations, user creation,
+// and potentially an EasyKash API call. Give it plenty of time.
+export const maxDuration = 120;
+
 function generatePaymentId(): string {
   return `pay_${randomBytes(12).toString('hex')}`;
 }
@@ -546,16 +550,19 @@ export async function POST(request: NextRequest) {
     };
 
     // ── Create order ──
+    console.log('[Create Manual Order] Creating order for', effectiveFullName, 'with', orderItemsPayload.length, 'items');
     const order = await Order.create(orderPayload);
 
     // ── Prefix order number with W ──
     order.orderNumber = `W${order.orderNumber}`;
     await order.save();
+    console.log('[Create Manual Order] Order created:', order.orderNumber);
 
     let checkoutUrl: string | null = null;
 
     // ── EasyKash payment ──
     if (isEasykash && process.env.EASYKASH_API_KEY) {
+      console.log('[Create Manual Order] Creating EasyKash payment for', order.orderNumber);
       const sourceBaseUrls: Record<string, string> = {
         manasik: process.env.MANASIK_URL || 'https://www.manasik.net',
         ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
@@ -766,6 +773,7 @@ export async function POST(request: NextRequest) {
       details: `Manually created order ${order.orderNumber} via admin panel (${paymentMethod}) with ${items.length} item(s)${isPartialPayment ? ` — partial payment: ${requestedPaid} ${currencyUpper} of ${totalAmount} ${currencyUpper}` : ''}`,
     });
 
+    console.log('[Create Manual Order] Success:', order.orderNumber);
     return NextResponse.json({
       success: true,
       data: {
@@ -785,7 +793,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Error creating manual order:', error);
+    console.error('[Create Manual Order] Error:', error);
 
     // Extract a clean, user-friendly message from the error.
     // Mongoose duplicate key (E11000) — e.g. unique email/phone collision
@@ -819,6 +827,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Mongoose CastError (invalid ObjectId, etc.)
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'name' in error &&
+      (error as { name: string }).name === 'CastError'
+    ) {
+      const castErr = error as { path?: string; value?: unknown };
+      const field = castErr.path || 'field';
+      return NextResponse.json(
+        { success: false, error: `Invalid value for field "${field}"` },
+        { status: 400 },
+      );
+    }
+
     // Already-handled NextResponse (e.g. from an inner return that threw)
     if (
       typeof error === 'object' &&
@@ -843,6 +866,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { success: false, error: 'Unable to connect to a required service. Please try again.' },
           { status: 502 },
+        );
+      }
+      // MongoDB connection errors
+      if (msg.includes('mongoserverselectionerror') || msg.includes('pool destroyed')) {
+        return NextResponse.json(
+          { success: false, error: 'Database connection error. Please try again.' },
+          { status: 503 },
         );
       }
     }
