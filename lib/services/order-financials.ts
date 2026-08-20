@@ -6,11 +6,17 @@ type PaymentLite = {
   easykashOrderId?: string;
 };
 
+type InvoiceLite = {
+  invoiceStatus?: string;
+  value?: number;
+};
+
 type OrderLite = {
   currency?: string;
   totalAmount?: number;
   fullAmount?: number;
   payments?: PaymentLite[];
+  invoiceUrls?: InvoiceLite[];
 };
 
 const INITIAL_ATTEMPT_REGEX = /-P\d+$/;
@@ -51,13 +57,24 @@ export function calculateOrderFinancials(order: OrderLite) {
   const fullAmount =
     toPositiveNumber(order.fullAmount) || toPositiveNumber(order.totalAmount);
 
-  const totalPaid = (order.payments || []).reduce((sum, payment) => {
+  // Sum paid payment records (gateway payments)
+  const paymentsTotal = (order.payments || []).reduce((sum, payment) => {
     if (payment.status === 'paid') {
       return sum + getPaymentOrderAmount(order, payment);
     }
 
     return sum;
   }, 0);
+
+  // Sum confirmed invoice values (manual invoice uploads)
+  const confirmedInvoicesTotal = (order.invoiceUrls || []).reduce((sum, invoice) => {
+    if (invoice.invoiceStatus === 'confirmed') {
+      return sum + toPositiveNumber(invoice.value);
+    }
+    return sum;
+  }, 0);
+
+  const totalPaid = paymentsTotal + confirmedInvoicesTotal;
 
   return {
     fullAmount,

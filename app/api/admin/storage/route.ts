@@ -69,28 +69,72 @@ export async function GET(request: NextRequest) {
 }
 
 // DELETE /api/storage - Delete objects or folders
+//
+// Protected folders: shared global assets that must never be bulk-deleted
+// because they're referenced by many projects/templates. Deleting these
+// would break designs across the entire system.
+const PROTECTED_FOLDER_PREFIXES = [
+  'design/shapes/',   // shared PNG shapes used by all projects/templates
+  'design/fonts/',    // shared font files used by all projects
+];
+
+function isProtectedKey(key: string): boolean {
+  return PROTECTED_FOLDER_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
     const { keys, folder } = body;
 
     if (folder) {
+      // Block deletion of protected shared folders
+      if (PROTECTED_FOLDER_PREFIXES.some((prefix) => folder === prefix || folder.startsWith(prefix))) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Cannot delete protected folder "${folder}". This folder contains shared assets used by all projects.`,
+          },
+          { status: 403 },
+        );
+      }
       // Delete entire folder
       const count = await deleteR2Folder(folder);
       clearCache(folder);
+      console.log(`[DELETE /api/admin/storage] Folder "${folder}" deleted (${count} objects)`);
       return NextResponse.json({ success: true, deletedCount: count });
     }
 
     if (keys && Array.isArray(keys)) {
-      // Delete multiple objects
-      const result = await deleteMultipleR2Objects(keys);
+      // Filter out any protected keys (safety net)
+      const safeKeys = keys.filter((k: string) => !isProtectedKey(k));
+      const blockedCount = keys.length - safeKeys.length;
+      if (blockedCount > 0) {
+        console.warn(
+          `[DELETE /api/admin/storage] Blocked deletion of ${blockedCount} protected key(s): ` +
+          keys.filter((k: string) => isProtectedKey(k)).join(', '),
+        );
+      }
+
+      if (safeKeys.length === 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'All specified keys are protected shared assets and cannot be deleted.',
+          },
+          { status: 403 },
+        );
+      }
+
+      const result = await deleteMultipleR2Objects(safeKeys);
 
       // Clear cache for affected prefixes
-      for (const key of keys) {
+      for (const key of safeKeys) {
         const prefix = key.substring(0, key.lastIndexOf('/'));
         clearCache(prefix ? `${prefix}/` : '');
       }
 
+      console.log(`[DELETE /api/admin/storage] Deleted ${safeKeys.length} key(s)${blockedCount > 0 ? ` (${blockedCount} blocked)` : ''}`);
       return NextResponse.json({ success: true, ...result });
     }
 

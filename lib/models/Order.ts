@@ -296,7 +296,9 @@ export interface IOrder {
 const OrderItemSchema = new mongoose.Schema<IOrderItem>(
   {
     productId: {
-      type: mongoose.Schema.Types.ObjectId,
+      // Mixed type to support both real product ObjectIds and the
+      // manual-order placeholder string '__manual_order__'.
+      type: mongoose.Schema.Types.Mixed,
       ref: 'Product',
     },
     productSlug: { type: String, trim: true, lowercase: true },

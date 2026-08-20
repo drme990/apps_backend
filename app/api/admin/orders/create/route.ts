@@ -15,6 +15,7 @@ import { convertCurrency } from '@/lib/services/currency';
 import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
 import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } from '@/lib/auth/app-users';
+import { MANUAL_ORDER_PRODUCT_ID } from '@/lib/constants/manual-order';
 import { randomBytes } from 'crypto';
 
 function generatePaymentId(): string {
@@ -218,6 +219,7 @@ export async function POST(request: NextRequest) {
         totalAmount += itemTotal;
 
         orderItemsPayload.push({
+          productId: MANUAL_ORDER_PRODUCT_ID,
           productName: { ar: item.name, en: item.name },
           price: item.price,
           currency: currencyUpper,
@@ -784,8 +786,71 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error creating manual order:', error);
+
+    // Extract a clean, user-friendly message from the error.
+    // Mongoose duplicate key (E11000) — e.g. unique email/phone collision
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code: unknown }).code === 11000
+    ) {
+      const keyError = error as { keyValue?: Record<string, unknown> };
+      const dupField = keyError.keyValue
+        ? Object.keys(keyError.keyValue).join(', ')
+        : 'field';
+      return NextResponse.json(
+        { success: false, error: `A customer with this ${dupField} already exists` },
+        { status: 409 },
+      );
+    }
+
+    // Mongoose validation error
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'name' in error &&
+      (error as { name: string }).name === 'ValidationError'
+    ) {
+      const msg = error instanceof Error ? error.message : 'Validation failed';
+      return NextResponse.json(
+        { success: false, error: msg },
+        { status: 400 },
+      );
+    }
+
+    // Already-handled NextResponse (e.g. from an inner return that threw)
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      typeof (error as { status: unknown }).status === 'number' &&
+      'json' in error
+    ) {
+      return error as NextResponse;
+    }
+
+    // Network/gateway errors (EasyKash, R2, etc.)
+    if (error instanceof Error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes('timeout') || msg.includes('etimedout')) {
+        return NextResponse.json(
+          { success: false, error: 'The request timed out. Please try again.' },
+          { status: 504 },
+        );
+      }
+      if (msg.includes('connect') || msg.includes('econnrefused') || msg.includes('enotfound')) {
+        return NextResponse.json(
+          { success: false, error: 'Unable to connect to a required service. Please try again.' },
+          { status: 502 },
+        );
+      }
+    }
+
+    // For any other error, return the actual message instead of hiding it
+    const message = error instanceof Error ? error.message : 'Failed to create order';
     return NextResponse.json(
-      { success: false, error: 'Failed to create order' },
+      { success: false, error: message },
       { status: 500 },
     );
   }

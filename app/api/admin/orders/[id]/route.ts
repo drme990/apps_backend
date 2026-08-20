@@ -13,6 +13,7 @@ import {
 } from '@/lib/services/auto-design-generation';
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
+import { calculateOrderFinancials } from '@/lib/services/order-financials';
 
 const ALLOWED_ORDER_STATUSES = new Set([
   'pending',
@@ -566,6 +567,70 @@ export async function PATCH(
         data: sanitizeOrderForAdmin(order.toObject() as unknown as Record<string, unknown>),
         changed: false,
       });
+    }
+
+    // ── Auto-update order status from invoices ──────────────────────
+    // When invoices are added or changed, recalculate the order's
+    // financials (which now include confirmed invoice values) and update
+    // the status if the paid amount covers the full order.
+    // NOTE: paidAmount and remainingAmount are set by the pre('save')
+    // hook via calculateOrderFinancials(), so we only handle the status
+    // transition here.
+    const INVOICE_CHANGE_TYPES = new Set(['invoice', 'invoiceStatus', 'invoiceValue', 'invoiceImage']);
+    const hasInvoiceChange = changes.some((c) => INVOICE_CHANGE_TYPES.has(c.changeType));
+    if (hasInvoiceChange) {
+      const { totalPaid, fullAmount } = calculateOrderFinancials(order);
+
+      if (totalPaid > 0 && fullAmount > 0) {
+        const previousStatus = order.status;
+        if (totalPaid >= fullAmount) {
+          // Paid amount covers the full order → mark as paid
+          order.isPartialPayment = false;
+          if (order.status === 'partial-paid' || order.status === 'pending') {
+            order.status = 'paid';
+          }
+        } else if (totalPaid < fullAmount) {
+          // Paid amount covers part of the order → mark as partial-paid
+          order.isPartialPayment = true;
+          if (order.status === 'pending') {
+            order.status = 'partial-paid';
+          }
+        }
+
+        if (order.status !== previousStatus) {
+          changes.push({
+            changeType: 'status',
+            previousValue: previousStatus,
+            newValue: order.status,
+          });
+
+          // Update whatsapp button state to match the new status
+          const previousWhatsappState = order.isWhatsappButtonClicked;
+          const nextWhatsappState = resolveWhatsappButtonState(
+            order.status,
+            previousStatus,
+            previousWhatsappState,
+          );
+          if (nextWhatsappState !== previousWhatsappState) {
+            order.isWhatsappButtonClicked = nextWhatsappState;
+          }
+
+          // Send confirmation email when status transitions to paid
+          if (order.status === 'paid') {
+            sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
+          }
+
+          // Trigger auto design generation when status transitions to paid
+          if (shouldTriggerAutoDesignGeneration(previousStatus, order.status)) {
+            triggerAutoDesignGeneration(String(order._id), 'auto_admin').catch((err) => {
+              console.error(
+                `[admin PATCH] Auto design generation failed for order ${order.orderNumber}:`,
+                err instanceof Error ? err.message : err,
+              );
+            });
+          }
+        }
+      }
     }
 
     order.reservationData = reservationData;

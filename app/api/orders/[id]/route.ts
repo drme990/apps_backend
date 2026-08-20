@@ -21,6 +21,9 @@ const allowedPatchFields = [
   'gender',
   'isAlive',
   'intention',
+  'status',
+  'paidAmount',
+  'remainingAmount',
 ];
 
 const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
@@ -217,6 +220,28 @@ export async function PATCH(
       const { totalPaid, remainingAmount } = calculateOrderFinancials(order);
       order.paidAmount = totalPaid;
       order.remainingAmount = remainingAmount;
+    }
+
+    // Auto-update order status when invoices change.
+    // NOTE: paidAmount and remainingAmount are set by the pre('save')
+    // hook via calculateOrderFinancials(), which now includes confirmed
+    // invoice values. We only handle the status transition here.
+    if ('invoiceUrl' in fields || 'invoiceUrls' in fields || 'invoiceValue' in fields || 'invoiceStatus' in fields) {
+      const { totalPaid, fullAmount } = calculateOrderFinancials(order);
+
+      if (totalPaid > 0 && fullAmount > 0) {
+        if (totalPaid >= fullAmount) {
+          order.isPartialPayment = false;
+          if (order.status === 'partial-paid' || order.status === 'pending') {
+            order.status = 'paid';
+          }
+        } else if (totalPaid < fullAmount) {
+          order.isPartialPayment = true;
+          if (order.status === 'pending') {
+            order.status = 'partial-paid';
+          }
+        }
+      }
     }
 
     await order.save();
