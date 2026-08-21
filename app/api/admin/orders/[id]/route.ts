@@ -453,11 +453,13 @@ export async function PATCH(
           newValue: JSON.stringify(newEntry),
         });
 
-        // ── If the invoice has a paid amount and is confirmed, record it
-        //    as a new manual payment entry in order.payments. This makes
-        //    the payment visible in the Payment Timeline and ensures
-        //    calculateOrderFinancials counts it. ──
-        if (paidAmount > 0 && invoiceStatus === 'confirmed') {
+        // ── If the invoice has a paid amount, record it as a new manual
+        //    payment entry in order.payments. This makes the payment visible
+        //    in the Payment Timeline and ensures calculateOrderFinancials
+        //    counts it. The payment is recorded regardless of invoice
+        //    confirmation status — paidAmount means the customer actually
+        //    paid, independent of invoice document review. ──
+        if (paidAmount > 0) {
           if (!Array.isArray(order.payments)) {
             order.payments = [];
           }
@@ -694,17 +696,24 @@ export async function PATCH(
     order.reservationData = reservationData;
     await order.save();
 
-    for (const change of changes) {
-      await OrderChangeHistory.create({
-        orderId: String(order._id),
-        appId: order.source || 'ghadaq',
-        changeType: change.changeType,
-        previousValue: change.previousValue,
-        newValue: change.newValue,
-        changedByUserId: auth.user.userId,
-        changedByUserName: auth.user.name,
-        changedByUserEmail: auth.user.email,
-      });
+    // Record change history entries. Wrap in try-catch so a history
+    // failure (e.g. stale Mongoose model with old enum) doesn't roll
+    // back the order save — the order is already persisted at this point.
+    try {
+      for (const change of changes) {
+        await OrderChangeHistory.create({
+          orderId: String(order._id),
+          appId: order.source || 'ghadaq',
+          changeType: change.changeType,
+          previousValue: change.previousValue,
+          newValue: change.newValue,
+          changedByUserId: auth.user.userId,
+          changedByUserName: auth.user.name,
+          changedByUserEmail: auth.user.email,
+        });
+      }
+    } catch (historyError) {
+      console.error('Failed to record order change history (non-fatal):', historyError);
     }
 
     const changeLabels = changes.map((c) => c.changeType).join(', ');
