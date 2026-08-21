@@ -71,7 +71,9 @@ export async function POST(request: NextRequest) {
         ? (status as (typeof VALID_INVOICE_STATUSES)[number])
         : 'waiting';
 
-    // Support both legacy single-invoice fields and new invoiceUrls array
+    // Support both legacy single-invoice fields and new invoiceUrls array.
+    // Invoices carry only `value` (the document amount) — the actual paid
+    // amount is recorded as a payment entry in order.payments.
     const initialInvoiceUrls = invoiceUrls && Array.isArray(invoiceUrls) && invoiceUrls.length > 0
       ? invoiceUrls.map((u: { url: string; invoiceStatus?: string; value?: number; currency?: string }) => ({
         url: u.url,

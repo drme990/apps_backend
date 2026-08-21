@@ -431,6 +431,7 @@ export async function PATCH(
     if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
       const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
+      const paidAmount = typeof body.invoicePaidAmount === 'number' ? body.invoicePaidAmount : 0;
       const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
       const rawStatus = body.invoiceStatus;
       const invoiceStatus =
@@ -444,13 +445,42 @@ export async function PATCH(
       }
       const alreadyExists = order.invoiceUrls.some((entry: IInvoiceUrl) => entry.url === trimmedInvoiceUrl);
       if (!alreadyExists) {
-        const newEntry = { url: trimmedInvoiceUrl, invoiceStatus, rejectionReason, value };
+        const newEntry: IInvoiceUrl = { url: trimmedInvoiceUrl, invoiceStatus, rejectionReason, value };
         order.invoiceUrls.push(newEntry);
         changes.push({
           changeType: 'invoice',
           previousValue: null,
           newValue: JSON.stringify(newEntry),
         });
+
+        // ── If the invoice has a paid amount and is confirmed, record it
+        //    as a new manual payment entry in order.payments. This makes
+        //    the payment visible in the Payment Timeline and ensures
+        //    calculateOrderFinancials counts it. ──
+        if (paidAmount > 0 && invoiceStatus === 'confirmed') {
+          if (!Array.isArray(order.payments)) {
+            order.payments = [];
+          }
+          const orderCurrency = (order.currency || 'EGP').toUpperCase();
+          order.payments.push({
+            paymentId: `manual_invoice_${Date.now()}`,
+            easykashOrderId: `manual-invoice-${Date.now()}`,
+            orderAmount: paidAmount,
+            gatewayAmount: paidAmount,
+            gatewayCurrency: orderCurrency,
+            amount: paidAmount,
+            currency: orderCurrency,
+            status: 'paid',
+            paymentMethod: order.paymentMethod || 'bank_transfer',
+            createdAt: new Date(),
+            paidAt: new Date(),
+          });
+          changes.push({
+            changeType: 'payment',
+            previousValue: null,
+            newValue: JSON.stringify({ paidAmount, invoiceUrl: trimmedInvoiceUrl }),
+          });
+        }
       }
     }
 
@@ -561,6 +591,34 @@ export async function PATCH(
       }
     }
 
+    // ── Validate: total paid (existing payments + new invoice payment)
+    //    must not exceed the order's fullAmount. The invoice `value` may
+    //    exceed fullAmount (fees, taxes, etc.), but the actual paid amount
+    //    cannot. ──
+    if (Array.isArray(order.payments) && order.payments.length > 0) {
+      const fullAmount = typeof order.fullAmount === 'number' && order.fullAmount > 0
+        ? order.fullAmount
+        : (typeof order.totalAmount === 'number' ? order.totalAmount : 0);
+      if (fullAmount > 0) {
+        const totalPaid = order.payments.reduce((sum, p: { status?: string; orderAmount?: number; amount?: number }) => {
+          if (p.status !== 'paid') return sum;
+          const amt = typeof p.orderAmount === 'number' && p.orderAmount > 0
+            ? p.orderAmount
+            : (typeof p.amount === 'number' ? p.amount : 0);
+          return sum + amt;
+        }, 0);
+        if (totalPaid > fullAmount) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Total paid amount (${totalPaid}) exceeds order total (${fullAmount}). The paid amount cannot be more than the order total.`,
+            },
+            { status: 400 },
+          );
+        }
+      }
+    }
+
     if (changes.length === 0) {
       return NextResponse.json({
         success: true,
@@ -569,16 +627,16 @@ export async function PATCH(
       });
     }
 
-    // ── Auto-update order status from invoices ──────────────────────
-    // When invoices are added or changed, recalculate the order's
-    // financials (which now include confirmed invoice values) and update
-    // the status if the paid amount covers the full order.
+    // ── Auto-update order status from invoices/payments ────────────
+    // When invoices are added or payments are recorded, recalculate the
+    // order's financials and update the status if the paid amount covers
+    // the full order (or part of it).
     // NOTE: paidAmount and remainingAmount are set by the pre('save')
     // hook via calculateOrderFinancials(), so we only handle the status
     // transition here.
-    const INVOICE_CHANGE_TYPES = new Set(['invoice', 'invoiceStatus', 'invoiceValue', 'invoiceImage']);
-    const hasInvoiceChange = changes.some((c) => INVOICE_CHANGE_TYPES.has(c.changeType));
-    if (hasInvoiceChange) {
+    const FINANCIAL_CHANGE_TYPES = new Set(['invoice', 'invoiceStatus', 'invoiceValue', 'invoiceImage', 'payment']);
+    const hasFinancialChange = changes.some((c) => FINANCIAL_CHANGE_TYPES.has(c.changeType));
+    if (hasFinancialChange) {
       const { totalPaid, fullAmount } = calculateOrderFinancials(order);
 
       if (totalPaid > 0 && fullAmount > 0) {

@@ -57,7 +57,9 @@ export function calculateOrderFinancials(order: OrderLite) {
   const fullAmount =
     toPositiveNumber(order.fullAmount) || toPositiveNumber(order.totalAmount);
 
-  // Sum paid payment records (gateway payments)
+  // Sum paid payment records (gateway payments + manual payments).
+  // Invoice uploads with a paidAmount now create a payment entry in
+  // order.payments, so they're counted here.
   const paymentsTotal = (order.payments || []).reduce((sum, payment) => {
     if (payment.status === 'paid') {
       return sum + getPaymentOrderAmount(order, payment);
@@ -66,15 +68,24 @@ export function calculateOrderFinancials(order: OrderLite) {
     return sum;
   }, 0);
 
-  // Sum confirmed invoice values (manual invoice uploads)
-  const confirmedInvoicesTotal = (order.invoiceUrls || []).reduce((sum, invoice) => {
-    if (invoice.invoiceStatus === 'confirmed') {
-      return sum + toPositiveNumber(invoice.value);
-    }
-    return sum;
-  }, 0);
+  // Legacy fallback: if there are NO payment records but there ARE confirmed
+  // invoices, use the confirmed invoice values. This covers old orders
+  // created before payment entries were added for manual invoice uploads.
+  const hasPaymentRecords = (order.payments || []).length > 0;
+  const confirmedInvoicesTotal = !hasPaymentRecords
+    ? (order.invoiceUrls || []).reduce((sum, invoice) => {
+      if (invoice.invoiceStatus === 'confirmed') {
+        return sum + toPositiveNumber(invoice.value);
+      }
+      return sum;
+    }, 0)
+    : 0;
 
-  const totalPaid = paymentsTotal + confirmedInvoicesTotal;
+  // Cap totalPaid at fullAmount — the user cannot pay more than the order
+  // costs. (Invoice `value` may exceed fullAmount due to fees/taxes, but the
+  // actual paid amount is capped.)
+  const rawTotalPaid = paymentsTotal + confirmedInvoicesTotal;
+  const totalPaid = fullAmount > 0 ? Math.min(rawTotalPaid, fullAmount) : rawTotalPaid;
 
   return {
     fullAmount,
