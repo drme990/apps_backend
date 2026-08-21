@@ -287,10 +287,19 @@ export interface IOrder {
    */
   fbPurchaseServerSentAt?: Date;
   tiktokPurchaseServerSentAt?: Date;
+  /** Internal notes appended by the system or admins */
+  internalNotes?: IInternalNote[];
   createdAt?: Date;
   updatedAt?: Date;
   _previousStatus?: OrderStatus;
   _previousExecutionDate?: string;
+}
+
+export interface IInternalNote {
+  text: string;
+  /** Who/what created the note — admin user name or 'system' */
+  author: string;
+  createdAt: Date;
 }
 
 const OrderItemSchema = new mongoose.Schema<IOrderItem>(
@@ -663,6 +672,19 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     },
     location: { type: String, trim: true },
     locale: { type: String, trim: true, default: 'ar' },
+    internalNotes: {
+      type: [
+        new mongoose.Schema(
+          {
+            text: { type: String, required: true, trim: true },
+            author: { type: String, required: true, default: 'system' },
+            createdAt: { type: Date, required: true, default: () => new Date() },
+          },
+          { _id: true, timestamps: false },
+        ),
+      ],
+      default: [],
+    },
   },
   { timestamps: true },
 );

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
-import Order, { type IOrder, type IInvoiceUrl, type OrderStatus } from '@/lib/models/Order';
+import Order, { type IOrder, type IInvoiceUrl, type IPayment, type OrderStatus } from '@/lib/models/Order';
 import OrderChangeHistory, { type IOrderChangeHistory } from '@/lib/models/OrderChangeHistory';
 import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state';
 import { logActivity } from '@/lib/services/logger';
@@ -14,6 +14,8 @@ import {
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
+import Booking from '@/lib/models/Booking';
+import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
 
 const ALLOWED_ORDER_STATUSES = new Set([
   'pending',
@@ -336,6 +338,58 @@ export async function PATCH(
       previousValue: string | null;
       newValue: string | null;
     }> = [];
+    // Track whether any invoice was newly confirmed during this PATCH —
+    // used to recompute the execution date if the day has ended.
+    let invoiceNewlyConfirmed = false;
+
+    // ── Helpers to add/remove payment entries linked to invoices ──
+    // Payments are only recorded for confirmed invoices. When an invoice
+    // is confirmed, a payment entry is added. When it's un-confirmed, the
+    // matching payment is removed so the order's paid amount reverts.
+    const invoicePaymentId = (url: string) => `manual_invoice_${url.slice(-50)}`;
+
+    const addInvoicePayment = (invoice: IInvoiceUrl, paymentMethodOverride?: IPayment['paymentMethod']) => {
+      if (invoice.value <= 0) return;
+      if (!Array.isArray(order.payments)) order.payments = [];
+      const pid = invoicePaymentId(invoice.url);
+      // Don't add duplicate
+      if (order.payments.some((p: IPayment) => p.paymentId === pid)) return;
+      const currency = (invoice.currency || order.currency || 'EGP').toUpperCase();
+      const pm = paymentMethodOverride || (order.paymentMethod || 'bank_transfer') as IPayment['paymentMethod'];
+      order.payments.push({
+        paymentId: pid,
+        easykashOrderId: `manual-invoice-${invoice.url.slice(-50)}`,
+        orderAmount: invoice.value,
+        gatewayAmount: invoice.value,
+        gatewayCurrency: currency,
+        amount: invoice.value,
+        currency,
+        status: 'paid',
+        paymentMethod: pm,
+        createdAt: new Date(),
+        paidAt: new Date(),
+      });
+      changes.push({
+        changeType: 'payment',
+        previousValue: null,
+        newValue: JSON.stringify({ paidAmount: invoice.value, invoiceUrl: invoice.url, currency, paymentMethod: pm }),
+      });
+    };
+
+    const removeInvoicePayment = (invoice: IInvoiceUrl) => {
+      if (!Array.isArray(order.payments)) return;
+      const pid = invoicePaymentId(invoice.url);
+      const idx = order.payments.findIndex((p: IPayment) => p.paymentId === pid);
+      if (idx >= 0) {
+        const removed = order.payments[idx];
+        order.payments.splice(idx, 1);
+        changes.push({
+          changeType: 'payment',
+          previousValue: JSON.stringify({ paidAmount: removed.amount, invoiceUrl: invoice.url, currency: removed.currency }),
+          newValue: null,
+        });
+      }
+    };
 
     if (
       typeof body.sacrificeFor === 'string' &&
@@ -431,7 +485,6 @@ export async function PATCH(
     if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
       const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
-      const paidAmount = typeof body.invoicePaidAmount === 'number' ? body.invoicePaidAmount : 0;
       const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
       const rawStatus = body.invoiceStatus;
       const invoiceStatus =
@@ -440,12 +493,27 @@ export async function PATCH(
           : 'waiting';
       const rejectionReason =
         typeof body.rejectionReason === 'string' ? body.rejectionReason.trim() : '';
+      // Payment method selected by the admin in the upload modal
+      const VALID_PAYMENT_METHODS = [
+        'easykash', 'insta_pay', 'vodafone_cash', 'bank_transfer', 'paypal', 'binance',
+        'card', 'wallet', 'fawry', 'meeza', 'valu', 'other',
+      ] as const;
+      const rawMethod = body.invoicePaymentMethod;
+      const paymentMethod =
+        typeof rawMethod === 'string' && VALID_PAYMENT_METHODS.includes(rawMethod as (typeof VALID_PAYMENT_METHODS)[number])
+          ? (rawMethod as (typeof VALID_PAYMENT_METHODS)[number])
+          : (order.paymentMethod || 'bank_transfer') as typeof VALID_PAYMENT_METHODS[number];
+      // Invoice currency (may differ from order currency)
+      const invoiceCurrency =
+        typeof body.invoiceCurrency === 'string' && body.invoiceCurrency.trim()
+          ? body.invoiceCurrency.trim().toUpperCase()
+          : (order.currency || 'EGP').toUpperCase();
       if (!Array.isArray(order.invoiceUrls)) {
         order.invoiceUrls = [];
       }
       const alreadyExists = order.invoiceUrls.some((entry: IInvoiceUrl) => entry.url === trimmedInvoiceUrl);
       if (!alreadyExists) {
-        const newEntry: IInvoiceUrl = { url: trimmedInvoiceUrl, invoiceStatus, rejectionReason, value };
+        const newEntry: IInvoiceUrl = { url: trimmedInvoiceUrl, invoiceStatus, rejectionReason, value, currency: invoiceCurrency };
         order.invoiceUrls.push(newEntry);
         changes.push({
           changeType: 'invoice',
@@ -453,35 +521,18 @@ export async function PATCH(
           newValue: JSON.stringify(newEntry),
         });
 
-        // ── If the invoice has a paid amount, record it as a new manual
-        //    payment entry in order.payments. This makes the payment visible
-        //    in the Payment Timeline and ensures calculateOrderFinancials
-        //    counts it. The payment is recorded regardless of invoice
-        //    confirmation status — paidAmount means the customer actually
-        //    paid, independent of invoice document review. ──
-        if (paidAmount > 0) {
-          if (!Array.isArray(order.payments)) {
-            order.payments = [];
-          }
-          const orderCurrency = (order.currency || 'EGP').toUpperCase();
-          order.payments.push({
-            paymentId: `manual_invoice_${Date.now()}`,
-            easykashOrderId: `manual-invoice-${Date.now()}`,
-            orderAmount: paidAmount,
-            gatewayAmount: paidAmount,
-            gatewayCurrency: orderCurrency,
-            amount: paidAmount,
-            currency: orderCurrency,
-            status: 'paid',
-            paymentMethod: order.paymentMethod || 'bank_transfer',
-            createdAt: new Date(),
-            paidAt: new Date(),
-          });
-          changes.push({
-            changeType: 'payment',
-            previousValue: null,
-            newValue: JSON.stringify({ paidAmount, invoiceUrl: trimmedInvoiceUrl }),
-          });
+        // Track if this new invoice is confirmed — used to recompute
+        // the execution date if the day has ended.
+        if (invoiceStatus === 'confirmed') {
+          invoiceNewlyConfirmed = true;
+        }
+
+        // ── Only record a payment entry when the invoice is confirmed.
+        //    If the invoice is waiting/pending/rejected, the paid amount
+        //    is NOT added to the order — it will be added later when the
+        //    invoice status changes to "confirmed". ──
+        if (invoiceStatus === 'confirmed') {
+          addInvoicePayment(newEntry, paymentMethod);
         }
       }
     }
@@ -534,6 +585,17 @@ export async function PATCH(
                 previousValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: prevEntry.invoiceStatus, rejectionReason: prevEntry.rejectionReason }),
                 newValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: nextEntry.invoiceStatus, rejectionReason: nextEntry.rejectionReason }),
               });
+              // Track transition to 'confirmed'
+              if (nextEntry.invoiceStatus === 'confirmed' && prevEntry.invoiceStatus !== 'confirmed') {
+                invoiceNewlyConfirmed = true;
+                // Add payment for newly confirmed invoice
+                addInvoicePayment(nextEntry);
+              }
+              // Track transition FROM 'confirmed' to non-confirmed
+              if (prevEntry.invoiceStatus === 'confirmed' && nextEntry.invoiceStatus !== 'confirmed') {
+                // Remove the payment linked to this invoice
+                removeInvoicePayment(prevEntry);
+              }
             }
 
             if (prevEntry.value !== nextEntry.value || prevEntry.currency !== nextEntry.currency) {
@@ -558,6 +620,17 @@ export async function PATCH(
                   previousValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: prevEntry.invoiceStatus, rejectionReason: prevEntry.rejectionReason }),
                   newValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: nextEntry.invoiceStatus, rejectionReason: nextEntry.rejectionReason }),
                 });
+                // Track transition to 'confirmed'
+                if (nextEntry.invoiceStatus === 'confirmed' && prevEntry.invoiceStatus !== 'confirmed') {
+                  invoiceNewlyConfirmed = true;
+                  // Add payment for newly confirmed invoice
+                  addInvoicePayment(nextEntry);
+                }
+                // Track transition FROM 'confirmed' to non-confirmed
+                if (prevEntry.invoiceStatus === 'confirmed' && nextEntry.invoiceStatus !== 'confirmed') {
+                  // Remove the payment linked to this invoice
+                  removeInvoicePayment(prevEntry);
+                }
               }
 
               if (prevEntry.value !== nextEntry.value || prevEntry.currency !== nextEntry.currency) {
@@ -587,39 +660,20 @@ export async function PATCH(
                 previousValue: JSON.stringify(prevEntry),
                 newValue: null,
               });
+              // If the removed invoice was confirmed, remove its payment too
+              if (prevEntry.invoiceStatus === 'confirmed') {
+                removeInvoicePayment(prevEntry);
+              }
             }
           }
         }
       }
     }
 
-    // ── Validate: total paid (existing payments + new invoice payment)
-    //    must not exceed the order's fullAmount. The invoice `value` may
-    //    exceed fullAmount (fees, taxes, etc.), but the actual paid amount
-    //    cannot. ──
-    if (Array.isArray(order.payments) && order.payments.length > 0) {
-      const fullAmount = typeof order.fullAmount === 'number' && order.fullAmount > 0
-        ? order.fullAmount
-        : (typeof order.totalAmount === 'number' ? order.totalAmount : 0);
-      if (fullAmount > 0) {
-        const totalPaid = order.payments.reduce((sum, p: { status?: string; orderAmount?: number; amount?: number }) => {
-          if (p.status !== 'paid') return sum;
-          const amt = typeof p.orderAmount === 'number' && p.orderAmount > 0
-            ? p.orderAmount
-            : (typeof p.amount === 'number' ? p.amount : 0);
-          return sum + amt;
-        }, 0);
-        if (totalPaid > fullAmount) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Total paid amount (${totalPaid}) exceeds order total (${fullAmount}). The paid amount cannot be more than the order total.`,
-            },
-            { status: 400 },
-          );
-        }
-      }
-    }
+    // NOTE: The total paid amount is allowed to exceed the order's
+    // fullAmount — invoices may include fees, taxes, or tips that make
+    // the paid amount larger than the order total. The order is simply
+    // marked as "paid" when totalPaid >= fullAmount.
 
     if (changes.length === 0) {
       return NextResponse.json({
@@ -641,7 +695,7 @@ export async function PATCH(
     if (hasFinancialChange) {
       const { totalPaid, fullAmount } = calculateOrderFinancials(order);
 
-      if (totalPaid > 0 && fullAmount > 0) {
+      if (fullAmount > 0) {
         const previousStatus = order.status;
         if (totalPaid >= fullAmount) {
           // Paid amount covers the full order → mark as paid
@@ -649,11 +703,20 @@ export async function PATCH(
           if (order.status === 'partial-paid' || order.status === 'pending') {
             order.status = 'paid';
           }
-        } else if (totalPaid < fullAmount) {
-          // Paid amount covers part of the order → mark as partial-paid
+        } else if (totalPaid > 0) {
+          // Paid amount covers part of the order → mark as partial-paid.
+          // This also handles the case where a previously "paid" order
+          // drops back to partial-paid (e.g. an invoice was un-confirmed
+          // and its payment was removed).
           order.isPartialPayment = true;
-          if (order.status === 'pending') {
+          if (order.status === 'pending' || order.status === 'paid') {
             order.status = 'partial-paid';
+          }
+        } else {
+          // No paid amount at all → revert to pending
+          order.isPartialPayment = false;
+          if (order.status === 'paid' || order.status === 'partial-paid') {
+            order.status = 'pending';
           }
         }
 
@@ -690,6 +753,56 @@ export async function PATCH(
             });
           }
         }
+      }
+    }
+
+    // ── Recompute execution date when an invoice is newly confirmed ──
+    // Only recompute if ALL invoices on the order are confirmed. If any
+    // invoice is still waiting/pending/rejected, the order is not yet
+    // ready for execution and the date should not change.
+    // If the confirmation happens after the day's cutoff time, the order
+    // cannot be processed on that day and must roll to the next.
+    const allInvoicesConfirmed =
+      invoiceNewlyConfirmed &&
+      Array.isArray(order.invoiceUrls) &&
+      order.invoiceUrls.length > 0 &&
+      order.invoiceUrls.every((inv: IInvoiceUrl) => inv.invoiceStatus === 'confirmed');
+
+    if (allInvoicesConfirmed) {
+      try {
+        const booking = await Booking.findOne({ key: 'global' }).lean();
+        if (booking) {
+          const newDate = recomputeExecutionDateOnInvoiceConfirmed(
+            { reservationData },
+            booking,
+          );
+          if (newDate) {
+            const reservation = reservationData.find((r) => r.key === 'executionDate');
+            if (reservation) {
+              const previousDate = reservation.value || null;
+              reservation.value = newDate;
+              changes.push({
+                changeType: 'executionDate',
+                previousValue: previousDate,
+                newValue: newDate,
+              });
+              // Add an internal note documenting the date change
+              if (!Array.isArray(order.internalNotes)) {
+                order.internalNotes = [];
+              }
+              order.internalNotes.push({
+                text: `Execution date changed from ${previousDate} to ${newDate} due to invoice confirmation after day end.`,
+                author: 'system',
+                createdAt: new Date(),
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error(
+          `[admin PATCH] Failed to recompute execution date on invoice confirmation for ${order.orderNumber}:`,
+          err instanceof Error ? err.message : err,
+        );
       }
     }
 

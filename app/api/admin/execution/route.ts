@@ -195,6 +195,22 @@ export async function GET(request: NextRequest) {
       prePipeline.push({ $match: searchMatch });
     }
 
+    // 1e. Invoice filter:
+    //     - Orders with NO invoices → show normally
+    //     - Orders with invoices → ALL invoices must be "confirmed"
+    //     - If any invoice is not confirmed → exclude the order
+    //
+    //     $not: { $elemMatch: { invoiceStatus: { $ne: 'confirmed' } } }
+    //     means "no element has invoiceStatus != 'confirmed'".
+    //     For empty/missing arrays $elemMatch fails → $not succeeds → included.
+    prePipeline.push({
+      $match: {
+        invoiceUrls: {
+          $not: { $elemMatch: { invoiceStatus: { $ne: 'confirmed' } } },
+        },
+      },
+    });
+
     prePipeline.push(
       // 2. Safely extract executionDate.value from reservationData using $reduce.
       {
@@ -272,6 +288,7 @@ export async function GET(request: NextRequest) {
           invoiceUrls: 1,
           designUrls: 1,
           payments: 1,
+          internalNotes: 1,
         },
       },
 

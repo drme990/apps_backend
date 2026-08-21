@@ -139,6 +139,17 @@ export async function GET(request: NextRequest) {
         ]
         : []),
       ...(country && country !== 'all' ? [{ $match: { 'billingData.country': { $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } } }] : []),
+      // Invoice filter: same as the main execution route.
+      // - No invoices → show normally
+      // - Has invoices → ALL must be "confirmed"
+      // - Any not confirmed → excluded
+      {
+        $match: {
+          invoiceUrls: {
+            $not: { $elemMatch: { invoiceStatus: { $ne: 'confirmed' } } },
+          },
+        },
+      },
       // Compute executionDateValue from reservationData
       {
         $addFields: {

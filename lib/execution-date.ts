@@ -349,6 +349,75 @@ export function recomputeOrderExecutionDate(
 }
 
 /**
+ * Recompute an order's execution date when its invoice is confirmed.
+ *
+ * The invoice confirmation is the moment the order becomes "ready" for
+ * execution. If the confirmation happens after the day's cutoff time,
+ * the order cannot be processed on that day and must roll to the next.
+ *
+ * Rules:
+ * 1. The relevant moment is "now" (when the admin confirms the invoice).
+ * 2. Use the order's current execution date as the base.
+ * 3. If the current time is at or after the cutoff on the execution date,
+ *    push to the next day.
+ * 4. Skip any blocked dates.
+ * 5. Never move the date backwards — only forward.
+ */
+export function recomputeExecutionDateOnInvoiceConfirmed(
+  order: Pick<IOrder, 'reservationData'>,
+  booking: IBooking,
+): string | null {
+  // Extract the current execution date from reservationData
+  const currentExecutionDate = (order.reservationData || [])
+    .find((r) => r.key === 'executionDate')?.value;
+  if (!currentExecutionDate || !/^\d{4}-\d{2}-\d{2}$/.test(currentExecutionDate)) {
+    return null;
+  }
+
+  const now = new Date();
+  const nowEgyptDate = getEgyptDateString(now);
+
+  // If the execution date is in the future relative to today, keep it —
+  // the order is already scheduled for a future day and confirming the
+  // invoice doesn't change that.
+  if (currentExecutionDate > nowEgyptDate) {
+    return null;
+  }
+
+  // Check if "now" is at or after the cutoff on the execution date.
+  // If the execution date is today (or past), evaluate the cutoff on it.
+  const afterCutoff = isRefAtOrAfterCutoff(
+    booking.cutoffTime,
+    currentExecutionDate,
+    now,
+  );
+
+  if (!afterCutoff) {
+    // Still before cutoff on the execution date — keep the date as is.
+    return null;
+  }
+
+  // Push to the next day and skip blocked dates
+  const blockedDates = new Set(
+    (booking.blockedExecutionDates || []).filter((d) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(d),
+    ),
+  );
+
+  let candidate = addDays(currentExecutionDate, 1);
+  candidate = skipBlockedDates(candidate, blockedDates);
+
+  // Also respect the global default execution date (can't execute before today)
+  if (booking.defaultExecutionDate && candidate < booking.defaultExecutionDate) {
+    candidate = booking.defaultExecutionDate;
+    candidate = skipBlockedDates(candidate, blockedDates);
+  }
+
+  if (candidate === currentExecutionDate) return null;
+  return candidate;
+}
+
+/**
  * Update an order's reservationData with the recomputed execution date.
  * Mutates the order document in place (Mongoose subdocuments are mutable arrays).
  * Returns the new execution date or null if no change was needed.
