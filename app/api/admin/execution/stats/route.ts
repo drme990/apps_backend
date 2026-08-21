@@ -230,13 +230,21 @@ export async function GET(request: NextRequest) {
           color: { $arrayElemAt: ['$categoryInfo.color', 0] },
         },
       },
-      // Group by category + product + size to get per-product/size counts
+      // Group by category + product + size to get per-product/size counts.
+      // Normalize productId to string — items.productId is Mixed type
+      // (string OR ObjectId), and MongoDB treats them as different values,
+      // causing the same product to appear as duplicate groups.
       {
         $group: {
           _id: {
             categoryId: { $ifNull: ['$categoryId', '__uncategorized__'] },
-            productId: '$items.productId',
-            sizeKey: { $ifNull: ['$items.sizeName', '$items.sizeLabel', '$items.size', null] },
+            productId: { $toString: '$items.productId' },
+            sizeKey: {
+              $ifNull: [
+                '$items.sizeName',
+                { $ifNull: ['$items.sizeLabel', '$items.size'] },
+              ],
+            },
           },
           quantity: { $sum: '$items.quantity' },
           productNameAr: { $first: '$items.productName.ar' },

@@ -1144,7 +1144,7 @@ export async function POST(request: NextRequest) {
 
     const orderItemsPayload = [
       {
-        productId: product._id.toString(),
+        productId: product._id,
         productSlug: product.slug,
         productName: { ar: product.name.ar, en: product.name.en },
         price: unitPrice,
@@ -1162,7 +1162,7 @@ export async function POST(request: NextRequest) {
     if (recommendedProduct && recommendedProductPrice > 0) {
       const recSize = recommendedProduct.sizes[0];
       orderItemsPayload.push({
-        productId: recommendedProduct._id.toString(),
+        productId: recommendedProduct._id,
         productSlug: recommendedProduct.slug,
         productName: {
           ar: recommendedProduct.name.ar,

@@ -338,7 +338,7 @@ export async function POST(request: NextRequest) {
       totalAmount += itemTotal;
 
       orderItemsPayload.push({
-        productId: product._id.toString(),
+        productId: product._id,
         productSlug: product.slug,
         productName: { ar: product.name.ar, en: product.name.en },
         price: unitPrice,
