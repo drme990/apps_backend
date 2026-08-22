@@ -32,16 +32,45 @@ function addDays(dateStr: string, days: number): string {
 }
 
 /**
+ * Get the current time in Egypt as HH:mm.
+ */
+function getEgyptNowTime(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: EGYPT_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return formatter.format(now);
+}
+
+/**
+ * Compare two HH:mm time strings.
+ * Returns: negative if a < b, 0 if equal, positive if a > b.
+ */
+function compareTimeStrings(a: string, b: string): number {
+  const [ah, am] = a.split(':').map(Number);
+  const [bh, bm] = b.split(':').map(Number);
+  return (ah * 60 + am) - (bh * 60 + bm);
+}
+
+/**
  * Check if the current time is at or after the cutoff on the given execution date.
  *
- * cutoffTime is HH:mm (e.g. "02:00").
+ * cutoffTime is HH:mm (e.g. "02:00") in Egypt local time.
  * baseDate is the execution date (YYYY-MM-DD).
  *
- * Constructs "baseDate T cutoffTime +02:00" as an absolute Egypt datetime
- * and compares against the current real time.
+ * Instead of constructing an absolute timestamp with a hardcoded offset
+ * (which breaks during DST), we compare in Egypt local time directly:
+ * - Get the current Egypt date and time
+ * - If today's Egypt date > baseDate → the day has fully passed → after cutoff
+ * - If today's Egypt date == baseDate → compare times: if now >= cutoff → after cutoff
+ * - If today's Egypt date < baseDate → before cutoff
  *
- * Example: today=23rd 21:50, cutoff="02:00", baseDate="2026-06-24"
- *   → compare now vs "2026-06-24T02:00:00+02:00" → false (still before cutoff)
+ * This correctly handles Egypt's DST transitions (UTC+2 in winter, UTC+3 in summer)
+ * because Intl.DateTimeFormat with timeZone: 'Africa/Cairo' always returns the
+ * correct local time regardless of the UTC offset.
  */
 function isAtOrAfterCutoff(
   cutoffTime: string | null | undefined,
@@ -49,12 +78,16 @@ function isAtOrAfterCutoff(
 ): boolean {
   if (!cutoffTime || !baseDate) return false;
 
-  const iso = `${baseDate}T${cutoffTime}:00+02:00`;
-  const cutoffDate = new Date(iso);
-  if (Number.isNaN(cutoffDate.getTime())) return false;
+  const egyptToday = getEgyptToday();
+  const egyptNowTime = getEgyptNowTime();
 
-  const now = new Date();
-  return now.getTime() >= cutoffDate.getTime();
+  // If the current Egypt date is past the base date, the cutoff has passed
+  if (egyptToday > baseDate) return true;
+  // If the current Egypt date is before the base date, cutoff hasn't reached
+  if (egyptToday < baseDate) return false;
+
+  // Same day — compare times
+  return compareTimeStrings(egyptNowTime, cutoffTime) >= 0;
 }
 
 /**
@@ -140,10 +173,10 @@ function isDayEndedYesterday(
  * 1. Start from the stored defaultExecutionDate, or tomorrow if none.
  * 2. If the stored date is strictly in the past (< today), catch up to today
  *    so we evaluate the cutoff on today's execution date.
- * 3. Apply the cutoff ON the current execution date (base). If the current time
- *    has reached or passed the cutoff on base, advance to the next day.
- *    The cutoff is always evaluated relative to the execution date itself,
- *    not to "today" as a separate concept.
+ * 3. Apply the cutoff ON the current execution date (base). If the current
+ *    Egypt local time has reached or passed the cutoff on base, advance to
+ *    the next day. The cutoff is evaluated in Egypt local time (Africa/Cairo)
+ *    to correctly handle DST transitions (UTC+2 winter, UTC+3 summer).
  * 4. Skip any blocked dates.
  * 5. If the admin manually ended the day today → push one more day forward.
  */
@@ -167,11 +200,13 @@ export function computeDefaultExecutionDate(
     base = today;
   }
 
-  // The cutoff is applied ON the execution date (base).
-  // Example: base=2026-06-25, cutoff=02:00, now=2026-06-25 01:00
-  //   → compare now vs 2026-06-25T02:00:00+02:00 → false → keep 2026-06-25
-  // Example: base=2026-06-25, cutoff=04:00, now=2026-06-25 05:00
-  //   → compare now vs 2026-06-25T04:00:00+02:00 → true → advance to 2026-06-26
+  // The cutoff is applied ON the execution date (base), in Egypt local time.
+  // Example: base=2026-06-25, cutoff=02:00, Egypt now=2026-06-25 01:00
+  //   → same day, 01:00 < 02:00 → false → keep 2026-06-25
+  // Example: base=2026-06-25, cutoff=02:00, Egypt now=2026-06-25 02:30
+  //   → same day, 02:30 >= 02:00 → true → advance to 2026-06-26
+  // Example: base=2026-06-25, cutoff=02:00, Egypt now=2026-06-26 00:00
+  //   → Egypt date > base → true → advance to 2026-06-26
   if (isAtOrAfterCutoff(booking.cutoffTime, base)) {
     base = addDays(base, 1);
   }
@@ -259,9 +294,12 @@ export async function refreshDefaultExecutionDateCache(): Promise<string> {
 /**
  * Check if the given reference time is at or after the cutoff on the given date.
  *
- * cutoffTime is HH:mm (e.g. "02:00").
+ * cutoffTime is HH:mm (e.g. "02:00") in Egypt local time.
  * baseDate is YYYY-MM-DD.
- * refTime is a Date instance in any timezone (we compare absolute timestamps).
+ * refTime is a Date instance (any timezone — we convert to Egypt time).
+ *
+ * Uses the same DST-safe approach as isAtOrAfterCutoff: convert refTime to
+ * Egypt local date + time, then compare.
  */
 function isRefAtOrAfterCutoff(
   cutoffTime: string | null | undefined,
@@ -270,11 +308,21 @@ function isRefAtOrAfterCutoff(
 ): boolean {
   if (!cutoffTime || !baseDate) return false;
 
-  const iso = `${baseDate}T${cutoffTime}:00+02:00`;
-  const cutoffDate = new Date(iso);
-  if (Number.isNaN(cutoffDate.getTime())) return false;
+  const refEgyptDate = getEgyptDateString(refTime);
+  const refEgyptTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: EGYPT_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(refTime);
 
-  return refTime.getTime() >= cutoffDate.getTime();
+  // If the reference date is past the base date, the cutoff has passed
+  if (refEgyptDate > baseDate) return true;
+  // If the reference date is before the base date, cutoff hasn't reached
+  if (refEgyptDate < baseDate) return false;
+
+  // Same day — compare times
+  return compareTimeStrings(refEgyptTime, cutoffTime) >= 0;
 }
 
 /**
