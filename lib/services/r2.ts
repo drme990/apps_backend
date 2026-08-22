@@ -10,6 +10,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { Readable } from 'node:stream';
+import { randomBytes } from 'node:crypto';
 
 const accountId = process.env.R2_ACCOUNT_ID;
 const accessKeyId = process.env.R2_ACCESS_KEY_ID;
@@ -27,8 +28,20 @@ function sanitizeObjectName(name: string): string {
   return name.replace(/[^a-zA-Z0-9.-]/g, '');
 }
 
+/**
+ * Build a unique R2 object key.
+ *
+ * Format: `{folder}/{timestamp}-{random8}-{sanitized-name}`
+ *
+ * The timestamp (ms since epoch) gives chronological ordering and
+ * human-readability. The 8-char random hex component eliminates any
+ * collision risk when multiple uploads happen in the same millisecond
+ * (e.g. parallel reservation photo uploads from checkout, or concurrent
+ * admin uploads from different sessions).
+ */
 function buildObjectKey(folder: string, name: string): string {
-  return `${folder}/${Date.now()}-${sanitizeObjectName(name)}`;
+  const random = randomBytes(4).toString('hex');
+  return `${folder}/${Date.now()}-${random}-${sanitizeObjectName(name)}`;
 }
 
 export const s3Client = new S3Client({
@@ -188,7 +201,7 @@ export const generatePresignedUploadUrl = async (
     throw new Error('R2 credentials are missing');
   }
 
-  const key = `${folder}/${Date.now()}-${fileName.replace(/[^a-zA-Z0-9.-]/g, '')}`;
+  const key = buildObjectKey(folder, fileName);
 
   const command = new PutObjectCommand({
     Bucket: bucketName,
