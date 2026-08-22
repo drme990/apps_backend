@@ -21,23 +21,50 @@ function normalizeBlockedDates(input: unknown): string[] {
   return Array.from(new Set(normalized)).sort();
 }
 
-function isCurrentEgyptDay(dateIso: string): boolean {
+/**
+ * Get the effective UTC offset in minutes for Egypt, respecting the
+ * manual summer-time override.
+ */
+function getEgyptOffsetMinutes(summerTime: boolean | null | undefined): number {
+  if (summerTime === true) return 180;
+  if (summerTime === false) return 120;
+  // Auto-detect
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Cairo',
+    timeZoneName: 'shortOffset',
+  }).formatToParts(now);
+  const offsetPart = parts.find((p) => p.type === 'timeZoneName');
+  if (offsetPart) {
+    const match = offsetPart.value.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (match) {
+      const sign = match[1] === '+' ? 1 : -1;
+      const hours = parseInt(match[2], 10);
+      const minutes = match[3] ? parseInt(match[3], 10) : 0;
+      return sign * (hours * 60 + minutes);
+    }
+  }
+  return 120;
+}
+
+function toEgyptDateString(date: Date, summerTime: boolean | null | undefined): string {
+  const offsetMs = getEgyptOffsetMinutes(summerTime) * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+  const y = local.getUTCFullYear();
+  const m = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(local.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isCurrentEgyptDay(
+  dateIso: string,
+  summerTime: boolean | null | undefined = undefined,
+): boolean {
   const date = new Date(dateIso);
   if (Number.isNaN(date.getTime())) return false;
 
-  const egyptToday = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Africa/Cairo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-
-  const dateEgypt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Africa/Cairo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
+  const egyptToday = toEgyptDateString(new Date(), summerTime);
+  const dateEgypt = toEgyptDateString(date, summerTime);
 
   return dateEgypt === egyptToday;
 }
@@ -71,6 +98,7 @@ export async function GET() {
         cutoffTime: normalizedCutoff ?? getDefaultCutoffTime(),
         lastDayEndAt: booking?.lastDayEndAt ?? null,
         defaultExecutionDate: booking?.defaultExecutionDate ?? null,
+        summerTimeEnabled: booking?.summerTimeEnabled ?? false,
       },
     });
   } catch (error) {
@@ -125,7 +153,11 @@ export async function PUT(request: NextRequest) {
         }
         update.lastDayEndAt = null;
       } else {
-        if (!isCurrentEgyptDay(body.lastDayEndAt)) {
+        // Fetch current booking to get summerTimeEnabled for correct
+        // Egypt day validation
+        const currentForCheck = await Booking.findOne({ key: 'global' }).lean();
+        const summerTime = currentForCheck?.summerTimeEnabled;
+        if (!isCurrentEgyptDay(body.lastDayEndAt, summerTime)) {
           return NextResponse.json(
             {
               success: false,
@@ -135,10 +167,8 @@ export async function PUT(request: NextRequest) {
           );
         }
         // END DAY: save current defaultExecutionDate to prevDay, then advance +1
-        const current = await Booking.findOne({ key: 'global' }).lean();
-        const today = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'Africa/Cairo',
-        }).format(new Date());
+        const current = currentForCheck;
+        const today = toEgyptDateString(new Date(), summerTime);
         const addOneDay = (d: string) => {
           const [y, m, day] = d.split('-').map(Number);
           const date = new Date(Date.UTC(y, m - 1, day));
@@ -155,9 +185,9 @@ export async function PUT(request: NextRequest) {
     }
 
     if (body.defaultExecutionDate !== undefined) {
-      const today = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Africa/Cairo',
-      }).format(new Date());
+      const currentForDate = await Booking.findOne({ key: 'global' }).lean();
+      const summerTime = currentForDate?.summerTimeEnabled;
+      const today = toEgyptDateString(new Date(), summerTime);
       const addOneDay = (d: string) => {
         const [y, m, day] = d.split('-').map(Number);
         const date = new Date(Date.UTC(y, m - 1, day));
@@ -184,6 +214,10 @@ export async function PUT(request: NextRequest) {
       update.prevDay = body.prevDay;
     }
 
+    if (body.summerTimeEnabled !== undefined) {
+      update.summerTimeEnabled = body.summerTimeEnabled;
+    }
+
     if (Object.keys(update).length === 0) {
       return NextResponse.json(
         { success: false, error: 'No fields to update' },
@@ -192,7 +226,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Always ensure the document exists
-    let existing = await Booking.findOne({ key: 'global' }).lean();
+    const existing = await Booking.findOne({ key: 'global' }).lean();
     if (!existing) {
       await Booking.create({ key: 'global' });
     }
@@ -229,6 +263,7 @@ export async function PUT(request: NextRequest) {
         cutoffTime: parseCutoffTime(booking?.cutoffTime ?? '') ?? getDefaultCutoffTime(),
         lastDayEndAt: booking?.lastDayEndAt ?? null,
         defaultExecutionDate: booking?.defaultExecutionDate ?? null,
+        summerTimeEnabled: booking?.summerTimeEnabled ?? false,
       },
     });
   } catch (error) {

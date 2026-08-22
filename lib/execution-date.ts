@@ -5,17 +5,80 @@ import type { IOrder } from '@/lib/models/Order';
 const EGYPT_TIMEZONE = 'Africa/Cairo';
 
 /**
+ * Summer-time override type.
+ *
+ * - `true`  → force UTC+3 (Egypt DST / summer time)
+ * - `false` → force UTC+2 (Egypt standard time)
+ * - `null`/`undefined` → auto-detect using the `Africa/Cairo` IANA
+ *   timezone (which follows the OS tzdata).
+ */
+type SummerTimeOverride = boolean | null | undefined;
+
+/**
+ * Get the effective UTC offset in minutes for Egypt, respecting the
+ * manual summer-time override.
+ *
+ * - `true`  → 180 (UTC+3)
+ * - `false` → 120 (UTC+2)
+ * - `null`/`undefined` → auto-detect from `Africa/Cairo` IANA timezone
+ */
+function getEgyptOffsetMinutes(summerTime: SummerTimeOverride): number {
+  if (summerTime === true) return 180;
+  if (summerTime === false) return 120;
+
+  // Auto-detect: use Intl to find the current offset for Africa/Cairo.
+  // This respects the system's tzdata, which may or may not include
+  // Egypt's latest DST decision.
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: EGYPT_TIMEZONE,
+    timeZoneName: 'shortOffset',
+  }).formatToParts(now);
+  const offsetPart = parts.find((p) => p.type === 'timeZoneName');
+  if (offsetPart) {
+    // Parse "GMT+3" or "GMT+02:00" etc.
+    const match = offsetPart.value.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (match) {
+      const sign = match[1] === '+' ? 1 : -1;
+      const hours = parseInt(match[2], 10);
+      const minutes = match[3] ? parseInt(match[3], 10) : 0;
+      return sign * (hours * 60 + minutes);
+    }
+  }
+  // Fallback: assume standard time (UTC+2)
+  return 120;
+}
+
+/**
+ * Convert a Date to a YYYY-MM-DD string in Egypt time, respecting the
+ * summer-time override.
+ */
+function toEgyptDateString(date: Date, summerTime: SummerTimeOverride): string {
+  const offsetMs = getEgyptOffsetMinutes(summerTime) * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+  const y = local.getUTCFullYear();
+  const m = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(local.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Convert a Date to an HH:mm string in Egypt time, respecting the
+ * summer-time override.
+ */
+function toEgyptTimeString(date: Date, summerTime: SummerTimeOverride): string {
+  const offsetMs = getEgyptOffsetMinutes(summerTime) * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+  const h = String(local.getUTCHours()).padStart(2, '0');
+  const m = String(local.getUTCMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+/**
  * Get the current date in Egypt as a YYYY-MM-DD string.
  */
-function getEgyptToday(): string {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: EGYPT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  return formatter.format(now);
+function getEgyptToday(summerTime: SummerTimeOverride = undefined): string {
+  return toEgyptDateString(new Date(), summerTime);
 }
 
 /**
@@ -34,15 +97,8 @@ function addDays(dateStr: string, days: number): string {
 /**
  * Get the current time in Egypt as HH:mm.
  */
-function getEgyptNowTime(): string {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: EGYPT_TIMEZONE,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  return formatter.format(now);
+function getEgyptNowTime(summerTime: SummerTimeOverride = undefined): string {
+  return toEgyptTimeString(new Date(), summerTime);
 }
 
 /**
@@ -75,11 +131,12 @@ function compareTimeStrings(a: string, b: string): number {
 function isAtOrAfterCutoff(
   cutoffTime: string | null | undefined,
   baseDate: string,
+  summerTime: SummerTimeOverride = undefined,
 ): boolean {
   if (!cutoffTime || !baseDate) return false;
 
-  const egyptToday = getEgyptToday();
-  const egyptNowTime = getEgyptNowTime();
+  const egyptToday = getEgyptToday(summerTime);
+  const egyptNowTime = getEgyptNowTime(summerTime);
 
   // If the current Egypt date is past the base date, the cutoff has passed
   if (egyptToday > baseDate) return true;
@@ -129,18 +186,16 @@ export function skipBlockedDates(
 /**
  * Check if lastDayEndAt is for the current Egypt day.
  */
-function isDayEndedToday(lastDayEndAt: string | null | undefined): boolean {
+function isDayEndedToday(
+  lastDayEndAt: string | null | undefined,
+  summerTime: SummerTimeOverride = undefined,
+): boolean {
   if (!lastDayEndAt) return false;
   const endedDate = new Date(lastDayEndAt);
   if (Number.isNaN(endedDate.getTime())) return false;
 
-  const egyptToday = getEgyptToday();
-  const endedEgyptDate = new Intl.DateTimeFormat('en-CA', {
-    timeZone: EGYPT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(endedDate);
+  const egyptToday = getEgyptToday(summerTime);
+  const endedEgyptDate = toEgyptDateString(endedDate, summerTime);
 
   return endedEgyptDate === egyptToday;
 }
@@ -150,18 +205,14 @@ function isDayEndedToday(lastDayEndAt: string | null | undefined): boolean {
  */
 function isDayEndedYesterday(
   lastDayEndAt: string | null | undefined,
+  summerTime: SummerTimeOverride = undefined,
 ): boolean {
   if (!lastDayEndAt) return false;
   const endedDate = new Date(lastDayEndAt);
   if (Number.isNaN(endedDate.getTime())) return false;
 
-  const egyptToday = getEgyptToday();
-  const endedEgyptDate = new Intl.DateTimeFormat('en-CA', {
-    timeZone: EGYPT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(endedDate);
+  const egyptToday = getEgyptToday(summerTime);
+  const endedEgyptDate = toEgyptDateString(endedDate, summerTime);
 
   return endedEgyptDate < egyptToday;
 }
@@ -181,9 +232,10 @@ function isDayEndedYesterday(
  * 5. If the admin manually ended the day today → push one more day forward.
  */
 export function computeDefaultExecutionDate(
-  booking: Pick<IBooking, 'cutoffTime' | 'lastDayEndAt' | 'blockedExecutionDates' | 'defaultExecutionDate' | 'prevDay'>,
+  booking: Pick<IBooking, 'cutoffTime' | 'lastDayEndAt' | 'blockedExecutionDates' | 'defaultExecutionDate' | 'prevDay' | 'summerTimeEnabled'>,
 ): string {
-  const today = getEgyptToday();
+  const summerTime = booking.summerTimeEnabled;
+  const today = getEgyptToday(summerTime);
   const tomorrow = addDays(today, 1);
   const blockedDates = new Set(
     (booking.blockedExecutionDates ?? []).filter((d) =>
@@ -207,7 +259,7 @@ export function computeDefaultExecutionDate(
   //   → same day, 02:30 >= 02:00 → true → advance to 2026-06-26
   // Example: base=2026-06-25, cutoff=02:00, Egypt now=2026-06-26 00:00
   //   → Egypt date > base → true → advance to 2026-06-26
-  if (isAtOrAfterCutoff(booking.cutoffTime, base)) {
+  if (isAtOrAfterCutoff(booking.cutoffTime, base, summerTime)) {
     base = addDays(base, 1);
   }
 
@@ -216,7 +268,7 @@ export function computeDefaultExecutionDate(
   // Phase 2: apply manual day-end push
   // When the admin ends the day via the booking page, prevDay is saved and
   // defaultExecutionDate is already incremented. Don't double-count.
-  if (isDayEndedToday(booking.lastDayEndAt)) {
+  if (isDayEndedToday(booking.lastDayEndAt, summerTime)) {
     const alreadyAdvanced = !!booking.prevDay && base > booking.prevDay;
     if (!alreadyAdvanced) {
       base = addDays(base, 1);
@@ -238,7 +290,7 @@ export async function autoResetDayEndIfStale(): Promise<IBooking | null> {
   const booking = await Booking.findOne({ key: 'global' }).lean();
   if (!booking) return null;
 
-  if (isDayEndedYesterday(booking.lastDayEndAt)) {
+  if (isDayEndedYesterday(booking.lastDayEndAt, booking.summerTimeEnabled)) {
     const restored = booking.prevDay || booking.defaultExecutionDate;
     await Booking.updateOne(
       { key: 'global' },
@@ -305,16 +357,12 @@ function isRefAtOrAfterCutoff(
   cutoffTime: string | null | undefined,
   baseDate: string,
   refTime: Date,
+  summerTime: SummerTimeOverride = undefined,
 ): boolean {
   if (!cutoffTime || !baseDate) return false;
 
-  const refEgyptDate = getEgyptDateString(refTime);
-  const refEgyptTime = new Intl.DateTimeFormat('en-GB', {
-    timeZone: EGYPT_TIMEZONE,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(refTime);
+  const refEgyptDate = toEgyptDateString(refTime, summerTime);
+  const refEgyptTime = toEgyptTimeString(refTime, summerTime);
 
   // If the reference date is past the base date, the cutoff has passed
   if (refEgyptDate > baseDate) return true;
@@ -323,19 +371,6 @@ function isRefAtOrAfterCutoff(
 
   // Same day — compare times
   return compareTimeStrings(refEgyptTime, cutoffTime) >= 0;
-}
-
-/**
- * Get a YYYY-MM-DD string from a Date in the Egypt timezone.
- */
-function getEgyptDateString(date: Date): string {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: EGYPT_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  return formatter.format(date);
 }
 
 /**
@@ -355,20 +390,21 @@ export function recomputeOrderExecutionDate(
   cutoffTime: string | null | undefined,
   blockedExecutionDates: string[],
   defaultExecutionDate: string | null | undefined,
+  summerTimeEnabled: SummerTimeOverride = undefined,
 ): string | null {
   if (!order.statusUpdateTime) return null;
 
   const paidAt = new Date(order.statusUpdateTime);
   const createdAt = new Date(order.createdAt || paidAt);
 
-  const paidDate = getEgyptDateString(paidAt);
+  const paidDate = toEgyptDateString(paidAt, summerTimeEnabled);
   const nextDay = addDays(paidDate, 1);
 
-  const afterCutoff = isRefAtOrAfterCutoff(cutoffTime, paidDate, paidAt);
+  const afterCutoff = isRefAtOrAfterCutoff(cutoffTime, paidDate, paidAt, summerTimeEnabled);
   let candidate = afterCutoff ? nextDay : paidDate;
 
   // Cannot execute before the order was created
-  const createdAtDate = getEgyptDateString(createdAt);
+  const createdAtDate = toEgyptDateString(createdAt, summerTimeEnabled);
   if (candidate < createdAtDate) {
     candidate = createdAtDate;
   }
@@ -422,8 +458,9 @@ export function recomputeExecutionDateOnInvoiceConfirmed(
     return null;
   }
 
+  const summerTime = booking.summerTimeEnabled;
   const now = new Date();
-  const nowEgyptDate = getEgyptDateString(now);
+  const nowEgyptDate = toEgyptDateString(now, summerTime);
 
   // If the execution date is in the future relative to today, keep it —
   // the order is already scheduled for a future day and confirming the
@@ -438,6 +475,7 @@ export function recomputeExecutionDateOnInvoiceConfirmed(
     booking.cutoffTime,
     currentExecutionDate,
     now,
+    summerTime,
   );
 
   if (!afterCutoff) {
@@ -481,6 +519,7 @@ export function updateOrderExecutionDateOnPaid(
     booking.cutoffTime,
     booking.blockedExecutionDates || [],
     booking.defaultExecutionDate,
+    booking.summerTimeEnabled,
   );
   if (!newExecutionDate) return null;
 

@@ -511,6 +511,7 @@ export const bookingUpdateSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
       .optional(),
+    summerTimeEnabled: z.boolean().optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

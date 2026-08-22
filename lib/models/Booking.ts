@@ -8,6 +8,19 @@ export interface IBooking {
   lastDayEndAt: string | null;
   defaultExecutionDate: string | null;
   prevDay: string | null;
+  /**
+   * Manual override for Egypt Daylight Saving Time (التوقيت الصيفي).
+   *
+   * - `true`  → force UTC+3 (summer time active)
+   * - `false` → force UTC+2 (standard time)
+   *
+   * When set, all Egypt time calculations in execution-date.ts use the
+   * fixed offset instead of the `Africa/Cairo` IANA timezone. This gives
+   * the admin manual control when Egypt's DST schedule changes
+   * unpredictably (which it does — the government announces it
+   * year-by-year, sometimes at short notice).
+   */
+  summerTimeEnabled?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -40,6 +53,10 @@ const BookingSchema = new mongoose.Schema<IBooking>(
     prevDay: {
       type: String,
       default: null,
+    },
+    summerTimeEnabled: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true },
