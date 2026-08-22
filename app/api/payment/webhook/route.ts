@@ -23,6 +23,7 @@ import { evaluateAndUpdateUserTier } from '@/lib/services/user-tier-evaluator';
 import {
   shouldTriggerAutoDesignGeneration,
   triggerAutoDesignGeneration,
+  needsDesignGeneration,
 } from '@/lib/services/auto-design-generation';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
@@ -541,10 +542,14 @@ export async function POST(request: NextRequest) {
 
     // ── Auto design generation ──────────────────────────────────────
     // Triggered when the order FIRST enters a paid state (paid or
-    // partial-paid) from a non-paid state. Fire-and-forget — does NOT
-    // block the webhook response. If it fails, the admin can manually
-    // generate designs via the admin panel button.
-    if (shouldTriggerAutoDesignGeneration(orderStatusBefore, order.status)) {
+    // partial-paid) from a non-paid state. Also triggered if the order
+    // is paid but has no designs (e.g. a previous auto-generation
+    // attempt failed silently). Fire-and-forget — does NOT block the
+    // webhook response.
+    if (
+      shouldTriggerAutoDesignGeneration(orderStatusBefore, order.status) ||
+      needsDesignGeneration(order.status, order.designUrls)
+    ) {
       triggerAutoDesignGeneration(String(order._id), 'auto_webhook').catch((err) => {
         console.error(
           `[webhook] Auto design generation failed for order ${order.orderNumber}:`,

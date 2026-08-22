@@ -43,7 +43,7 @@ import { generateDesignsForOrder } from '@/lib/services/design-generation-core';
 import { recordDesignGenLog, type DesignGenTrigger } from '@/lib/services/design-log-service';
 
 /** Statuses that count as "already paid" — no need to auto-generate. */
-const PAID_LIKE_STATUSES = new Set(['paid', 'partial-paid', 'completed']);
+export const PAID_LIKE_STATUSES = new Set(['paid', 'partial-paid', 'completed']);
 
 // ── Backend-side auto-generation queue ──────────────────────────────
 // Limits how many orders are sent to the design app simultaneously.
@@ -105,6 +105,28 @@ export function shouldTriggerAutoDesignGeneration(
     newStatus === 'paid' || newStatus === 'partial-paid';
   const wasAlreadyPaid = PAID_LIKE_STATUSES.has(previousStatus);
   return entersPaidState && !wasAlreadyPaid;
+}
+
+/**
+ * Check whether an order needs design generation but doesn't have any.
+ *
+ * This catches cases where:
+ *   - The order transitioned to paid but the initial auto-generation
+ *     failed (fire-and-forget promise was killed by a serverless
+ *     timeout, network error, etc.)
+ *   - The order was already partial-paid with no designs and later
+ *     transitions to paid (shouldTriggerAutoDesignGeneration returns
+ *     false for this case, but the order still needs designs)
+ *
+ * The actual generation function (triggerAutoDesignGeneration) already
+ * skips orders that have designs, so calling it extra times is safe.
+ */
+export function needsDesignGeneration(
+  status: string,
+  designUrls: Array<{ url?: string }> | undefined | null,
+): boolean {
+  if (!PAID_LIKE_STATUSES.has(status)) return false;
+  return !designUrls || designUrls.length === 0;
 }
 
 /**

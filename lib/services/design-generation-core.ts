@@ -161,25 +161,32 @@ export async function generateDesignsForOrder(
     };
   });
 
-  // ── Retry retriable products once ──────────────────────────────────
+  // ── Retry retriable products (up to 3 times with increasing delay) ──
   // A timeout usually means the design app's render queue was full at
   // the time of the request. fetchFailed usually means a transient
-  // network drop. By the time the first attempt finishes, the queue or
-  // the network has likely recovered. We retry just the products that
-  // hit these retriable errors once — no retry for other errors
-  // (noTemplate, noBookingProduct, etc.) since those won't fix themselves.
+  // network drop or the design app returned an HTML error page (e.g.
+  // 502 from a reverse proxy). By the time the first attempt finishes,
+  // the queue or the network has likely recovered. We retry just the
+  // products that hit these retriable errors — no retry for other
+  // errors (noTemplate, noBookingProduct, etc.) since those won't fix
+  // themselves.
   const retriableErrorCodes = new Set(['timeout', 'fetchFailed']);
-  const retryIndices = results
-    .map((r, i) => (r.error && retriableErrorCodes.has(r.error) ? i : -1))
-    .filter((i) => i >= 0);
+  const MAX_RETRIES = 3;
+  const retryDelays = [3000, 8000, 15000]; // 3s, 8s, 15s
 
-  if (retryIndices.length > 0) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const retryIndices = results
+      .map((r, i) => (r.error && retriableErrorCodes.has(r.error) ? i : -1))
+      .filter((i) => i >= 0);
+
+    if (retryIndices.length === 0) break;
+
     console.log(
-      `[design-gen order=${order.orderNumber}] Retrying ${retryIndices.length} product(s) after timeout/fetch failure…`,
+      `[design-gen order=${order.orderNumber}] Retry ${attempt + 1}/${MAX_RETRIES}: ${retryIndices.length} product(s) after timeout/fetch failure…`,
     );
 
-    // Short pause to let the design app queue/network settle before retrying.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Increasing delay between retries to allow the design app to recover
+    await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
 
     const retrySettled = await Promise.allSettled(
       retryIndices.map((idx) => {
@@ -209,7 +216,7 @@ export async function generateDesignsForOrder(
         // Keep the original error — retry also failed
         results[idx] = {
           ...results[idx],
-          message: `Retry also failed: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`,
+          message: `Retry ${attempt + 1} also failed: ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`,
         };
       }
     });

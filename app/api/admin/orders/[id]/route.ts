@@ -10,6 +10,7 @@ import {
   shouldTriggerAutoDesignGeneration,
   triggerAutoDesignGeneration,
   triggerDesignRegeneration,
+  needsDesignGeneration,
 } from '@/lib/services/auto-design-generation';
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
@@ -247,8 +248,13 @@ export async function PUT(
 
     // ── Auto design generation ──────────────────────────────────────
     // Triggered when the admin manually changes the order status to
-    // 'paid' or 'partial-paid' from a non-paid state. Fire-and-forget.
-    if (shouldTriggerAutoDesignGeneration(previousStatus, nextStatus)) {
+    // 'paid' or 'partial-paid' from a non-paid state. Also triggered
+    // if the order is paid but has no designs (e.g. a previous auto-
+    // generation attempt failed silently). Fire-and-forget.
+    if (
+      shouldTriggerAutoDesignGeneration(previousStatus, nextStatus) ||
+      needsDesignGeneration(nextStatus, order.designUrls)
+    ) {
       triggerAutoDesignGeneration(String(order._id), 'auto_admin').catch((err) => {
         console.error(
           `[admin PUT] Auto design generation failed for order ${order.orderNumber}:`,
@@ -743,8 +749,13 @@ export async function PATCH(
             sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
           }
 
-          // Trigger auto design generation when status transitions to paid
-          if (shouldTriggerAutoDesignGeneration(previousStatus, order.status)) {
+          // Trigger auto design generation when status transitions to paid.
+          // Also trigger if the order is paid but has no designs (e.g. a
+          // previous auto-generation attempt failed silently).
+          if (
+            shouldTriggerAutoDesignGeneration(previousStatus, order.status) ||
+            needsDesignGeneration(order.status, order.designUrls)
+          ) {
             triggerAutoDesignGeneration(String(order._id), 'auto_admin').catch((err) => {
               console.error(
                 `[admin PATCH] Auto design generation failed for order ${order.orderNumber}:`,

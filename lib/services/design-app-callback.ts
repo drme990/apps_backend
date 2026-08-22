@@ -161,6 +161,23 @@ export async function generateDesignForProduct(params: {
       signal: controller.signal,
     });
 
+    // Check content-type before parsing — the design app might return
+    // an HTML error page (e.g. 502 from a reverse proxy, or a Next.js
+    // error page) instead of JSON. Parsing HTML as JSON throws
+    // "Unexpected token '<'" which is unhelpful.
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      // Read the body as text for the error message (truncated)
+      const text = await response.text();
+      const snippet = text.slice(0, 200).replace(/\s+/g, ' ').trim();
+      return {
+        success: false,
+        productId,
+        error: 'fetchFailed',
+        message: `Design app returned non-JSON response (HTTP ${response.status}, ${contentType || 'no content-type'}): ${snippet || '(empty body)'}`,
+      };
+    }
+
     const body = (await response.json()) as DesignAppResponseBody;
 
     if (!response.ok || !body.success || !body.data?.url) {
