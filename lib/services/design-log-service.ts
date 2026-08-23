@@ -37,6 +37,8 @@ export interface DesignGenLogInput {
   triggeredByUserEmail?: string;
   /** Unexpected error that aborted the whole attempt */
   error?: string;
+  /** Why the generation was skipped (order not found, not paid, already has designs, etc.) */
+  skipReason?: string;
 }
 
 /**
@@ -59,7 +61,9 @@ export async function recordDesignGenLog(
     const failedCount = totalProducts - generatedCount;
 
     let status: IOrderDesignLog['status'];
-    if (input.error) {
+    if (input.skipReason) {
+      status = 'skipped';
+    } else if (input.error) {
       status = 'failed';
     } else if (totalProducts === 0) {
       status = 'skipped';
@@ -92,6 +96,7 @@ export async function recordDesignGenLog(
       finishedAt: input.finishedAt,
       durationMs,
       error: input.error,
+      skipReason: input.skipReason,
     });
   } catch (error) {
     // Best-effort — don't let logging failures break design generation

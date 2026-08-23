@@ -95,6 +95,8 @@ export interface IOrderDesignLog {
   durationMs: number;
   /** Error message if the entire attempt failed unexpectedly */
   error?: string;
+  /** Why the generation was skipped (order not found, not paid, already has designs, etc.) */
+  skipReason?: string;
   createdAt?: Date;
 }
 
@@ -142,6 +144,7 @@ const OrderDesignLogSchema = new mongoose.Schema<IOrderDesignLog>(
     finishedAt: { type: Date, required: true },
     durationMs: { type: Number, default: 0 },
     error: { type: String },
+    skipReason: { type: String },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

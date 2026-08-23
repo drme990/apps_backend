@@ -157,6 +157,16 @@ export async function triggerAutoDesignGeneration(
     const order = (await Order.findById(orderId).lean()) as IOrder | null;
     if (!order) {
       console.warn(`${logPrefix} Order not found — skipping.`);
+      // Record the skip so the admin can see the trigger fired
+      await recordDesignGenLog({
+        orderId,
+        orderNumber: 'unknown',
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        skipReason: 'Order not found',
+      });
       return;
     }
 
@@ -166,6 +176,18 @@ export async function triggerAutoDesignGeneration(
       console.warn(
         `${logPrefix} Order status is '${order.status}' (not paid) — skipping.`,
       );
+      // Record the skip so the admin can see the trigger fired
+      await recordDesignGenLog({
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        source: order.source,
+        orderStatus: order.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        skipReason: `Order status is '${order.status}' (not paid)`,
+      });
       return;
     }
 
@@ -174,6 +196,18 @@ export async function triggerAutoDesignGeneration(
       console.log(
         `${logPrefix} Order already has ${order.designUrls.length} design URL(s) — skipping.`,
       );
+      // Record the skip so the admin can see the trigger fired
+      await recordDesignGenLog({
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        source: order.source,
+        orderStatus: order.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        skipReason: `Order already has ${order.designUrls.length} design URL(s)`,
+      });
       return;
     }
 
@@ -260,6 +294,15 @@ export async function triggerDesignRegeneration(
     const order = (await Order.findById(orderId).lean()) as IOrder | null;
     if (!order) {
       console.warn(`${logPrefix} Order not found — skipping.`);
+      await recordDesignGenLog({
+        orderId,
+        orderNumber: 'unknown',
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        skipReason: 'Order not found',
+      });
       return;
     }
 
@@ -269,6 +312,17 @@ export async function triggerDesignRegeneration(
       console.log(
         `${logPrefix} Order status is '${order.status}' and has no designs — skipping.`,
       );
+      await recordDesignGenLog({
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        source: order.source,
+        orderStatus: order.status,
+        trigger,
+        startedAt,
+        finishedAt: new Date(),
+        results: [],
+        skipReason: `Order status is '${order.status}' and has no designs`,
+      });
       return;
     }
 
