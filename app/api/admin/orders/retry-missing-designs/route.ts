@@ -2,7 +2,10 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder } from '@/lib/models/Order';
-import { triggerAutoDesignGeneration } from '@/lib/services/auto-design-generation';
+import {
+  triggerAutoDesignGeneration,
+  resetAutoDesignCancellation,
+} from '@/lib/services/auto-design-generation';
 
 /**
  * POST /api/admin/orders/retry-missing-designs
@@ -43,6 +46,9 @@ export async function POST() {
         message: 'No orders missing designs found.',
       });
     }
+
+    // Reset any previous cancellation so the new batch can proceed
+    resetAutoDesignCancellation();
 
     // Fire-and-forget: trigger generation for each order.
     // The backend queue (AUTO_GEN_CONCURRENCY) limits how many run at once.
