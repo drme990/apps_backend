@@ -24,11 +24,15 @@ function normalizeBlockedDates(input: unknown): string[] {
 /**
  * Get the effective UTC offset in minutes for Egypt, respecting the
  * manual summer-time override.
+ *
+ * - `true`  → 180 (UTC+3, forced summer time)
+ * - `false`/`null`/`undefined` → auto-detect from `Africa/Cairo` IANA
+ *   timezone. This correctly returns UTC+3 during summer and UTC+2
+ *   during winter, as long as the system tzdata is up to date.
  */
 function getEgyptOffsetMinutes(summerTime: boolean | null | undefined): number {
   if (summerTime === true) return 180;
-  if (summerTime === false) return 120;
-  // Auto-detect
+  // Auto-detect (covers false, null, undefined)
   const now = new Date();
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Africa/Cairo',
@@ -91,6 +95,17 @@ export async function GET() {
       ? parseCutoffTime(booking.cutoffTime)
       : null;
 
+    // Convert Mongoose Map to plain object for JSON response
+    const rawTolerances = booking?.paymentMethodTolerances;
+    const tolerances: Record<string, { type: string; value: number }> = {};
+    if (rawTolerances && typeof rawTolerances === 'object') {
+      for (const [key, val] of Object.entries(rawTolerances as Record<string, unknown>)) {
+        if (val && typeof val === 'object' && 'type' in val && 'value' in val) {
+          tolerances[key] = val as { type: string; value: number };
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
@@ -99,6 +114,7 @@ export async function GET() {
         lastDayEndAt: booking?.lastDayEndAt ?? null,
         defaultExecutionDate: booking?.defaultExecutionDate ?? null,
         summerTimeEnabled: booking?.summerTimeEnabled ?? false,
+        paymentMethodTolerances: tolerances,
       },
     });
   } catch (error) {
@@ -218,6 +234,28 @@ export async function PUT(request: NextRequest) {
       update.summerTimeEnabled = body.summerTimeEnabled;
     }
 
+    if (body.paymentMethodTolerances !== undefined) {
+      // Validate and normalize the tolerances map
+      const tolerances = body.paymentMethodTolerances;
+      if (tolerances === null) {
+        update.paymentMethodTolerances = {};
+      } else if (typeof tolerances === 'object' && !Array.isArray(tolerances)) {
+        const normalized: Record<string, { type: 'percentage' | 'fixnumber'; value: number }> = {};
+        for (const [method, config] of Object.entries(tolerances)) {
+          if (
+            config &&
+            typeof config === 'object' &&
+            (config.type === 'percentage' || config.type === 'fixnumber') &&
+            typeof config.value === 'number' &&
+            config.value >= 0
+          ) {
+            normalized[method] = { type: config.type, value: config.value };
+          }
+        }
+        update.paymentMethodTolerances = normalized;
+      }
+    }
+
     if (Object.keys(update).length === 0) {
       return NextResponse.json(
         { success: false, error: 'No fields to update' },
@@ -256,6 +294,16 @@ export async function PUT(request: NextRequest) {
       details: `Updated booking settings: ${changedFields}`,
     });
 
+    const rawTolerancesResp = booking?.paymentMethodTolerances;
+    const tolerancesResponse: Record<string, { type: string; value: number }> = {};
+    if (rawTolerancesResp && typeof rawTolerancesResp === 'object') {
+      for (const [key, val] of Object.entries(rawTolerancesResp as Record<string, unknown>)) {
+        if (val && typeof val === 'object' && 'type' in val && 'value' in val) {
+          tolerancesResponse[key] = val as { type: string; value: number };
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
@@ -264,6 +312,7 @@ export async function PUT(request: NextRequest) {
         lastDayEndAt: booking?.lastDayEndAt ?? null,
         defaultExecutionDate: booking?.defaultExecutionDate ?? null,
         summerTimeEnabled: booking?.summerTimeEnabled ?? false,
+        paymentMethodTolerances: tolerancesResponse,
       },
     });
   } catch (error) {

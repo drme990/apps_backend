@@ -15,8 +15,44 @@ import {
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
+import { convertCurrency } from '@/lib/services/currency';
 import Booking from '@/lib/models/Booking';
 import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
+
+/** Currencies supported by the EasyKash payment gateway. */
+const EASYKASH_SUPPORTED_CURRENCIES = new Set(['SAR', 'EGP', 'USD', 'EUR']);
+
+/**
+ * Determines whether an invoice value covers the remaining amount,
+ * optionally applying the `allowRate` tolerance configured on the
+ * order's country.
+ *
+ * The equation is: invoiceValue + allowRate >= remaining
+ *
+ * - `percentage`: allowRate = remaining * (value/100)
+ *   → paid when invoiceValue >= remaining * (1 - value/100)
+ * - `fixnumber`:  allowRate = value
+ *   → paid when invoiceValue >= remaining - value
+ * - no allowRate: paid when invoiceValue >= remaining (exact)
+ */
+function isInvoiceWithinAllowRate(
+  invoiceValue: number,
+  remainingBefore: number,
+  allowRate?: { type: 'percentage' | 'fixnumber'; value: number } | null,
+): boolean {
+  if (remainingBefore <= 0) return true;
+  if (invoiceValue >= remainingBefore) return true;
+  if (!allowRate || typeof allowRate.value !== 'number' || allowRate.value <= 0) {
+    return false;
+  }
+  if (allowRate.type === 'percentage') {
+    const threshold = remainingBefore * (1 - allowRate.value / 100);
+    return invoiceValue >= threshold;
+  }
+  // fixnumber
+  const threshold = remainingBefore - allowRate.value;
+  return invoiceValue >= threshold;
+}
 
 const ALLOWED_ORDER_STATUSES = new Set([
   'pending',
@@ -348,28 +384,79 @@ export async function PATCH(
     // used to recompute the execution date if the day has ended.
     let invoiceNewlyConfirmed = false;
 
+    // Track the last confirmed invoice's value and the remaining before it
+    // was added — used for the allowRate tolerance check.
+    let allowRateInvoiceValue: number | null = null;
+    let allowRateRemainingBefore: number | null = null;
+
     // ── Helpers to add/remove payment entries linked to invoices ──
     // Payments are only recorded for confirmed invoices. When an invoice
     // is confirmed, a payment entry is added. When it's un-confirmed, the
     // matching payment is removed so the order's paid amount reverts.
     const invoicePaymentId = (url: string) => `manual_invoice_${url.slice(-50)}`;
 
-    const addInvoicePayment = (invoice: IInvoiceUrl, paymentMethodOverride?: IPayment['paymentMethod']) => {
+    const addInvoicePayment = async (invoice: IInvoiceUrl, paymentMethodOverride?: IPayment['paymentMethod']) => {
       if (invoice.value <= 0) return;
       if (!Array.isArray(order.payments)) order.payments = [];
       const pid = invoicePaymentId(invoice.url);
       // Don't add duplicate
       if (order.payments.some((p: IPayment) => p.paymentId === pid)) return;
-      const currency = (invoice.currency || order.currency || 'EGP').toUpperCase();
+
+      // Capture the remaining before this payment is added — used for
+      // the allowRate tolerance check later.
+      const { totalPaid: paidBefore, fullAmount } = calculateOrderFinancials(order);
+      allowRateRemainingBefore = Math.max(0, fullAmount - paidBefore);
+
+      const invoiceCurrency = (invoice.currency || order.currency || 'EGP').toUpperCase();
+      const orderCurrency = (order.currency || 'EGP').toUpperCase();
       const pm = paymentMethodOverride || (order.paymentMethod || 'bank_transfer') as IPayment['paymentMethod'];
+
+      // ── Currency conversion logic ──
+      // The gateway currency follows the order's currency. If the order
+      // currency is NOT supported by EasyKash, fall back to EGP.
+      const gatewayCurrency = EASYKASH_SUPPORTED_CURRENCIES.has(orderCurrency)
+        ? orderCurrency
+        : 'EGP';
+
+      // orderAmount: the invoice value converted to the order's currency
+      // (used for accounting and remaining-balance math).
+      let orderAmount = invoice.value;
+      if (invoiceCurrency !== orderCurrency) {
+        try {
+          orderAmount = await convertCurrency(invoice.value, invoiceCurrency, orderCurrency);
+        } catch {
+          // If conversion fails, use the raw invoice value as fallback
+          orderAmount = invoice.value;
+        }
+      }
+
+      // The allowRate comparison uses the order-currency amount
+      allowRateInvoiceValue = orderAmount;
+
+      // gatewayAmount: the invoice value converted to the gateway currency.
+      let gatewayAmount = orderAmount;
+      if (orderCurrency !== gatewayCurrency) {
+        try {
+          gatewayAmount = await convertCurrency(orderAmount, orderCurrency, gatewayCurrency);
+        } catch {
+          gatewayAmount = orderAmount;
+        }
+      } else if (invoiceCurrency !== gatewayCurrency) {
+        try {
+          gatewayAmount = await convertCurrency(invoice.value, invoiceCurrency, gatewayCurrency);
+        } catch {
+          gatewayAmount = invoice.value;
+        }
+      }
+
       order.payments.push({
         paymentId: pid,
         easykashOrderId: `manual-invoice-${invoice.url.slice(-50)}`,
-        orderAmount: invoice.value,
-        gatewayAmount: invoice.value,
-        gatewayCurrency: currency,
+        orderAmount,
+        gatewayAmount,
+        gatewayCurrency,
         amount: invoice.value,
-        currency,
+        currency: invoiceCurrency,
         status: 'paid',
         paymentMethod: pm,
         createdAt: new Date(),
@@ -378,7 +465,7 @@ export async function PATCH(
       changes.push({
         changeType: 'payment',
         previousValue: null,
-        newValue: JSON.stringify({ paidAmount: invoice.value, invoiceUrl: invoice.url, currency, paymentMethod: pm }),
+        newValue: JSON.stringify({ paidAmount: orderAmount, invoiceUrl: invoice.url, currency: orderCurrency, paymentMethod: pm, gatewayAmount, gatewayCurrency }),
       });
     };
 
@@ -538,7 +625,7 @@ export async function PATCH(
         //    is NOT added to the order — it will be added later when the
         //    invoice status changes to "confirmed". ──
         if (invoiceStatus === 'confirmed') {
-          addInvoicePayment(newEntry, paymentMethod);
+          await addInvoicePayment(newEntry, paymentMethod);
         }
       }
     }
@@ -595,7 +682,7 @@ export async function PATCH(
               if (nextEntry.invoiceStatus === 'confirmed' && prevEntry.invoiceStatus !== 'confirmed') {
                 invoiceNewlyConfirmed = true;
                 // Add payment for newly confirmed invoice
-                addInvoicePayment(nextEntry);
+                await addInvoicePayment(nextEntry);
               }
               // Track transition FROM 'confirmed' to non-confirmed
               if (prevEntry.invoiceStatus === 'confirmed' && nextEntry.invoiceStatus !== 'confirmed') {
@@ -630,7 +717,7 @@ export async function PATCH(
                 if (nextEntry.invoiceStatus === 'confirmed' && prevEntry.invoiceStatus !== 'confirmed') {
                   invoiceNewlyConfirmed = true;
                   // Add payment for newly confirmed invoice
-                  addInvoicePayment(nextEntry);
+                  await addInvoicePayment(nextEntry);
                 }
                 // Track transition FROM 'confirmed' to non-confirmed
                 if (prevEntry.invoiceStatus === 'confirmed' && nextEntry.invoiceStatus !== 'confirmed') {
@@ -701,10 +788,77 @@ export async function PATCH(
     if (hasFinancialChange) {
       const { totalPaid, fullAmount } = calculateOrderFinancials(order);
 
+      // Look up the payment-method tolerance from Booking settings.
+      // The tolerance is configured per payment method (e.g. insta_pay
+      // might have 50% tolerance, bank_transfer might have none).
+      let orderAllowRate: { type: 'percentage' | 'fixnumber'; value: number } | null = null;
+      let tolerancePaymentMethod: string | null = null;
+      try {
+        const bookingSettings = await Booking.findOne({ key: 'global' }).lean();
+        const tolerances = bookingSettings?.paymentMethodTolerances;
+        if (tolerances && typeof tolerances === 'object') {
+          // Find the last invoice payment to get its payment method
+          const lastInvoicePayment = Array.isArray(order.payments)
+            ? order.payments
+              .filter((p: IPayment) => p.paymentId?.startsWith('manual_invoice_'))
+              .pop()
+            : null;
+          const pm = lastInvoicePayment?.paymentMethod;
+          if (pm) {
+            tolerancePaymentMethod = pm;
+            const tolerance = (tolerances as Record<string, { type: 'percentage' | 'fixnumber'; value: number }>)[pm];
+            if (tolerance && typeof tolerance.value === 'number' && tolerance.value > 0) {
+              orderAllowRate = tolerance;
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — fall back to exact match
+      }
+
+      // Determine if the order is fully paid:
+      // 1. Exact match: totalPaid >= fullAmount
+      // 2. AllowRate: the last invoice value covers the remaining (before
+      //    that invoice) within the country's tolerance
+      const exactPaid = totalPaid >= fullAmount;
+      const allowRateApplies =
+        !exactPaid &&
+        allowRateInvoiceValue !== null &&
+        allowRateRemainingBefore !== null &&
+        isInvoiceWithinAllowRate(allowRateInvoiceValue, allowRateRemainingBefore, orderAllowRate);
+
       if (fullAmount > 0) {
         const previousStatus = order.status;
-        if (totalPaid >= fullAmount) {
-          // Paid amount covers the full order → mark as paid
+        if (exactPaid || allowRateApplies) {
+          // When tolerance applies, adjust the last payment's orderAmount
+          // to cover the full remaining so that calculateOrderFinancials
+          // returns remaining = 0. The actual invoice value (amount) is
+          // preserved — only the accounting orderAmount is adjusted.
+          if (allowRateApplies && !exactPaid && allowRateRemainingBefore !== null && allowRateInvoiceValue !== null && orderAllowRate) {
+            const difference = Math.max(0, allowRateRemainingBefore - allowRateInvoiceValue);
+            if (Array.isArray(order.payments)) {
+              const lastInvoicePayment = order.payments
+                .filter((p: IPayment) => p.paymentId?.startsWith('manual_invoice_'))
+                .pop();
+              if (lastInvoicePayment) {
+                // Adjust orderAmount to cover the full remaining
+                lastInvoicePayment.orderAmount = allowRateRemainingBefore;
+                // Record the tolerance details for audit
+                lastInvoicePayment.allowRateApplied = {
+                  type: orderAllowRate.type,
+                  value: orderAllowRate.value,
+                  invoiceValue: allowRateInvoiceValue,
+                  remainingBefore: allowRateRemainingBefore,
+                  difference,
+                  paymentMethod: tolerancePaymentMethod || undefined,
+                };
+                order.markModified('payments');
+              }
+            }
+          }
+
+          // Paid amount covers the full order (within allowRate tolerance)
+          // → mark as paid
           order.isPartialPayment = false;
           if (order.status === 'partial-paid' || order.status === 'pending') {
             order.status = 'paid';

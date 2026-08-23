@@ -24,6 +24,16 @@ export interface ICountry {
   region?: string;
   visibilityMode?: CountryVisibilityMode;
   countriesToSee?: CountryVisibilityMap;
+  /**
+   * Tolerance applied when deciding whether an order is "paid".
+   * - `percentage`: order is paid when totalPaid >= fullAmount * (1 - value/100)
+   * - `fixnumber`:  order is paid when totalPaid >= fullAmount - value
+   * Omit/undefined = no tolerance (exact match required).
+   */
+  allowRate?: {
+    type: 'percentage' | 'fixnumber';
+    value: number;
+  } | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -87,6 +97,24 @@ const CountrySchema = new mongoose.Schema<ICountry>(
     countriesToSee: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
+    },
+    allowRate: {
+      type: new mongoose.Schema(
+        {
+          type: {
+            type: String,
+            enum: ['percentage', 'fixnumber'],
+            required: true,
+          },
+          value: {
+            type: Number,
+            required: true,
+            min: 0,
+          },
+        },
+        { _id: false },
+      ),
+      default: null,
     },
   },
   { timestamps: true },

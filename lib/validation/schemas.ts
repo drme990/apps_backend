@@ -280,6 +280,13 @@ export const countryCreateSchema = z
           }),
       )
       .optional(),
+    allowRate: z
+      .object({
+        type: z.enum(['percentage', 'fixnumber']),
+        value: z.number().min(0),
+      })
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -320,6 +327,13 @@ export const countryUpdateSchema = z
             message: 'At least one visibility option must be selected',
           }),
       )
+      .optional(),
+    allowRate: z
+      .object({
+        type: z.enum(['percentage', 'fixnumber']),
+        value: z.number().min(0),
+      })
+      .nullable()
       .optional(),
   })
   .strict()
@@ -512,6 +526,16 @@ export const bookingUpdateSchema = z
       .nullable()
       .optional(),
     summerTimeEnabled: z.boolean().optional(),
+    paymentMethodTolerances: z
+      .record(
+        z.string(),
+        z.object({
+          type: z.enum(['percentage', 'fixnumber']),
+          value: z.number().min(0),
+        }),
+      )
+      .nullable()
+      .optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

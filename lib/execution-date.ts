@@ -8,7 +8,9 @@ const EGYPT_TIMEZONE = 'Africa/Cairo';
  * Summer-time override type.
  *
  * - `true`  → force UTC+3 (Egypt DST / summer time)
- * - `false` → force UTC+2 (Egypt standard time)
+ * - `false` → auto-detect using the `Africa/Cairo` IANA timezone
+ *   (same as null/undefined — the admin has NOT explicitly forced
+ *   summer time, so we trust the system tzdata)
  * - `null`/`undefined` → auto-detect using the `Africa/Cairo` IANA
  *   timezone (which follows the OS tzdata).
  */
@@ -18,17 +20,17 @@ type SummerTimeOverride = boolean | null | undefined;
  * Get the effective UTC offset in minutes for Egypt, respecting the
  * manual summer-time override.
  *
- * - `true`  → 180 (UTC+3)
- * - `false` → 120 (UTC+2)
- * - `null`/`undefined` → auto-detect from `Africa/Cairo` IANA timezone
+ * - `true`  → 180 (UTC+3, forced summer time)
+ * - `false`/`null`/`undefined` → auto-detect from `Africa/Cairo` IANA
+ *   timezone. This correctly returns UTC+3 during summer and UTC+2
+ *   during winter, as long as the system tzdata is up to date.
  */
 function getEgyptOffsetMinutes(summerTime: SummerTimeOverride): number {
   if (summerTime === true) return 180;
-  if (summerTime === false) return 120;
 
-  // Auto-detect: use Intl to find the current offset for Africa/Cairo.
-  // This respects the system's tzdata, which may or may not include
-  // Egypt's latest DST decision.
+  // Auto-detect (covers false, null, undefined): use Intl to find the
+  // current offset for Africa/Cairo. This respects the system's tzdata,
+  // which may or may not include Egypt's latest DST decision.
   const now = new Date();
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: EGYPT_TIMEZONE,

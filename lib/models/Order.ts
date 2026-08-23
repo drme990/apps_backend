@@ -163,6 +163,20 @@ export interface IPayment {
   expiresAt?: Date;
   createdAt: Date;
   paidAt?: Date;
+  /** When a payment-method tolerance was used to mark the order as paid,
+   * this records the tolerance details so admins can see the difference. */
+  allowRateApplied?: {
+    type: 'percentage' | 'fixnumber';
+    value: number;
+    /** The actual invoice value entered by the admin */
+    invoiceValue: number;
+    /** The remaining amount before this invoice was applied */
+    remainingBefore: number;
+    /** The difference between remaining and invoice value (covered by tolerance) */
+    difference: number;
+    /** The payment method whose tolerance was applied */
+    paymentMethod?: string;
+  } | null;
 }
 
 export interface IPaymentAttempt {
@@ -419,6 +433,24 @@ const PaymentSchema = new mongoose.Schema<IPayment>(
     expiresAt: { type: Date },
     createdAt: { type: Date, required: true, default: () => new Date() },
     paidAt: { type: Date },
+    allowRateApplied: {
+      type: new mongoose.Schema(
+        {
+          type: {
+            type: String,
+            enum: ['percentage', 'fixnumber'],
+            required: true,
+          },
+          value: { type: Number, required: true, min: 0 },
+          invoiceValue: { type: Number, required: true, min: 0 },
+          remainingBefore: { type: Number, required: true, min: 0 },
+          difference: { type: Number, required: true },
+          paymentMethod: { type: String },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
   },
   { _id: false },
 );
