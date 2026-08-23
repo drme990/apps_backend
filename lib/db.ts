@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const MONGODB_URI =
-  process.env.DATA_BASE_URL || 'mongodb://localhost:27017/manasik';
+  process.env.DATA_BASE_URL || 'mongodb+srv://manasik-new:50TqqpcXYArAI7nO@manasik.aclzyuu.mongodb.net/manasik';
 
 // Cache the connection promise so concurrent cold-start requests all await
 // the same promise instead of racing to create separate connections.

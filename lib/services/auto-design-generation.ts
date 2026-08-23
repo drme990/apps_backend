@@ -65,14 +65,6 @@ const AUTO_GEN_CONCURRENCY = parseInt(
 let autoGenActive = 0;
 const autoGenQueue: Array<() => void> = [];
 
-// ── Cancellation ────────────────────────────────────────────────────
-// When the admin clicks "Cancel Retry", we set this flag and drain the
-// queue. Any task that hasn't started yet will see the flag and abort
-// immediately. Tasks already in progress (calling the design app) will
-// finish naturally — we can't abort an in-flight HTTP request, but we
-// can stop new ones from starting.
-let autoGenCancelled = false;
-
 async function acquireAutoGenSlot(): Promise<void> {
   if (autoGenActive < AUTO_GEN_CONCURRENCY) {
     autoGenActive++;
@@ -89,43 +81,6 @@ function releaseAutoGenSlot(): void {
   } else {
     autoGenActive--;
   }
-}
-
-/**
- * Cancel all pending auto-design-generation tasks in the queue.
- *
- * Tasks already in progress (actively calling the design app) will
- * finish naturally — they can't be aborted. But any task still
- * waiting in the queue will abort immediately on its next check.
- *
- * Also resets the cancel flag so future triggers work normally.
- * The flag is checked right after `acquireAutoGenSlot()` resolves,
- * so a waiter that was sitting in the queue will see it and bail.
- */
-export function cancelAutoDesignGeneration(): { drained: number } {
-  const drained = autoGenQueue.length;
-  // Resolve all waiters — they'll check the cancel flag and abort
-  while (autoGenQueue.length > 0) {
-    const resolve = autoGenQueue.shift()!;
-    resolve();
-  }
-  autoGenCancelled = true;
-  return { drained };
-}
-
-/**
- * Reset the cancellation flag. Called automatically after all active
- * tasks finish, or manually when starting a new batch.
- */
-export function resetAutoDesignCancellation(): void {
-  autoGenCancelled = false;
-}
-
-/**
- * Check if auto-design generation has been cancelled.
- */
-export function isAutoDesignCancelled(): boolean {
-  return autoGenCancelled;
 }
 
 /**
@@ -196,22 +151,6 @@ export async function triggerAutoDesignGeneration(
   // the design app's render queue short even when a burst of orders
   // transitions to paid simultaneously.
   await acquireAutoGenSlot();
-
-  // If the admin cancelled while we were waiting in the queue, abort.
-  if (autoGenCancelled) {
-    releaseAutoGenSlot();
-    console.log(`${logPrefix} Cancelled while waiting in queue — aborting.`);
-    await recordDesignGenLog({
-      orderId,
-      orderNumber: 'unknown',
-      trigger,
-      startedAt,
-      finishedAt: new Date(),
-      results: [],
-      skipReason: 'Cancelled by admin',
-    }).catch(() => { });
-    return;
-  }
 
   try {
     await connectDB();
@@ -350,22 +289,6 @@ export async function triggerDesignRegeneration(
   const startedAt = new Date();
 
   await acquireAutoGenSlot();
-
-  // If the admin cancelled while we were waiting in the queue, abort.
-  if (autoGenCancelled) {
-    releaseAutoGenSlot();
-    console.log(`${logPrefix} Cancelled while waiting in queue — aborting.`);
-    await recordDesignGenLog({
-      orderId,
-      orderNumber: 'unknown',
-      trigger,
-      startedAt,
-      finishedAt: new Date(),
-      results: [],
-      skipReason: 'Cancelled by admin',
-    }).catch(() => { });
-    return;
-  }
 
   try {
     await connectDB();
