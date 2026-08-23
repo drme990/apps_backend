@@ -22,6 +22,7 @@ jobs:
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_HOST_KEY: ${{ vars.DEPLOY_SSH_HOST_KEY }}
         run: |
           set -euo pipefail
 
@@ -31,19 +32,38 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
+          # Write private deployment key
           printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-          echo "===== SSH KEYSCAN ====="
-
-          if ! ssh-keyscan -T 10 -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null; then
-            echo "ERROR: ssh-keyscan failed for ${DEPLOY_HOST}"
+          # Validate that the fixed host key variable exists
+          if [ -z "${DEPLOY_SSH_HOST_KEY}" ]; then
+            echo "ERROR: DEPLOY_SSH_HOST_KEY is empty."
+            echo "Add DEPLOY_SSH_HOST_KEY under GitHub Actions Variables."
             exit 1
           fi
 
+          echo "===== FIXED SSH HOST KEY ====="
+
+          # Create known_hosts using the fixed VPS host key.
+          #
+          # The host key comes directly from:
+          # /etc/ssh/ssh_host_ed25519_key.pub
+          #
+          # We prepend the deployment host so SSH can verify
+          # the server identity without running ssh-keyscan.
+          printf '%s %s\n' "${DEPLOY_HOST}" "${DEPLOY_SSH_HOST_KEY}" \
+            > ~/.ssh/known_hosts
+
           chmod 600 ~/.ssh/known_hosts
 
-          echo "SSH host key successfully added."
+          echo "SSH host key configured."
+
+          echo "===== SSH HOST KEY CHECK ====="
+
+          ssh-keygen -F "${DEPLOY_HOST}" -f ~/.ssh/known_hosts
+
+          echo "SSH host key successfully configured."
 
       - name: Deploy
         shell: bash
@@ -54,10 +74,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "===== SSH CONNECTION ====="
+
           ssh \
             -i ~/.ssh/deploy_key \
             -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
             -o ConnectTimeout=15 \
+            -o BatchMode=yes \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "COMMIT_SHA='${COMMIT_SHA}' bash -s" <<'REMOTE_SCRIPT'
 
@@ -84,6 +108,7 @@ jobs:
           fi
 
           source "$NVM_DIR/nvm.sh"
+
           nvm use 22
 
           echo "Node: $(node -v)"
@@ -101,6 +126,8 @@ jobs:
 
           if [ "$REMOTE_SHA" != "$COMMIT_SHA" ]; then
             echo "ERROR: GitHub commit and origin/main do not match."
+            echo "GitHub:     $COMMIT_SHA"
+            echo "origin/main: $REMOTE_SHA"
             exit 1
           fi
 
@@ -171,6 +198,7 @@ jobs:
           HEALTH_CHECK_PASSED=false
 
           for i in {1..20}; do
+
             if curl -fsS -o /dev/null http://127.0.0.1:3000; then
               echo "Health check passed on attempt $i."
               HEALTH_CHECK_PASSED=true
@@ -180,14 +208,17 @@ jobs:
             echo "Health check attempt $i failed. Waiting..."
 
             if [ "$i" -eq 20 ]; then
+
               echo "ERROR: Health check failed."
 
               echo
               echo "===== PM2 STATUS ====="
+
               pm2 status || true
 
               echo
               echo "===== BACKEND LOGS ====="
+
               pm2 logs backend --lines 100 --nostream || true
 
               exit 1
@@ -206,9 +237,11 @@ jobs:
 
           cd "$RELEASES_DIR"
 
+          # Keep the 5 newest releases.
           ls -1dt */ 2>/dev/null | tail -n +6 | xargs -r rm -rf
 
           echo "Remaining releases:"
+
           ls -lah
 
           echo
