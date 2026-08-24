@@ -32,3 +32,11 @@ jobs:
           tags: |
             ghcr.io/drme990/apps_backend:latest
             ghcr.io/drme990/apps_backend:${{ github.sha }}
+
+      # NEW: Deploy the new backend image
+      - name: Deploy backend
+        run: |
+          cd ~/production
+          docker compose pull backend
+          docker compose up -d backend
+          docker image prune -f
