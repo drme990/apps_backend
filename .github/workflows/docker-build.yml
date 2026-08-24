@@ -33,10 +33,10 @@ jobs:
             ghcr.io/drme990/apps_backend:latest
             ghcr.io/drme990/apps_backend:${{ github.sha }}
 
-      # NEW: Deploy the new backend image
       - name: Deploy backend
         run: |
           cd ~/production
+          sed -i "s|image: ghcr.io/drme990/apps_backend:.*|image: ghcr.io/drme990/apps_backend:${{ github.sha }}|" docker-compose.yml
           docker compose pull backend
           docker compose up -d backend
           docker image prune -f
