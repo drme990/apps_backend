@@ -108,7 +108,7 @@ export function shouldTriggerAutoDesignGeneration(
 }
 
 /**
- * Check whether an order needs design generation but doesn't have any.
+ * Check if an order needs design generation but doesn't have any.
  *
  * This catches cases where:
  *   - The order transitioned to paid but the initial auto-generation
@@ -127,6 +127,90 @@ export function needsDesignGeneration(
 ): boolean {
   if (!PAID_LIKE_STATUSES.has(status)) return false;
   return !designUrls || designUrls.length === 0;
+}
+
+/**
+ * Evaluate whether auto-design generation should be triggered for an
+ * order, trigger it if needed, and ALWAYS log the decision — even when
+ * the trigger is NOT called. This ensures every paid order has a
+ * traceable log entry explaining why designs were or weren't generated.
+ *
+ * Call this at every status-change site (webhook, admin PUT, admin PATCH,
+ * manual order creation) instead of manually checking
+ * shouldTriggerAutoDesignGeneration + needsDesignGeneration.
+ *
+ * @param order       The order document (must have _id, orderNumber,
+ *                    status, designUrls, source)
+ * @param previousStatus  The status BEFORE the transition
+ * @param trigger     Who/what triggered this evaluation
+ */
+export async function evaluateAndTriggerAutoDesign(
+  order: {
+    _id: unknown;
+    orderNumber: string;
+    status: string;
+    designUrls?: Array<{ url?: string }> | null;
+    source?: string;
+  },
+  previousStatus: string,
+  trigger: 'auto_webhook' | 'auto_admin',
+): Promise<void> {
+  const startedAt = new Date();
+  const orderId = String(order._id);
+  const logPrefix = `[auto-design-eval order=${order.orderNumber}]`;
+
+  const shouldTrigger = shouldTriggerAutoDesignGeneration(
+    previousStatus,
+    order.status,
+  );
+  const needsDesign = needsDesignGeneration(order.status, order.designUrls);
+
+  if (shouldTrigger || needsDesign) {
+    // Trigger generation — fire-and-forget
+    triggerAutoDesignGeneration(orderId, trigger).catch((err) => {
+      console.error(
+        `${logPrefix} Auto design generation failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
+    return;
+  }
+
+  // ── Log WHY we didn't trigger ──────────────────────────────────
+  // This is the key fix: previously, when the trigger was NOT called,
+  // no log entry was created at all — making it impossible to debug
+  // missing designs. Now we always log the decision.
+  let skipReason: string;
+
+  if (!PAID_LIKE_STATUSES.has(order.status)) {
+    skipReason = `Status '${order.status}' is not a paid-like status — no design generation needed`;
+  } else if (order.designUrls && order.designUrls.length > 0) {
+    skipReason = `Order already has ${order.designUrls.length} design URL(s) — no regeneration needed`;
+  } else if (PAID_LIKE_STATUSES.has(previousStatus)) {
+    skipReason = `Status was already '${previousStatus}' (paid-like) → '${order.status}' — no new transition, and order already has designs or was already processed`;
+  } else {
+    skipReason = `No trigger condition met (prev='${previousStatus}', new='${order.status}', designs=${order.designUrls?.length ?? 0})`;
+  }
+
+  console.log(`${logPrefix} Skipping: ${skipReason}`);
+
+  // Record the skip in the design log so it's visible in the admin panel
+  recordDesignGenLog({
+    orderId,
+    orderNumber: order.orderNumber,
+    source: order.source,
+    orderStatus: order.status,
+    trigger,
+    startedAt,
+    finishedAt: new Date(),
+    results: [],
+    skipReason,
+  }).catch((err) => {
+    console.error(
+      `${logPrefix} Failed to write skip log:`,
+      err instanceof Error ? err.message : err,
+    );
+  });
 }
 
 /**

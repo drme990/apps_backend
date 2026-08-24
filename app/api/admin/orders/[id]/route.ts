@@ -7,10 +7,8 @@ import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state
 import { logActivity } from '@/lib/services/logger';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import {
-  shouldTriggerAutoDesignGeneration,
-  triggerAutoDesignGeneration,
+  evaluateAndTriggerAutoDesign,
   triggerDesignRegeneration,
-  needsDesignGeneration,
 } from '@/lib/services/auto-design-generation';
 import { parseJsonBody } from '@/lib/validation/http';
 import { orderStatusUpdateSchema } from '@/lib/validation/schemas';
@@ -283,21 +281,19 @@ export async function PUT(
     }
 
     // ── Auto design generation ──────────────────────────────────────
-    // Triggered when the admin manually changes the order status to
-    // 'paid' or 'partial-paid' from a non-paid state. Also triggered
-    // if the order is paid but has no designs (e.g. a previous auto-
-    // generation attempt failed silently). Fire-and-forget.
-    if (
-      shouldTriggerAutoDesignGeneration(previousStatus, nextStatus) ||
-      needsDesignGeneration(nextStatus, order.designUrls)
-    ) {
-      triggerAutoDesignGeneration(String(order._id), 'auto_admin').catch((err) => {
-        console.error(
-          `[admin PUT] Auto design generation failed for order ${order.orderNumber}:`,
-          err instanceof Error ? err.message : err,
-        );
-      });
-    }
+    // Evaluates whether design generation should be triggered and ALWAYS
+    // logs the decision — even when the trigger is NOT called, so every
+    // paid order has a traceable log entry. Fire-and-forget.
+    evaluateAndTriggerAutoDesign(
+      order.toObject(),
+      previousStatus,
+      'auto_admin',
+    ).catch((err) => {
+      console.error(
+        `[admin PUT] Auto design evaluation failed for order ${order.orderNumber}:`,
+        err instanceof Error ? err.message : err,
+      );
+    });
 
     await logActivity({
       userId: auth.user.userId,
@@ -906,17 +902,17 @@ export async function PATCH(
           // Trigger auto design generation when status transitions to paid.
           // Also trigger if the order is paid but has no designs (e.g. a
           // previous auto-generation attempt failed silently).
-          if (
-            shouldTriggerAutoDesignGeneration(previousStatus, order.status) ||
-            needsDesignGeneration(order.status, order.designUrls)
-          ) {
-            triggerAutoDesignGeneration(String(order._id), 'auto_admin').catch((err) => {
-              console.error(
-                `[admin PATCH] Auto design generation failed for order ${order.orderNumber}:`,
-                err instanceof Error ? err.message : err,
-              );
-            });
-          }
+          // Always logs the decision — even when skipped.
+          evaluateAndTriggerAutoDesign(
+            order.toObject(),
+            previousStatus,
+            'auto_admin',
+          ).catch((err) => {
+            console.error(
+              `[admin PATCH] Auto design evaluation failed for order ${order.orderNumber}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
         }
       }
     }

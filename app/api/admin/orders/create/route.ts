@@ -16,7 +16,7 @@ import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
 import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } from '@/lib/auth/app-users';
 import { MANUAL_ORDER_PRODUCT_ID } from '@/lib/constants/manual-order';
-import { triggerAutoDesignGeneration } from '@/lib/services/auto-design-generation';
+import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generation';
 import { randomBytes } from 'crypto';
 
 // Manual order creation involves multiple DB operations, user creation,
@@ -781,12 +781,15 @@ export async function POST(request: NextRequest) {
     // ── Auto-generate design for paid manual orders ──
     // Manual orders with 'paid' or 'partial-paid' status should have
     // their designs generated automatically, just like regular orders
-    // that transition to paid via the payment webhook. Fire-and-forget.
-    if (order.status === 'paid' || order.status === 'partial-paid') {
-      triggerAutoDesignGeneration(order._id.toString(), 'auto_admin').catch((err) => {
-        console.error(`[Create Manual Order] Auto design generation failed for ${order.orderNumber}:`, err);
-      });
-    }
+    // that transition to paid via the payment webhook.
+    // Always logs the decision — even when skipped.
+    evaluateAndTriggerAutoDesign(
+      order.toObject(),
+      'pending',
+      'auto_admin',
+    ).catch((err) => {
+      console.error(`[Create Manual Order] Auto design evaluation failed for ${order.orderNumber}:`, err);
+    });
 
     return NextResponse.json({
       success: true,
