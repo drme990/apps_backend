@@ -14,17 +14,13 @@ export interface IBooking {
   defaultExecutionDate: string | null;
   prevDay: string | null;
   /**
-   * Manual override for Egypt Daylight Saving Time (التوقيت الصيفي).
+   * Manual override for Egypt summer time (التوقيت الصيفي).
    *
-   * - `true`  → force UTC+3 (summer time active)
-   * - `false` → auto-detect from `Africa/Cairo` IANA timezone
-   *   (returns UTC+3 in summer, UTC+2 in winter — relies on system
-   *   tzdata being up to date)
+   * - `true`  → UTC+3 (summer time active)
+   * - `false` → UTC+2 (standard time — Egypt abolished DST in 2014)
    *
-   * Only set to `true` when the auto-detection is wrong (e.g. system
-   * tzdata is outdated and doesn't know about Egypt's latest DST
-   * decision). The default (`false`) is the safe choice — it trusts
-   * the system timezone database.
+   * The default (`false`) uses standard time (UTC+2). Set to `true`
+   * only when summer time is manually activated.
    */
   summerTimeEnabled?: boolean;
   /**
