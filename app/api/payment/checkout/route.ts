@@ -48,6 +48,10 @@ import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadFileToR2 } from '@/lib/services/r2';
 import { convertCurrency } from '@/lib/services/currency';
+import {
+  resolveUnitPrice,
+  PAYMENT_GATEWAY_CURRENCIES,
+} from '@/lib/services/price-resolver';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -539,14 +543,15 @@ export async function POST(request: NextRequest) {
 
       const recSize = recommendedProduct.sizes[0];
       if (recSize && recSize.isAvailable !== false) {
-        const recCurrencyPrice = recSize.prices?.find(
-          (p: { currencyCode: string; amount: number }) =>
-            p.currencyCode === currency.toUpperCase(),
-        );
-        if (recCurrencyPrice) {
-          recommendedProductPrice = recCurrencyPrice.amount;
-        } else if (recommendedProduct.baseCurrency === currency.toUpperCase()) {
-          recommendedProductPrice = recSize.price ?? 0;
+        try {
+          recommendedProductPrice = await resolveUnitPrice(
+            recSize,
+            recommendedProduct.baseCurrency || 'SAR',
+            currency.toUpperCase(),
+          );
+        } catch {
+          // If exchange rate conversion fails, skip the recommended product
+          recommendedProductPrice = 0;
         }
       }
     }
@@ -838,19 +843,19 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    let unitPrice = selectedSize.price ?? 0;
-
-    const sizeCurrencyPrice = selectedSize.prices?.find(
-      (p: { currencyCode: string; amount: number }) =>
-        p.currencyCode === currencyUpper,
-    );
-    if (sizeCurrencyPrice) {
-      unitPrice = sizeCurrencyPrice.amount;
-    } else if (product.baseCurrency !== currencyUpper) {
+    let unitPrice: number;
+    try {
+      unitPrice = await resolveUnitPrice(
+        selectedSize,
+        product.baseCurrency || 'SAR',
+        currencyUpper,
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Unknown error';
       return NextResponse.json(
         {
           success: false,
-          error: `Price not available in ${currencyUpper}. Available in: ${product.baseCurrency}`,
+          error: `Unable to resolve product price in ${currencyUpper}: ${reason}`,
         },
         { status: 400 },
       );
@@ -1319,11 +1324,10 @@ export async function POST(request: NextRequest) {
     const baseUrl =
       sourceBaseUrls[order.source || 'manasik'] || sourceBaseUrls.manasik;
 
-    const EASYKASH_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'];
     let easykashAmount = payAmount;
     let paymentCurrency = currencyUpper;
 
-    if (!EASYKASH_CURRENCIES.includes(currencyUpper)) {
+    if (!PAYMENT_GATEWAY_CURRENCIES.includes(currencyUpper as (typeof PAYMENT_GATEWAY_CURRENCIES)[number])) {
       try {
         const convertedAmount = await convertCurrency(
           payAmount,

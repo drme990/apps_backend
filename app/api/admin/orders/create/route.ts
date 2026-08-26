@@ -12,6 +12,10 @@ import {
 import { logActivity } from '@/lib/services/logger';
 import { createPayment, getEasykashCashExpiryHours } from '@/lib/services/easykash';
 import { convertCurrency } from '@/lib/services/currency';
+import {
+  resolveUnitPrice,
+  PAYMENT_GATEWAY_CURRENCIES,
+} from '@/lib/services/price-resolver';
 import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
 import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } from '@/lib/auth/app-users';
@@ -286,36 +290,36 @@ export async function POST(request: NextRequest) {
         if (currencyUpper === 'EGP') {
           originalPrice = selectedSize.manualPrice;
         } else {
-          originalPrice = selectedSize.price ?? 0;
-          const sizeCurrencyPrice = selectedSize.prices?.find(
-            (p: { currencyCode: string; amount: number }) =>
-              p.currencyCode === currencyUpper,
-          );
-          if (sizeCurrencyPrice) {
-            originalPrice = sizeCurrencyPrice.amount;
-          } else if (product.baseCurrency !== currencyUpper) {
+          try {
+            originalPrice = await resolveUnitPrice(
+              selectedSize,
+              product.baseCurrency || 'SAR',
+              currencyUpper,
+            );
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : 'Unknown error';
             return NextResponse.json(
               {
                 success: false,
-                error: `Price not available in ${currencyUpper} for ${product.name.en || product.name.ar}. Available in: ${product.baseCurrency}`,
+                error: `Unable to resolve price in ${currencyUpper} for ${product.name.en || product.name.ar}: ${reason}`,
               },
               { status: 400 },
             );
           }
         }
       } else {
-        originalPrice = selectedSize.price ?? 0;
-        const sizeCurrencyPrice = selectedSize.prices?.find(
-          (p: { currencyCode: string; amount: number }) =>
-            p.currencyCode === currencyUpper,
-        );
-        if (sizeCurrencyPrice) {
-          originalPrice = sizeCurrencyPrice.amount;
-        } else if (product.baseCurrency !== currencyUpper) {
+        try {
+          originalPrice = await resolveUnitPrice(
+            selectedSize,
+            product.baseCurrency || 'SAR',
+            currencyUpper,
+          );
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : 'Unknown error';
           return NextResponse.json(
             {
               success: false,
-              error: `Price not available in ${currencyUpper} for ${product.name.en || product.name.ar}. Available in: ${product.baseCurrency}`,
+              error: `Unable to resolve price in ${currencyUpper} for ${product.name.en || product.name.ar}: ${reason}`,
             },
             { status: 400 },
           );
@@ -576,11 +580,10 @@ export async function POST(request: NextRequest) {
       // For partial EasyKash, the gateway amount is for the *remaining* balance
       const easykashTargetAmount = isPartialEasykash ? remainingAmountValue : totalAmount;
 
-      const EASYKASH_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'];
       let easykashAmount = easykashTargetAmount;
       let paymentCurrency = currencyUpper;
 
-      if (!EASYKASH_CURRENCIES.includes(currencyUpper)) {
+      if (!PAYMENT_GATEWAY_CURRENCIES.includes(currencyUpper as (typeof PAYMENT_GATEWAY_CURRENCIES)[number])) {
         try {
           const convertedAmount = await convertCurrency(
             easykashTargetAmount,
