@@ -26,14 +26,26 @@ export function getClientIp(request: NextRequest): string {
 /**
  * Extract client country from request headers
  * Checks Cloudflare and Vercel specific headers
+ * Always returns a 2-letter ISO 3166-1 alpha-2 country code (uppercase)
+ * or null if not detected / invalid.
  */
 export function getClientCountry(request: NextRequest): string | null {
-  const cfCountry = request.headers.get('cf-ipcountry');
-  if (cfCountry) return cfCountry;
+  const raw =
+    request.headers.get('cf-ipcountry') ||
+    request.headers.get('x-vercel-ip-country') ||
+    null;
 
-  const vercelCountry = request.headers.get('x-vercel-ip-country');
-  if (vercelCountry) return vercelCountry;
+  if (!raw) return null;
 
+  const code = raw.trim().toUpperCase();
+
+  // Only accept valid 2-letter country codes
+  if (/^[A-Z]{2}$/.test(code) && code !== 'XX' && code !== 'ZZ') {
+    return code;
+  }
+
+  // Some proxies/CDNs occasionally return full country names instead
+  // of 2-letter codes — reject those rather than storing bad data.
   return null;
 }
 
