@@ -5,11 +5,13 @@ import { captureException } from '@/lib/services/error-monitor';
 import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
+import Country from '@/lib/models/Country';
 import { getAuthUser } from '@/lib/auth';
 import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
 import { validateReferralCode } from '@/lib/services/referral-validation';
 import { getClientCountry } from '@/lib/utils/ip';
+import { countryNameToCode } from '@/lib/country-visibility';
 
 const COUNTRY_HEADER_CANDIDATES = [
   'x-vercel-ip-country',
@@ -49,7 +51,7 @@ import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadFileToR2 } from '@/lib/services/r2';
 import { convertCurrency } from '@/lib/services/currency';
 import {
-  resolveUnitPrice,
+  resolveUnitPriceWithVisibility,
   PAYMENT_GATEWAY_CURRENCIES,
 } from '@/lib/services/price-resolver';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
@@ -173,6 +175,7 @@ export async function POST(request: NextRequest) {
       fromProductId,
       upgradeDiscount,
       recommendProductId,
+      viewerCountryCode,
     } = body;
 
     const orderSource: 'manasik' | 'ghadaq' =
@@ -470,7 +473,7 @@ export async function POST(request: NextRequest) {
       .select('ref detectedCountry')
       .lean(false);
     if (finalUserDoc) {
-      if (typeof finalUserDoc.detectedCountry === 'string') {
+      if (typeof finalUserDoc.detectedCountry === 'string' && finalUserDoc.detectedCountry) {
         resolvedDetectedCountry = finalUserDoc.detectedCountry;
       }
       if (finalUserDoc.ref) {
@@ -479,6 +482,22 @@ export async function POST(request: NextRequest) {
         finalUserDoc.ref = resolvedRef;
         await finalUserDoc.save();
       }
+    }
+
+    // Normalize resolvedDetectedCountry to a 2-letter code.
+    // The DB's detectedCountry field may store full country names (e.g.
+    // "Saudi Arabia") from older records — convert them to ISO codes.
+    // If normalization fails, fall back to the viewerCountryCode sent by
+    // the frontend (from the currency provider's homeCountryCode).
+    if (resolvedDetectedCountry) {
+      const normalized = countryNameToCode(resolvedDetectedCountry);
+      if (normalized) {
+        resolvedDetectedCountry = normalized;
+      } else if (viewerCountryCode) {
+        resolvedDetectedCountry = viewerCountryCode;
+      }
+    } else if (viewerCountryCode) {
+      resolvedDetectedCountry = viewerCountryCode;
     }
 
     // Outstanding balance check removed - users can now pay for new orders
@@ -506,6 +525,9 @@ export async function POST(request: NextRequest) {
         { status: 404 },
       );
     }
+
+    // Fetch all countries for price visibility resolution
+    const allCountries = await Country.find({}).lean();
 
     if (!product.inStock) {
       return NextResponse.json(
@@ -544,10 +566,12 @@ export async function POST(request: NextRequest) {
       const recSize = recommendedProduct.sizes[0];
       if (recSize && recSize.isAvailable !== false) {
         try {
-          recommendedProductPrice = await resolveUnitPrice(
+          recommendedProductPrice = await resolveUnitPriceWithVisibility(
             recSize,
             recommendedProduct.baseCurrency || 'SAR',
             currency.toUpperCase(),
+            resolvedDetectedCountry || '',
+            allCountries,
           );
         } catch {
           // If exchange rate conversion fails, skip the recommended product
@@ -845,10 +869,12 @@ export async function POST(request: NextRequest) {
     }
     let unitPrice: number;
     try {
-      unitPrice = await resolveUnitPrice(
+      unitPrice = await resolveUnitPriceWithVisibility(
         selectedSize,
         product.baseCurrency || 'SAR',
         currencyUpper,
+        resolvedDetectedCountry || '',
+        allCountries,
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Unknown error';
