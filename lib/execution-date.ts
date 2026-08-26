@@ -2,50 +2,28 @@ import type { IBooking } from '@/lib/models/Booking';
 import Booking from '@/lib/models/Booking';
 import type { IOrder } from '@/lib/models/Order';
 
-const EGYPT_TIMEZONE = 'Africa/Cairo';
-
 /**
  * Summer-time override type.
  *
- * - `true`  → force UTC+3 (Egypt DST / summer time)
- * - `false` → auto-detect using the `Africa/Cairo` IANA timezone
- *   (same as null/undefined — the admin has NOT explicitly forced
- *   summer time, so we trust the system tzdata)
- * - `null`/`undefined` → auto-detect using the `Africa/Cairo` IANA
- *   timezone (which follows the OS tzdata).
+ * - `true`  → UTC+3 (summer time active)
+ * - `false` → UTC+2 (standard time)
+ * - `null`/`undefined` → same as `false` (UTC+2, standard time)
+ *
+ * No auto-detection. The admin controls this via the DB toggle.
  */
 type SummerTimeOverride = boolean | null | undefined;
 
 /**
- * Get the effective UTC offset in minutes for Egypt, respecting the
- * manual summer-time override.
+ * Get the effective UTC offset in minutes for Egypt.
  *
- * - `true`  → 180 (UTC+3, summer time active)
- * - `false` → 120 (UTC+2, standard time — Egypt abolished DST in 2014)
- * - `null`/`undefined` → auto-detect from `Africa/Cairo` IANA timezone
- *   (fallback for legacy data that predates the toggle)
+ * - `true`  → 180 (UTC+3, summer time)
+ * - `false`/`null`/`undefined` → 120 (UTC+2, standard time)
+ *
+ * No auto-detection from IANA timezone — the admin explicitly sets
+ * the toggle in the DB and we respect it exactly.
  */
 function getEgyptOffsetMinutes(summerTime: SummerTimeOverride): number {
-  if (summerTime === true) return 180;  // UTC+3 — summer time
-  if (summerTime === false) return 120; // UTC+2 — standard time
-
-  // Auto-detect only for null/undefined (legacy data without the flag)
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: EGYPT_TIMEZONE,
-    timeZoneName: 'shortOffset',
-  }).formatToParts(now);
-  const offsetPart = parts.find((p) => p.type === 'timeZoneName');
-  if (offsetPart) {
-    const match = offsetPart.value.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
-    if (match) {
-      const sign = match[1] === '+' ? 1 : -1;
-      const hours = parseInt(match[2], 10);
-      const minutes = match[3] ? parseInt(match[3], 10) : 0;
-      return sign * (hours * 60 + minutes);
-    }
-  }
-  return 120;
+  return summerTime === true ? 180 : 120;
 }
 
 /**
@@ -116,16 +94,12 @@ function compareTimeStrings(a: string, b: string): number {
  * cutoffTime is HH:mm (e.g. "02:00") in Egypt local time.
  * baseDate is the execution date (YYYY-MM-DD).
  *
- * Instead of constructing an absolute timestamp with a hardcoded offset
- * (which breaks during DST), we compare in Egypt local time directly:
+ * We compare in Egypt local time directly using the admin-controlled
+ * offset (UTC+2 standard, UTC+3 summer — no auto-detection):
  * - Get the current Egypt date and time
  * - If today's Egypt date > baseDate → the day has fully passed → after cutoff
  * - If today's Egypt date == baseDate → compare times: if now >= cutoff → after cutoff
  * - If today's Egypt date < baseDate → before cutoff
- *
- * This correctly handles Egypt's DST transitions (UTC+2 in winter, UTC+3 in summer)
- * because Intl.DateTimeFormat with timeZone: 'Africa/Cairo' always returns the
- * correct local time regardless of the UTC offset.
  */
 function isAtOrAfterCutoff(
   cutoffTime: string | null | undefined,
@@ -225,8 +199,8 @@ function isDayEndedYesterday(
  *    so we evaluate the cutoff on today's execution date.
  * 3. Apply the cutoff ON the current execution date (base). If the current
  *    Egypt local time has reached or passed the cutoff on base, advance to
- *    the next day. The cutoff is evaluated in Egypt local time (Africa/Cairo)
- *    to correctly handle DST transitions (UTC+2 winter, UTC+3 summer).
+ *    the next day. The cutoff is evaluated in Egypt local time using the
+ *    admin-controlled offset (UTC+2 standard, UTC+3 summer).
  * 4. Skip any blocked dates.
  * 5. If the admin manually ended the day today → push one more day forward.
  */
@@ -349,8 +323,8 @@ export async function refreshDefaultExecutionDateCache(): Promise<string> {
  * baseDate is YYYY-MM-DD.
  * refTime is a Date instance (any timezone — we convert to Egypt time).
  *
- * Uses the same DST-safe approach as isAtOrAfterCutoff: convert refTime to
- * Egypt local date + time, then compare.
+ * Uses the same approach as isAtOrAfterCutoff: convert refTime to
+ * Egypt local date + time using the admin-controlled offset, then compare.
  */
 function isRefAtOrAfterCutoff(
   cutoffTime: string | null | undefined,
