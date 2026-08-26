@@ -57,6 +57,14 @@ export interface IBaseAppUser {
   tier?: mongoose.Types.ObjectId | string | null;
   isAdminCreated?: boolean;
   accountSetUp?: boolean;
+  /**
+   * Where the user account was created from.
+   *
+   * - `'checkout'` → registered from the checkout page
+   * - `null`       → registered from the normal register page,
+   *                  or created by an admin (isAdminCreated = true)
+   */
+  registerSource?: string | null;
 }
 
 export interface IBaseAppUserMethods {
@@ -115,6 +123,7 @@ function buildBaseAppUserModel(
       tier: { type: mongoose.Schema.Types.ObjectId, ref: 'UserTier', default: null, index: true },
       isAdminCreated: { type: Boolean, default: false },
       accountSetUp: { type: Boolean, default: false },
+      registerSource: { type: String, default: null },
     },
     { timestamps: true, collection },
   );

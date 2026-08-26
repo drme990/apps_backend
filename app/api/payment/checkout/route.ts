@@ -404,6 +404,7 @@ export async function POST(request: NextRequest) {
           country: string;
           appId: string;
           detectedCountry?: string;
+          registerSource?: string;
         } = {
           name: billingData.fullName.trim(),
           email: normalizedInputEmail,
@@ -411,6 +412,7 @@ export async function POST(request: NextRequest) {
           phone: normalizedInputPhone,
           country: resolvedBillingCountry,
           appId: checkoutAppId,
+          registerSource: 'checkout',
         };
         const country = getClientCountry(request);
         if (country) {

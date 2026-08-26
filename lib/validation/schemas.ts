@@ -56,6 +56,7 @@ export const registerSchema = z
       ),
     country: z.string().trim().optional(),
     ref: z.string().trim().nullable().optional(),
+    registerSource: z.string().trim().optional(),
     appId: z.enum(['manasik', 'ghadaq', 'admin_panel']),
   })
   .strict();

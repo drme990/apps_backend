@@ -45,6 +45,7 @@ type AuthUserDoc = {
   isBanned?: boolean;
   isAdminCreated?: boolean;
   accountSetUp?: boolean;
+  registerSource?: string | null;
   registrationIp?: string;
   lastLoginIp?: string;
   lastLoginAt?: Date;
@@ -308,7 +309,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     const parsed = await parseJsonBody(request, registerPayloadSchema);
     if (!parsed.success) return parsed.response;
 
-    const { name, email, password, phone, country, ref } = parsed.data;
+    const { name, email, password, phone, country, ref, registerSource } = parsed.data;
     const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
 
     const clientIp = getClientIp(request);
@@ -396,6 +397,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     } else {
       createPayload.phone = normalizedPhone || '';
       createPayload.country = country || '';
+      createPayload.registerSource = registerSource || null;
 
       let resolvedRef: string | null = null;
       if (ref) {
