@@ -13,6 +13,7 @@ import {
     getCurrencyRoundingMap,
     roundPrice,
 } from '@/lib/currency-rounding';
+import { getBasePrice } from '@/lib/services/price-resolver';
 
 const priceSchema = z.object({
     productId: z.string().trim().min(1),
@@ -30,7 +31,7 @@ interface PriceEntry {
 
 function getRealPrice(
     size: {
-        price: number;
+        price?: number;
         prices: { currencyCode: string; amount: number; isManual?: boolean }[];
     },
     targetCurrency: string,
@@ -45,7 +46,7 @@ function getRealPrice(
     }
 
     if (baseCurrency.toUpperCase() === upperTarget) {
-        return { price: size.price ?? 0, isManual: false };
+        return { price: getBasePrice(size, baseCurrency), isManual: false };
     }
 
     return null;

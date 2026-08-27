@@ -13,10 +13,12 @@ export async function GET(request: NextRequest) {
     const activeOnly = request.nextUrl.searchParams.get('active') !== 'false';
 
     // Active country list powers several dropdowns (payments/products editors).
-    // Any authenticated admin can read it, while full countries management remains permission-gated.
+    // Any authenticated admin can read it. The full (including inactive) list
+    // is needed by the currency selector in the manual order modal, so allow
+    // 'orders' permission too. Full countries management remains gated to 'countries'.
     const auth = activeOnly
       ? await requireAuth()
-      : await requireAdminPageAccess('countries');
+      : await requireAdminPageAccess(['countries', 'orders']);
     if ('error' in auth) return auth.error;
 
     const query = activeOnly ? { isActive: true } : {};

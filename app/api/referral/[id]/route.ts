@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Referral from '@/lib/models/Referral';
 
+const DEFAULT_REFS = new Set(['MNK-D', 'GHD-D']);
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -12,6 +14,15 @@ export async function GET(
       return NextResponse.json(
         { success: false, error: 'Referral ID is required' },
         { status: 400 },
+      );
+    }
+
+    // Default ref codes are not stored in the DB — return a 404 with
+    // a clear message so the frontend can fall back to the default phone.
+    if (DEFAULT_REFS.has(id)) {
+      return NextResponse.json(
+        { success: false, error: 'Default referral — use default phone' },
+        { status: 404 },
       );
     }
 

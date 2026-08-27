@@ -19,6 +19,9 @@ export async function POST(request: NextRequest) {
 
     const result = await validateReferralCode(parsed.data.ref);
 
+    // Return 200 regardless of validity — the response body contains
+    // { valid: boolean }. Don't log "not found" as an error; it's a
+    // normal flow for invalid referral codes.
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error('Error validating referral code:', error);

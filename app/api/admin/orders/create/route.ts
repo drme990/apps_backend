@@ -273,7 +273,7 @@ export async function POST(request: NextRequest) {
         manualPrice?: number | null;
         name?: { ar: string; en: string };
         designName?: string;
-        price: number;
+        price?: number;
         prices?: { currencyCode: string; amount: number }[];
         isAvailable?: boolean;
       };

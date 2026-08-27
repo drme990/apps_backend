@@ -9,14 +9,11 @@ import { referralCreateSchema } from '@/lib/validation/schemas';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    
-    // Allow access if user has either 'referrals' or 'customers' page access
-    let auth = await requireAdminPageAccess('referrals');
-    if ('error' in auth) {
-      const customersAuth = await requireAdminPageAccess('customers');
-      if ('error' in customersAuth) return auth.error;
-      auth = customersAuth;
-    }
+
+    // Allow access if user has 'referrals', 'customers', or 'orders' page
+    // access — the manual order modal (orders page) needs to load referrals.
+    const auth = await requireAdminPageAccess(['referrals', 'customers', 'orders']);
+    if ('error' in auth) return auth.error;
 
     const page = parseInt(request.nextUrl.searchParams.get('page') || '1');
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '100');

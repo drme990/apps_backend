@@ -7,6 +7,7 @@ import Country from '@/lib/models/Country';
 import CronLog from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
 import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
+import { getBasePrice } from '@/lib/services/price-resolver';
 import { syncCouponCurrencyPrices } from '@/lib/services/exchange-price-sync';
 
 export async function POST() {
@@ -49,8 +50,9 @@ export async function POST() {
 
       // Update size prices (skip manual prices)
       for (const size of product.sizes) {
+        const basePrice = getBasePrice(size, product.baseCurrency);
         const converted = await convertToMultipleCurrencies(
-          size.price,
+          basePrice,
           product.baseCurrency,
           targetCurrencies,
         );

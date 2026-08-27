@@ -11,6 +11,32 @@ interface CurrencyPriceEntry {
   amount: number;
 }
 
+/**
+ * Get the base-currency price for a size from its `prices[]` array.
+ *
+ * With the refactored pricing model, `prices[]` is the single source of
+ * truth — there is no separate `size.price` field. The base price is
+ * simply the entry in `prices[]` whose `currencyCode` matches the
+ * product's `baseCurrency`.
+ *
+ * @returns The base price, or 0 if not found.
+ */
+export function getBasePrice(
+  size: { prices?: CurrencyPriceEntry[]; price?: number },
+  baseCurrency: string,
+): number {
+  const base = baseCurrency.toUpperCase();
+  const match = size.prices?.find(
+    (p: CurrencyPriceEntry) => p.currencyCode.toUpperCase() === base,
+  );
+  if (match && typeof match.amount === 'number') {
+    return match.amount;
+  }
+  // Legacy fallback: if prices[] doesn't have the base currency,
+  // fall back to the deprecated size.price field (for unmigrated products).
+  return size.price ?? 0;
+}
+
 type CountryRecord = CountryVisibilityRecord & {
   currencyCode: string;
   roundingRule?: string | null;
@@ -38,8 +64,8 @@ export const PAYMENT_GATEWAY_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'] as const;
  *
  * Resolution order:
  *   1. Exact match in `size.prices[]` for the requested currency
- *   2. If the product's base currency matches, use `size.price`
- *   3. Convert `size.price` from base currency to target via exchange rates
+ *   2. If the product's base currency matches, use the base price from `prices[]`
+ *   3. Convert the base price from `prices[]` to target via exchange rates
  */
 export async function resolveUnitPrice(
   size: { price?: number; prices?: CurrencyPriceEntry[] },
@@ -56,7 +82,7 @@ export async function resolveUnitPrice(
     return exactMatch.amount;
   }
 
-  const basePrice = size.price ?? 0;
+  const basePrice = getBasePrice(size, base);
   if (base === target) {
     return basePrice;
   }
@@ -162,8 +188,8 @@ export async function resolveUnitPriceWithVisibility(
       return exactMatch.amount;
     }
 
-    // 2. Base currency matches target — use the default price field
-    const basePrice = size.price ?? 0;
+    // 2. Base currency matches target — use the base price from prices[]
+    const basePrice = getBasePrice(size, base);
     if (base === target) {
       return basePrice;
     }
@@ -244,7 +270,7 @@ async function resolveSizePrices(
   exchangeRates: Record<string, number> | null,
 ): Promise<ResolvedPrice[]> {
   const base = baseCurrency.toUpperCase();
-  const basePrice = size.price ?? 0;
+  const basePrice = getBasePrice(size, base);
   const results: ResolvedPrice[] = [];
   const seenCurrencies = new Set<string>();
 
@@ -378,8 +404,8 @@ export async function resolveProductPrices(
 
     for (const size of sizes) {
       const sizeData = {
-        price: size.price as number | undefined,
         prices: size.prices as CurrencyPriceEntry[] | undefined,
+        price: size.price as number | undefined, // legacy fallback
       };
       try {
         size.resolvedPrices = await resolveSizePrices(
@@ -392,8 +418,12 @@ export async function resolveProductPrices(
         );
       } catch {
         // If resolution fails for one size, leave it without resolvedPrices
-        // (frontend will fall back to the old behavior)
       }
+      // Strip the raw prices[] array — the frontend only needs
+      // resolvedPrices[] (which contains only visible currencies).
+      // This prevents exposing prices for currencies the viewer
+      // shouldn't see based on country visibility settings.
+      delete size.prices;
     }
   }
 

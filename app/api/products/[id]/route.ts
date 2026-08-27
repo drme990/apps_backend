@@ -8,6 +8,7 @@ import {
   parseProductPlatform,
 } from '@/lib/product-media';
 import { resolveProductPrices } from '@/lib/services/price-resolver';
+import { stripProductForPublic } from '@/lib/product-public-mapper';
 import { normalizeCountryCode, type CountryVisibilityMode } from '@/lib/country-visibility';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -57,20 +58,25 @@ export async function GET(
       media: filteredMedia,
     };
 
-    // Always resolve prices — if no viewerCountryCode, default to "EG"
-    const effectiveViewerCode = viewerCountryCode || 'EG';
-    const allCountries = await Country.find({ isActive: true }).lean();
-    await resolveProductPrices(
-      [productData],
-      effectiveViewerCode,
-      allCountries as unknown as Array<{
-        code: string;
-        currencyCode: string;
-        roundingRule?: string | null;
-        visibilityMode?: CountryVisibilityMode;
-        countriesToSee?: unknown;
-      }>,
-    );
+    // Resolve prices for public apps (platform is set).
+    // Admin panel (no platform) gets raw prices[] for editing.
+    if (platform) {
+      const effectiveViewerCode = viewerCountryCode || 'EG';
+      const allCountries = await Country.find({ isActive: true }).lean();
+      await resolveProductPrices(
+        [productData],
+        effectiveViewerCode,
+        allCountries as unknown as Array<{
+          code: string;
+          currencyCode: string;
+          roundingRule?: string | null;
+          visibilityMode?: CountryVisibilityMode;
+          countriesToSee?: unknown;
+        }>,
+      );
+      // Strip admin-only fields not needed by the frontend
+      stripProductForPublic(productData);
+    }
 
     return NextResponse.json({
       success: true,

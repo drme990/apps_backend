@@ -11,7 +11,9 @@ import { normalizeProductMedia } from '@/lib/product-media';
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess('products');
+    // Products list is needed by both the products page and the manual
+    // order modal (orders page). Allow either permission.
+    const auth = await requireAdminPageAccess(['products', 'orders']);
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;

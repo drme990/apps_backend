@@ -9,6 +9,7 @@ import {
   parseProductPlatform,
 } from '@/lib/product-media';
 import { resolveProductPrices } from '@/lib/services/price-resolver';
+import { stripProductsForPublic } from '@/lib/product-public-mapper';
 import { normalizeCountryCode, type CountryVisibilityMode } from '@/lib/country-visibility';
 
 export async function GET(request: NextRequest) {
@@ -61,20 +62,25 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Always resolve prices — if no viewerCountryCode, default to "EG"
-    const effectiveViewerCode = viewerCountryCode || 'EG';
-    const allCountries = await Country.find({ isActive: true }).lean();
-    await resolveProductPrices(
-      normalizedProducts as Record<string, unknown>[],
-      effectiveViewerCode,
-      allCountries as unknown as Array<{
-        code: string;
-        currencyCode: string;
-        roundingRule?: string | null;
-        visibilityMode?: CountryVisibilityMode;
-        countriesToSee?: unknown;
-      }>,
-    );
+    // Resolve prices for public apps (platform is set).
+    // Admin panel (no platform) gets raw prices[] for editing.
+    if (platform) {
+      const effectiveViewerCode = viewerCountryCode || 'EG';
+      const allCountries = await Country.find({ isActive: true }).lean();
+      await resolveProductPrices(
+        normalizedProducts as Record<string, unknown>[],
+        effectiveViewerCode,
+        allCountries as unknown as Array<{
+          code: string;
+          currencyCode: string;
+          roundingRule?: string | null;
+          visibilityMode?: CountryVisibilityMode;
+          countriesToSee?: unknown;
+        }>,
+      );
+      // Strip admin-only fields not needed by the frontend
+      stripProductsForPublic(normalizedProducts as Record<string, unknown>[]);
+    }
 
     return NextResponse.json({
       success: true,

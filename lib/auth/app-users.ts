@@ -10,7 +10,6 @@ export const ADMIN_ALLOWED_PAGES = [
   'products',
   'products-discovery',
   'orders',
-  'execution',
   'invoices',
   'customers',
   'analytics',
@@ -31,7 +30,6 @@ export const ADMIN_ALLOWED_PAGES = [
   'storage-manager',
   'orderDesigns',
   'orderDesignLogs',
-  'orderDesigns'
 ] as const;
 
 export type AdminAllowedPage = (typeof ADMIN_ALLOWED_PAGES)[number];

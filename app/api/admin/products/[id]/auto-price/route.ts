@@ -6,6 +6,7 @@ import Country from '@/lib/models/Country';
 import { logActivity } from '@/lib/services/logger';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
 import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
+import { getBasePrice } from '@/lib/services/price-resolver';
 import { parseJsonBody } from '@/lib/validation/http';
 import { autoPriceSchema } from '@/lib/validation/schemas';
 
@@ -45,8 +46,9 @@ export async function POST(
     }
 
     for (const size of product.sizes) {
+      const basePrice = getBasePrice(size, product.baseCurrency);
       const converted = await convertToMultipleCurrencies(
-        size.price,
+        basePrice,
         product.baseCurrency,
         targetCurrencies,
       );
