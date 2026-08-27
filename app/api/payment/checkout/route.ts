@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
     const {
       productId,
       quantity = 1,
-      currency,
+      currency: rawCurrency,
       billingData,
       locale = 'ar',
       couponCode,
@@ -178,6 +178,46 @@ export async function POST(request: NextRequest) {
       recommendProductId,
       viewerCountryCode,
     } = body;
+
+    // ── Normalize currency to ISO 4217 code ──────────────────────────
+    // The frontend should always send the ISO code (e.g., "EGP", "SAR"),
+    // but as a safety net we map known localized symbols to their codes.
+    // This prevents bugs where changing the language changes the currency
+    // string and breaks price resolution.
+    const CURRENCY_SYMBOL_MAP: Record<string, string> = {
+      'ج.م': 'EGP',
+      'ج.م.': 'EGP',
+      'جنيه': 'EGP',
+      'ر.س': 'SAR',
+      'ر.س.': 'SAR',
+      'ريال': 'SAR',
+      'د.إ': 'AED',
+      'د.إ.': 'AED',
+      'د.ك': 'KWD',
+      'د.ك.': 'KWD',
+      'ر.ق': 'QAR',
+      'ر.ق.': 'QAR',
+      'د.ب': 'BHD',
+      'د.ب.': 'BHD',
+      'ر.ع': 'OMR',
+      'ر.ع.': 'OMR',
+      'د.أ': 'JOD',
+      'د.أ.': 'JOD',
+      'ل.س': 'SYP',
+      'د.ل': 'LYD',
+      'د.ج': 'DZD',
+      'د.ت': 'TND',
+      'د.م': 'MAD',
+      '$': 'USD',
+      '€': 'EUR',
+      '£': 'GBP',
+    };
+
+    const currency = (
+      CURRENCY_SYMBOL_MAP[rawCurrency?.trim()] || rawCurrency || 'SAR'
+    )
+      .toUpperCase()
+      .trim();
 
     const orderSource: 'manasik' | 'ghadaq' =
       source === 'ghadaq' ? 'ghadaq' : 'manasik';

@@ -22,7 +22,19 @@ export async function POST(request: NextRequest) {
     await connectDB();
     const parsed = await parseJsonBody(request, couponValidationSchema);
     if (!parsed.success) return parsed.response;
-    const { code, orderAmount, currency, productId } = parsed.data;
+    const { code, orderAmount, currency: rawCurrency, productId } = parsed.data;
+
+    // Normalize currency symbol to ISO code (e.g., "ج.م" → "EGP")
+    const CURRENCY_SYMBOL_MAP: Record<string, string> = {
+      'ج.م': 'EGP', 'ج.م.': 'EGP', 'جنيه': 'EGP',
+      'ر.س': 'SAR', 'ر.س.': 'SAR', 'ريال': 'SAR',
+      'د.إ': 'AED', 'د.ك': 'KWD', 'ر.ق': 'QAR',
+      'د.ب': 'BHD', 'ر.ع': 'OMR', 'د.أ': 'JOD',
+      '$': 'USD', '€': 'EUR', '£': 'GBP',
+    };
+    const currency = (
+      CURRENCY_SYMBOL_MAP[rawCurrency?.trim()] || rawCurrency || 'SAR'
+    ).toUpperCase().trim();
 
     let detectedCountry: string | null = null;
     const authUser =
