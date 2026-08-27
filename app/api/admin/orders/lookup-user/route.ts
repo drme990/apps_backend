@@ -39,7 +39,7 @@ type LookupUser = {
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'execution']);
+    const auth = await requireAdminPageAccess(['orders']);
     if ('error' in auth) return auth.error;
 
     const phone = request.nextUrl.searchParams.get('phone')?.trim();

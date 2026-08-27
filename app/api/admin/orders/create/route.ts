@@ -44,7 +44,7 @@ function isCustomerReferenceAlreadyUsedError(error: unknown): boolean {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'execution']);
+    const auth = await requireAdminPageAccess(['orders']);
     if ('error' in auth) return auth.error;
 
     const parsed = await parseJsonBody(request, manualOrderCreateSchema);

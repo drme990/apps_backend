@@ -27,7 +27,7 @@ export async function POST(
 ) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'execution']);
+    const auth = await requireAdminPageAccess(['orders']);
     if ('error' in auth) return auth.error;
 
     const { id } = await params;

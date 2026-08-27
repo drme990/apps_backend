@@ -30,7 +30,7 @@ function isAllowedDownloadUrl(url: string): boolean {
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['orders', 'invoices', 'suppliers', 'execution']);
+    const auth = await requireAdminPageAccess(['orders', 'invoices', 'suppliers']);
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;

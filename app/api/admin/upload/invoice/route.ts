@@ -38,7 +38,7 @@ function resolveInvoiceFolder(fileType: string): string {
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['suppliers', 'execution', 'orders']);
+    const auth = await requireAdminPageAccess(['suppliers', 'orders']);
     if ('error' in auth) return auth.error;
 
     const formData = await request.formData();
@@ -117,7 +117,7 @@ const deleteInvoiceSchema = z.object({
 export async function DELETE(request: NextRequest) {
   try {
     await connectDB();
-    const auth = await requireAdminPageAccess(['suppliers', 'execution', 'orders']);
+    const auth = await requireAdminPageAccess(['suppliers', 'orders']);
     if ('error' in auth) return auth.error;
 
     const body = await request.json().catch(() => null);
