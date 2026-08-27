@@ -33,8 +33,7 @@ async function fetchExchangeRatesForDate(
   );
 
   if (!response.ok) {
-    const message = `Exchange rate API returned ${response.status}`;
-    throw new Error(message);
+    throw new Error(`Exchange rate API returned ${response.status}`);
   }
 
   const data = (await response.json()) as ExchangeRateResponse;
@@ -56,51 +55,54 @@ export async function getExchangeRates(
   baseCurrency: string,
 ): Promise<Record<string, number>> {
   const currencyKey = baseCurrency.toLowerCase();
-  const today = getTodayDateString();
-  const yesterday = getRelativeDateString(1);
-  const candidates = [today, yesterday];
+  const cacheKey = `${currencyKey}:latest`;
+  const cached = cache.get(cacheKey);
+
+  if (cached && cached.expiry > Date.now()) {
+    return cached.data;
+  }
+
+  // 1. Try @latest (always available, returns most recent rates)
+  try {
+    const rates = await fetchExchangeRatesForDate(currencyKey, 'latest');
+    cache.set(cacheKey, { data: rates, expiry: Date.now() + CACHE_TTL_MS });
+    return rates;
+  } catch {
+    // Fall through to date-based fallbacks
+  }
+
+  // 2. Fallback: try today, then yesterday, then 2 days ago
+  const candidates = [
+    getTodayDateString(),
+    getRelativeDateString(1),
+    getRelativeDateString(2),
+  ];
 
   for (const releaseDate of candidates) {
-    const cacheKey = `${currencyKey}:${releaseDate}`;
-    const cached = cache.get(cacheKey);
+    const dateCacheKey = `${currencyKey}:${releaseDate}`;
+    const dateCached = cache.get(dateCacheKey);
 
-    if (cached && cached.expiry > Date.now()) {
-      return cached.data;
+    if (dateCached && dateCached.expiry > Date.now()) {
+      return dateCached.data;
     }
 
     try {
       const rates = await fetchExchangeRatesForDate(currencyKey, releaseDate);
-
-      cache.set(cacheKey, {
+      cache.set(dateCacheKey, {
         data: rates,
         expiry: Date.now() + CACHE_TTL_MS,
       });
       return rates;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (
-        releaseDate === today &&
-        message.includes("Couldn't find the requested release version")
-      ) {
-        console.warn(
-          `Exchange rate release ${today} unavailable for ${currencyKey}; retrying ${yesterday}`,
-        );
-        continue;
-      }
-
-      console.error('Error fetching exchange rates:', error);
-      if (cached) return cached.data;
-
-      if (releaseDate === today) {
-        continue;
-      }
-
-      throw error;
+    } catch {
+      // Try next date
     }
   }
 
+  // 3. Last resort: return stale cache if available
+  if (cached) return cached.data;
+
   throw new Error(
-    `Unable to fetch exchange rates for ${currencyKey} on ${today} or ${yesterday}`,
+    `Unable to fetch exchange rates for ${currencyKey}`,
   );
 }
 

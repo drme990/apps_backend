@@ -4,6 +4,7 @@ import {
   type CountryVisibilityOptions,
   type CountryVisibilityRecord,
 } from '@/lib/country-visibility';
+import { roundPrice, getCurrencyRoundingMap, type RoundingRule } from '@/lib/currency-rounding';
 
 interface CurrencyPriceEntry {
   currencyCode: string;
@@ -12,7 +13,17 @@ interface CurrencyPriceEntry {
 
 type CountryRecord = CountryVisibilityRecord & {
   currencyCode: string;
+  roundingRule?: string | null;
 };
+
+/**
+ * A price that has been resolved for a specific currency, ready for display.
+ */
+export interface ResolvedPrice {
+  currencyCode: string;
+  amount: number;
+  type: 'real' | 'exchange';
+}
 
 /**
  * Currencies supported by the payment gateway (EasyKash).
@@ -52,7 +63,8 @@ export async function resolveUnitPrice(
 
   if (basePrice > 0) {
     const converted = await convertCurrency(basePrice, base, target);
-    return Math.ceil(converted);
+    const roundingMap = await getCurrencyRoundingMap([target]);
+    return roundPrice(converted, target, roundingMap);
   }
 
   return 0;
@@ -112,6 +124,9 @@ export async function resolveUnitPriceWithVisibility(
   const visibility: CountryVisibilityOptions | undefined =
     targetCountry?.viewerVisibility;
 
+  // Build rounding map for the target currency (same as resolveSizePrices)
+  const roundingMap = await getCurrencyRoundingMap([target]);
+
   // If exchangePrice is enabled for this country, convert from the main currency
   if (visibility?.exchangePrice === true) {
     // Find the price in the main currency (the viewer's home currency)
@@ -123,14 +138,14 @@ export async function resolveUnitPriceWithVisibility(
     if (mainPriceMatch && typeof mainPriceMatch.amount === 'number') {
       // If the target IS the main currency, no conversion needed
       if (mainCurrencyCode === target) {
-        return Math.ceil(mainPriceMatch.amount);
+        return roundPrice(mainPriceMatch.amount, target, roundingMap);
       }
 
       // Fetch exchange rates with the main currency as base
       const rates = await getExchangeRates(mainCurrencyCode);
       const rate = rates[target];
       if (rate) {
-        return Math.ceil(mainPriceMatch.amount * rate);
+        return roundPrice(mainPriceMatch.amount * rate, target, roundingMap);
       }
     }
 
@@ -156,7 +171,7 @@ export async function resolveUnitPriceWithVisibility(
     // 3. Convert from base currency to target via exchange rates
     if (basePrice > 0) {
       const converted = await convertCurrency(basePrice, base, target);
-      return Math.ceil(converted);
+      return roundPrice(converted, target, roundingMap);
     }
   }
 
@@ -205,4 +220,182 @@ export async function convertToPaymentCurrency(
   );
 
   return { amount: Math.ceil(converted), currency: paymentCurrency };
+}
+
+/**
+ * Resolve all visible currency prices for a single product size.
+ *
+ * Returns an array of `ResolvedPrice` entries — one per visible currency —
+ * that the frontend can look up directly without doing any conversion.
+ *
+ * @param size               The product size with `price` and `prices[]`
+ * @param baseCurrency       The product's base currency
+ * @param viewerCountryCode  The viewer's home country code (2-letter)
+ * @param visibleCountries   Pre-computed visible countries for the viewer
+ * @param mainCurrencyCode   The viewer's home currency (exchange base)
+ * @param roundingMap        Currency rounding rules map
+ */
+async function resolveSizePrices(
+  size: { price?: number; prices?: CurrencyPriceEntry[] },
+  baseCurrency: string,
+  visibleCountries: Array<CountryRecord & { viewerVisibility: CountryVisibilityOptions }>,
+  mainCurrencyCode: string,
+  roundingMap: Record<string, RoundingRule>,
+  exchangeRates: Record<string, number> | null,
+): Promise<ResolvedPrice[]> {
+  const base = baseCurrency.toUpperCase();
+  const basePrice = size.price ?? 0;
+  const results: ResolvedPrice[] = [];
+  const seenCurrencies = new Set<string>();
+
+  for (const country of visibleCountries) {
+    const targetCurrency = country.currencyCode?.toUpperCase();
+    if (!targetCurrency || seenCurrencies.has(targetCurrency)) continue;
+    const visibility = country.viewerVisibility;
+    if (!visibility?.realPrice && !visibility?.exchangePrice) continue;
+
+    let amount = 0;
+    let type: 'real' | 'exchange' = 'real';
+
+    // 1. Exchange price: convert from main currency
+    if (visibility.exchangePrice === true) {
+      const mainPriceMatch = size.prices?.find(
+        (p: CurrencyPriceEntry) =>
+          p.currencyCode.toUpperCase() === mainCurrencyCode,
+      );
+
+      if (mainPriceMatch && typeof mainPriceMatch.amount === 'number') {
+        if (mainCurrencyCode === targetCurrency) {
+          amount = mainPriceMatch.amount;
+          type = 'real';
+        } else if (exchangeRates && exchangeRates[targetCurrency]) {
+          amount = mainPriceMatch.amount * exchangeRates[targetCurrency];
+          type = 'exchange';
+        }
+      }
+    }
+
+    // 2. Real price: use pre-defined price or convert from base
+    if (amount <= 0 && visibility.realPrice !== false) {
+      const exactMatch = size.prices?.find(
+        (p: CurrencyPriceEntry) => p.currencyCode.toUpperCase() === targetCurrency,
+      );
+      if (exactMatch && typeof exactMatch.amount === 'number') {
+        amount = exactMatch.amount;
+        type = 'real';
+      } else if (base === targetCurrency) {
+        amount = basePrice;
+        type = 'real';
+      } else if (basePrice > 0) {
+        // Convert from base currency using exchange rates
+        try {
+          const baseRates = await getExchangeRates(base);
+          const rate = baseRates[targetCurrency];
+          if (rate) {
+            amount = basePrice * rate;
+            type = 'exchange';
+          }
+        } catch {
+          // Exchange rates unavailable — skip this currency
+        }
+      }
+    }
+
+    if (amount > 0) {
+      const rounded = roundPrice(amount, targetCurrency, roundingMap);
+      results.push({
+        currencyCode: targetCurrency,
+        amount: rounded,
+        type,
+      });
+      seenCurrencies.add(targetCurrency);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Batch-resolve prices for multiple products.
+ *
+ * Adds a `resolvedPrices` array to each product size containing the
+ * pre-resolved price for every visible currency. The frontend can
+ * look up prices directly without any conversion logic.
+ *
+ * @param products           Array of product objects (will be mutated)
+ * @param viewerCountryCode  The viewer's home country code (2-letter)
+ * @param allCountries       All country records from the DB
+ * @returns The same array of products with `resolvedPrices` added to each size
+ */
+export async function resolveProductPrices(
+  products: Record<string, unknown>[],
+  viewerCountryCode: string,
+  allCountries: CountryRecord[],
+): Promise<Record<string, unknown>[]> {
+  if (!viewerCountryCode || allCountries.length === 0) {
+    return products;
+  }
+
+  // Determine the viewer's home currency
+  const viewerCountry = allCountries.find(
+    (c) => c.code.toUpperCase() === viewerCountryCode.toUpperCase(),
+  );
+  if (!viewerCountry) {
+    return products;
+  }
+
+  const mainCurrencyCode = viewerCountry.currencyCode?.toUpperCase() || '';
+
+  // Get visible countries for the viewer
+  const visibleCountries = getVisibleCountriesForViewer(
+    allCountries,
+    viewerCountryCode,
+  );
+
+  // Build rounding map
+  const roundingMap = await getCurrencyRoundingMap(
+    visibleCountries.map((c) => c.currencyCode),
+  );
+
+  // Fetch exchange rates once (based on main currency)
+  let exchangeRates: Record<string, number> | null = null;
+  const needsExchange = visibleCountries.some(
+    (c) => c.viewerVisibility?.exchangePrice === true,
+  );
+  if (needsExchange && mainCurrencyCode) {
+    try {
+      exchangeRates = await getExchangeRates(mainCurrencyCode);
+    } catch (err) {
+      console.error('[resolveProductPrices] Failed to fetch exchange rates:', err);
+    }
+  }
+
+  // Resolve prices for each product's sizes
+  for (const product of products) {
+    const baseCurrency = (product.baseCurrency as string) || 'SAR';
+    const sizes = product.sizes as Array<Record<string, unknown>> | undefined;
+    if (!sizes || !Array.isArray(sizes)) continue;
+
+    for (const size of sizes) {
+      const sizeData = {
+        price: size.price as number | undefined,
+        prices: size.prices as CurrencyPriceEntry[] | undefined,
+      };
+      try {
+        size.resolvedPrices = await resolveSizePrices(
+          sizeData,
+          baseCurrency,
+          visibleCountries,
+          mainCurrencyCode,
+          roundingMap,
+          exchangeRates,
+        );
+      } catch {
+        // If resolution fails for one size, leave it without resolvedPrices
+        // (frontend will fall back to the old behavior)
+      }
+    }
+  }
+
+  return products;
 }

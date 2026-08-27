@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
+import Country from '@/lib/models/Country';
 import {
   filterProductMediaForPlatform,
   normalizeProductMedia,
   parseProductPlatform,
 } from '@/lib/product-media';
+import { resolveProductPrices } from '@/lib/services/price-resolver';
+import { normalizeCountryCode, type CountryVisibilityMode } from '@/lib/country-visibility';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 
@@ -17,6 +20,9 @@ export async function GET(
     await connectDB();
     const platform = parseProductPlatform(
       request.nextUrl.searchParams.get('platform'),
+    );
+    const viewerCountryCode = normalizeCountryCode(
+      request.nextUrl.searchParams.get('viewerCountryCode'),
     );
     const { id } = await params;
     const normalizedSlug = id.trim().toLowerCase();
@@ -41,17 +47,34 @@ export async function GET(
       normalizedMedia,
       platform,
     );
-    const productWithLegacy = product as typeof product & {
+    const { images: _legacyImages, ...safeProduct } = product as typeof product & {
       images?: unknown;
     };
-    const { images: _legacyImages, ...safeProduct } = productWithLegacy;
+    void _legacyImages;
+
+    const productData: Record<string, unknown> = {
+      ...safeProduct,
+      media: filteredMedia,
+    };
+
+    // Always resolve prices — if no viewerCountryCode, default to "EG"
+    const effectiveViewerCode = viewerCountryCode || 'EG';
+    const allCountries = await Country.find({ isActive: true }).lean();
+    await resolveProductPrices(
+      [productData],
+      effectiveViewerCode,
+      allCountries as unknown as Array<{
+        code: string;
+        currencyCode: string;
+        roundingRule?: string | null;
+        visibilityMode?: CountryVisibilityMode;
+        countriesToSee?: unknown;
+      }>,
+    );
 
     return NextResponse.json({
       success: true,
-      data: {
-        ...safeProduct,
-        media: filteredMedia,
-      },
+      data: productData,
     });
   } catch (error) {
     console.error('Error fetching product:', error);
