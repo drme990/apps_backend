@@ -9,10 +9,6 @@ import {
     type CountryVisibilityOptions,
 } from '@/lib/country-visibility';
 import { getExchangeRates } from '@/lib/services/currency';
-import {
-    getCurrencyRoundingMap,
-    roundPrice,
-} from '@/lib/currency-rounding';
 import { getBasePrice } from '@/lib/services/price-resolver';
 
 const priceSchema = z.object({
@@ -111,10 +107,6 @@ async function buildPriceResponse(productId: string, country: string) {
         }
     }
 
-    const roundingMap = await getCurrencyRoundingMap(
-        visibleCountries.map((c) => c.currencyCode),
-    );
-
     const sizePrices = product.sizes
         .filter((size) => size.isAvailable !== false)
         .map((size) => {
@@ -140,7 +132,7 @@ async function buildPriceResponse(productId: string, country: string) {
                             countryCode: visibleCountry.code,
                             countryName: visibleCountry.name,
                             currencyCode: targetCurrency,
-                            price: roundPrice(realPrice.price, targetCurrency, roundingMap),
+                            price: realPrice.price,
                             type: 'real',
                             isManual: realPrice.isManual,
                         });
@@ -157,7 +149,7 @@ async function buildPriceResponse(productId: string, country: string) {
                             countryCode: visibleCountry.code,
                             countryName: visibleCountry.name,
                             currencyCode: targetCurrency,
-                            price: roundPrice(converted, targetCurrency, roundingMap),
+                            price: Math.ceil(converted),
                             type: 'exchange',
                         });
                     }

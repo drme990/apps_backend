@@ -68,6 +68,10 @@ export const PAYMENT_GATEWAY_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'] as const;
  *
  * NOTE: No rounding is applied here. Rounding rules are only used when
  * SETTING prices in the admin panel — never during price resolution.
+ *
+ * Exchange-converted prices are ceiled to the nearest integer
+ * (e.g. 7053.086 → 7054) so the user never sees fractional amounts.
+ * Real prices are returned as-is (already set by the admin).
  */
 export async function resolveUnitPrice(
   size: { price?: number; prices?: CurrencyPriceEntry[] },
@@ -90,7 +94,8 @@ export async function resolveUnitPrice(
   }
 
   if (basePrice > 0) {
-    return convertCurrency(basePrice, base, target);
+    const converted = await convertCurrency(basePrice, base, target);
+    return Math.ceil(converted);
   }
 
   return 0;
@@ -172,7 +177,7 @@ export async function resolveUnitPriceWithVisibility(
         const rates = await getExchangeRates(mainCurrencyCode);
         const rate = rates[target];
         if (rate) {
-          return mainPriceMatch.amount * rate;
+          return Math.ceil(mainPriceMatch.amount * rate);
         }
       } catch {
         // Exchange rate fetch failed — fall through to real price
@@ -201,7 +206,8 @@ export async function resolveUnitPriceWithVisibility(
     // 3. Convert from base currency to target via exchange rates
     if (basePrice > 0) {
       try {
-        return await convertCurrency(basePrice, base, target);
+        const converted = await convertCurrency(basePrice, base, target);
+        return Math.ceil(converted);
       } catch {
         // Exchange rate conversion failed — fall through to any-price fallback
       }
@@ -217,7 +223,7 @@ export async function resolveUnitPriceWithVisibility(
     if (base === target) return fallbackBasePrice;
     try {
       const converted = await convertCurrency(fallbackBasePrice, base, target);
-      if (converted > 0) return converted;
+      if (converted > 0) return Math.ceil(converted);
     } catch {
       // Can't convert — return base price as-is (better than failing checkout)
     }
@@ -234,7 +240,7 @@ export async function resolveUnitPriceWithVisibility(
           entry.currencyCode,
           target,
         );
-        if (converted > 0) return converted;
+        if (converted > 0) return Math.ceil(converted);
       } catch {
         // skip this entry
       }
@@ -370,11 +376,14 @@ async function resolveSizePrices(
     }
 
     if (amount > 0) {
-      // No rounding — prices are returned as-is. Rounding rules are
-      // only applied when SETTING prices in the admin panel.
+      // Exchange prices are ceiled to the nearest integer so users
+      // never see fractional amounts. Real prices are returned as-is
+      // (already set by the admin). Rounding rules (nearest-ten, etc.)
+      // are only applied when SETTING prices in the admin panel.
+      const finalAmount = type === 'exchange' ? Math.ceil(amount) : amount;
       results.push({
         currencyCode: targetCurrency,
-        amount,
+        amount: finalAmount,
         type,
       });
       seenCurrencies.add(targetCurrency);
