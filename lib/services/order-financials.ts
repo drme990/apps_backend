@@ -9,6 +9,7 @@ type PaymentLite = {
 type InvoiceLite = {
   invoiceStatus?: string;
   value?: number;
+  whileCreating?: boolean;
 };
 
 type OrderLite = {
@@ -71,9 +72,12 @@ export function calculateOrderFinancials(order: OrderLite) {
   // Legacy fallback: if there are NO payment records but there ARE confirmed
   // invoices, use the confirmed invoice values. This covers old orders
   // created before payment entries were added for manual invoice uploads.
+  // Skip invoices uploaded during order creation (whileCreating=true) —
+  // their amount was already accounted for via the paidAmount field.
   const hasPaymentRecords = (order.payments || []).length > 0;
   const confirmedInvoicesTotal = !hasPaymentRecords
     ? (order.invoiceUrls || []).reduce((sum, invoice) => {
+      if (invoice.whileCreating) return sum;
       if (invoice.invoiceStatus === 'confirmed') {
         return sum + toPositiveNumber(invoice.value);
       }

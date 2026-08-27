@@ -78,14 +78,17 @@ export async function POST(request: NextRequest) {
         : 'waiting';
 
     // Support both legacy single-invoice fields and new invoiceUrls array.
-    // Invoices carry only `value` (the document amount) — the actual paid
-    // amount is recorded as a payment entry in order.payments.
+    // Invoices uploaded during order creation are marked `whileCreating: true`
+    // — they are just attached documents. Their amount is NOT recorded as a
+    // separate payment (the paid amount comes from the manually-entered
+    // `paidAmount` field) and they don't appear in the payment timeline.
     const initialInvoiceUrls = invoiceUrls && Array.isArray(invoiceUrls) && invoiceUrls.length > 0
       ? invoiceUrls.map((u: { url: string; invoiceStatus?: string; value?: number; currency?: string }) => ({
         url: u.url,
         invoiceStatus: resolveInvoiceStatus(u.invoiceStatus),
         value: u.value ?? 0,
         currency: u.currency || 'EGP',
+        whileCreating: true,
       }))
       : invoiceUrl
         ? [{
@@ -93,6 +96,7 @@ export async function POST(request: NextRequest) {
           invoiceStatus: resolveInvoiceStatus(invoiceStatus),
           value: invoiceValue,
           currency: invoiceCurrency || 'EGP',
+          whileCreating: true,
         }]
         : [];
 
@@ -482,8 +486,12 @@ export async function POST(request: NextRequest) {
     // ── Determine order status and payments ──
     const isEasykash = paymentMethod === 'easykash';
 
-    // Resolve paid amount for partial payment support
+    // For order creation, the paid amount is the manually-entered
+    // `paidAmount` field — NOT derived from invoice values. The invoice
+    // is just an attached document. The invoice amount is only used as
+    // a payment when uploading invoices to an EXISTING order (PATCH route).
     const requestedPaid = typeof requestedPaidAmount === 'number' ? requestedPaidAmount : 0;
+
     const isFullPayment = requestedPaid <= 0 || requestedPaid >= totalAmount;
     const isPartialManualPayment = !isFullPayment && !isEasykash;
 
@@ -750,7 +758,11 @@ export async function POST(request: NextRequest) {
         );
       }
     } else if (!isEasykash) {
-      // For manual payment methods, add a manual payment record
+      // For manual payment methods, add a manual payment record.
+      // The paid amount comes from the manually-entered `paidAmount`
+      // field, NOT from the invoice values. The invoice is just an
+      // attached document. Invoice amounts are only used as payments
+      // when uploading invoices to an EXISTING order (PATCH route).
       const paymentRecordAmount = isPartialManualPayment ? requestedPaid : totalAmount;
       order.payments = [
         {

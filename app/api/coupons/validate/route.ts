@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/db';
 import { getAuthUser } from '@/lib/auth';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
 import { validateCoupon } from '@/lib/services/coupon';
+import { normalizeCurrencyCode } from '@/lib/currencies';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { parseJsonBody } from '@/lib/validation/http';
 import { couponValidationSchema } from '@/lib/validation/schemas';
@@ -24,17 +25,8 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return parsed.response;
     const { code, orderAmount, currency: rawCurrency, productId } = parsed.data;
 
-    // Normalize currency symbol to ISO code (e.g., "ج.م" → "EGP")
-    const CURRENCY_SYMBOL_MAP: Record<string, string> = {
-      'ج.م': 'EGP', 'ج.م.': 'EGP', 'جنيه': 'EGP',
-      'ر.س': 'SAR', 'ر.س.': 'SAR', 'ريال': 'SAR',
-      'د.إ': 'AED', 'د.ك': 'KWD', 'ر.ق': 'QAR',
-      'د.ب': 'BHD', 'ر.ع': 'OMR', 'د.أ': 'JOD',
-      '$': 'USD', '€': 'EUR', '£': 'GBP',
-    };
-    const currency = (
-      CURRENCY_SYMBOL_MAP[rawCurrency?.trim()] || rawCurrency || 'SAR'
-    ).toUpperCase().trim();
+    // Normalize currency to ISO 4217 code (handles localized symbols like "ج.م" → "EGP")
+    const currency = normalizeCurrencyCode(rawCurrency);
 
     let detectedCountry: string | null = null;
     const authUser =

@@ -392,6 +392,9 @@ export async function PATCH(
     const invoicePaymentId = (url: string) => `manual_invoice_${url.slice(-50)}`;
 
     const addInvoicePayment = async (invoice: IInvoiceUrl, paymentMethodOverride?: IPayment['paymentMethod']) => {
+      // Skip invoices uploaded during order creation — their amount was
+      // already accounted for via the manually-entered paidAmount field.
+      if (invoice.whileCreating) return;
       if (invoice.value <= 0) return;
       if (!Array.isArray(order.payments)) order.payments = [];
       const pid = invoicePaymentId(invoice.url);
@@ -466,6 +469,9 @@ export async function PATCH(
     };
 
     const removeInvoicePayment = (invoice: IInvoiceUrl) => {
+      // Skip invoices uploaded during order creation — they never had
+      // a payment entry, so there's nothing to remove.
+      if (invoice.whileCreating) return;
       if (!Array.isArray(order.payments)) return;
       const pid = invoicePaymentId(invoice.url);
       const idx = order.payments.findIndex((p: IPayment) => p.paymentId === pid);
@@ -628,6 +634,8 @@ export async function PATCH(
 
     if (Array.isArray(body.invoiceUrls)) {
       const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+      const previousInvoiceUrlsForLookup: IInvoiceUrl[] = Array.isArray(order.invoiceUrls) ? order.invoiceUrls : [];
+      const previousByUrl = new Map(previousInvoiceUrlsForLookup.map((entry: IInvoiceUrl) => [entry.url, entry]));
       const nextInvoiceUrls: IInvoiceUrl[] = body.invoiceUrls
         .filter((entry: unknown) => entry && typeof (entry as { url?: string }).url === 'string')
         .map((entry: unknown) => {
@@ -636,8 +644,12 @@ export async function PATCH(
             typeof rawStatus === 'string' && VALID_STATUSES.includes(rawStatus as (typeof VALID_STATUSES)[number])
               ? (rawStatus as (typeof VALID_STATUSES)[number])
               : 'waiting';
+          const url = (entry as { url: string }).url.trim();
+          // Preserve whileCreating from the existing entry (if any).
+          // New invoices uploaded via this path default to whileCreating=false.
+          const prevEntry = previousByUrl.get(url);
           return {
-            url: (entry as { url: string }).url.trim(),
+            url,
             invoiceStatus,
             rejectionReason:
               typeof (entry as { rejectionReason?: unknown }).rejectionReason === 'string'
@@ -648,6 +660,7 @@ export async function PATCH(
               typeof (entry as { currency?: unknown }).currency === 'string'
                 ? (entry as { currency: string }).currency.trim() || 'EGP'
                 : 'EGP',
+            whileCreating: prevEntry?.whileCreating ?? false,
           };
         });
       const previousInvoiceUrls: IInvoiceUrl[] = Array.isArray(order.invoiceUrls) ? order.invoiceUrls : [];

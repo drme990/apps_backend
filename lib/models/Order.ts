@@ -193,6 +193,18 @@ export interface IInvoiceUrl {
   rejectionReason?: string;
   value: number;
   currency?: string;
+  /**
+   * `true` when the invoice was uploaded during manual order creation.
+   * These invoices are just attached documents — their amount is NOT
+   * recorded as a separate payment (the paid amount comes from the
+   * manually-entered `paidAmount` field) and they don't appear in the
+   * payment timeline.
+   *
+   * `false` (default) for invoices uploaded to an existing order via
+   * the PATCH route — these ARE recorded as payments and appear in
+   * the timeline.
+   */
+  whileCreating?: boolean;
 }
 
 /**
@@ -387,7 +399,7 @@ const ReservationAnswerSchema = new mongoose.Schema<IReservationAnswer>(
       ],
       required: true,
     },
-    value: { type: String, required: true, trim: true },
+    value: { type: String, trim: true, default: '' },
   },
   { _id: false },
 );
@@ -475,6 +487,7 @@ const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
     rejectionReason: { type: String, default: '' },
     value: { type: Number, required: true, min: 0, default: 0 },
     currency: { type: String, trim: true, default: 'EGP' },
+    whileCreating: { type: Boolean, default: false },
   },
   { _id: false },
 );

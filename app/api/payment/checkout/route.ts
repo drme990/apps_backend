@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
 import { logError, logException } from '@/lib/services/error-logger';
+import { normalizeCurrencyCode } from '@/lib/currencies';
 import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
@@ -179,45 +180,8 @@ export async function POST(request: NextRequest) {
       viewerCountryCode,
     } = body;
 
-    // ── Normalize currency to ISO 4217 code ──────────────────────────
-    // The frontend should always send the ISO code (e.g., "EGP", "SAR"),
-    // but as a safety net we map known localized symbols to their codes.
-    // This prevents bugs where changing the language changes the currency
-    // string and breaks price resolution.
-    const CURRENCY_SYMBOL_MAP: Record<string, string> = {
-      'ج.م': 'EGP',
-      'ج.م.': 'EGP',
-      'جنيه': 'EGP',
-      'ر.س': 'SAR',
-      'ر.س.': 'SAR',
-      'ريال': 'SAR',
-      'د.إ': 'AED',
-      'د.إ.': 'AED',
-      'د.ك': 'KWD',
-      'د.ك.': 'KWD',
-      'ر.ق': 'QAR',
-      'ر.ق.': 'QAR',
-      'د.ب': 'BHD',
-      'د.ب.': 'BHD',
-      'ر.ع': 'OMR',
-      'ر.ع.': 'OMR',
-      'د.أ': 'JOD',
-      'د.أ.': 'JOD',
-      'ل.س': 'SYP',
-      'د.ل': 'LYD',
-      'د.ج': 'DZD',
-      'د.ت': 'TND',
-      'د.م': 'MAD',
-      '$': 'USD',
-      '€': 'EUR',
-      '£': 'GBP',
-    };
-
-    const currency = (
-      CURRENCY_SYMBOL_MAP[rawCurrency?.trim()] || rawCurrency || 'SAR'
-    )
-      .toUpperCase()
-      .trim();
+    // Normalize currency to ISO 4217 code (handles localized symbols like "ج.م" → "EGP")
+    const currency = normalizeCurrencyCode(rawCurrency);
 
     const orderSource: 'manasik' | 'ghadaq' =
       source === 'ghadaq' ? 'ghadaq' : 'manasik';

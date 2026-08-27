@@ -4,7 +4,6 @@ import {
   type CountryVisibilityOptions,
   type CountryVisibilityRecord,
 } from '@/lib/country-visibility';
-import { roundPrice, getCurrencyRoundingMap, type RoundingRule } from '@/lib/currency-rounding';
 
 interface CurrencyPriceEntry {
   currencyCode: string;
@@ -66,6 +65,9 @@ export const PAYMENT_GATEWAY_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'] as const;
  *   1. Exact match in `size.prices[]` for the requested currency
  *   2. If the product's base currency matches, use the base price from `prices[]`
  *   3. Convert the base price from `prices[]` to target via exchange rates
+ *
+ * NOTE: No rounding is applied here. Rounding rules are only used when
+ * SETTING prices in the admin panel — never during price resolution.
  */
 export async function resolveUnitPrice(
   size: { price?: number; prices?: CurrencyPriceEntry[] },
@@ -88,9 +90,7 @@ export async function resolveUnitPrice(
   }
 
   if (basePrice > 0) {
-    const converted = await convertCurrency(basePrice, base, target);
-    const roundingMap = await getCurrencyRoundingMap([target]);
-    return roundPrice(converted, target, roundingMap);
+    return convertCurrency(basePrice, base, target);
   }
 
   return 0;
@@ -110,6 +110,9 @@ export async function resolveUnitPrice(
  *      - Use the pre-defined price for the target currency from `size.prices[]`
  *      - Fall back to `size.price` if the target currency matches the base
  *      - Fall back to exchange rate conversion from the base currency
+ *
+ * NOTE: No rounding is applied here. Rounding rules are only used when
+ * SETTING prices in the admin panel — never during price resolution.
  *
  * @param size               The product size with `price` and `prices[]`
  * @param baseCurrency       The product's base currency (e.g. "SAR")
@@ -150,9 +153,6 @@ export async function resolveUnitPriceWithVisibility(
   const visibility: CountryVisibilityOptions | undefined =
     targetCountry?.viewerVisibility;
 
-  // Build rounding map for the target currency (same as resolveSizePrices)
-  const roundingMap = await getCurrencyRoundingMap([target]);
-
   // If exchangePrice is enabled for this country, convert from the main currency
   if (visibility?.exchangePrice === true) {
     // Find the price in the main currency (the viewer's home currency)
@@ -164,7 +164,7 @@ export async function resolveUnitPriceWithVisibility(
     if (mainPriceMatch && typeof mainPriceMatch.amount === 'number') {
       // If the target IS the main currency, no conversion needed
       if (mainCurrencyCode === target) {
-        return roundPrice(mainPriceMatch.amount, target, roundingMap);
+        return mainPriceMatch.amount;
       }
 
       // Fetch exchange rates with the main currency as base
@@ -172,7 +172,7 @@ export async function resolveUnitPriceWithVisibility(
         const rates = await getExchangeRates(mainCurrencyCode);
         const rate = rates[target];
         if (rate) {
-          return roundPrice(mainPriceMatch.amount * rate, target, roundingMap);
+          return mainPriceMatch.amount * rate;
         }
       } catch {
         // Exchange rate fetch failed — fall through to real price
@@ -201,8 +201,7 @@ export async function resolveUnitPriceWithVisibility(
     // 3. Convert from base currency to target via exchange rates
     if (basePrice > 0) {
       try {
-        const converted = await convertCurrency(basePrice, base, target);
-        return roundPrice(converted, target, roundingMap);
+        return await convertCurrency(basePrice, base, target);
       } catch {
         // Exchange rate conversion failed — fall through to any-price fallback
       }
@@ -218,7 +217,7 @@ export async function resolveUnitPriceWithVisibility(
     if (base === target) return fallbackBasePrice;
     try {
       const converted = await convertCurrency(fallbackBasePrice, base, target);
-      if (converted > 0) return roundPrice(converted, target, roundingMap);
+      if (converted > 0) return converted;
     } catch {
       // Can't convert — return base price as-is (better than failing checkout)
     }
@@ -235,7 +234,7 @@ export async function resolveUnitPriceWithVisibility(
           entry.currencyCode,
           target,
         );
-        if (converted > 0) return roundPrice(converted, target, roundingMap);
+        if (converted > 0) return converted;
       } catch {
         // skip this entry
       }
@@ -295,19 +294,21 @@ export async function convertToPaymentCurrency(
  * Returns an array of `ResolvedPrice` entries — one per visible currency —
  * that the frontend can look up directly without doing any conversion.
  *
+ * NOTE: No rounding is applied here. Rounding rules are only used when
+ * SETTING prices in the admin panel — never during price resolution.
+ *
  * @param size               The product size with `price` and `prices[]`
  * @param baseCurrency       The product's base currency
  * @param viewerCountryCode  The viewer's home country code (2-letter)
  * @param visibleCountries   Pre-computed visible countries for the viewer
  * @param mainCurrencyCode   The viewer's home currency (exchange base)
- * @param roundingMap        Currency rounding rules map
+ * @param exchangeRates      Pre-fetched exchange rates (based on main currency)
  */
 async function resolveSizePrices(
   size: { price?: number; prices?: CurrencyPriceEntry[] },
   baseCurrency: string,
   visibleCountries: Array<CountryRecord & { viewerVisibility: CountryVisibilityOptions }>,
   mainCurrencyCode: string,
-  roundingMap: Record<string, RoundingRule>,
   exchangeRates: Record<string, number> | null,
 ): Promise<ResolvedPrice[]> {
   const base = baseCurrency.toUpperCase();
@@ -369,10 +370,11 @@ async function resolveSizePrices(
     }
 
     if (amount > 0) {
-      const rounded = roundPrice(amount, targetCurrency, roundingMap);
+      // No rounding — prices are returned as-is. Rounding rules are
+      // only applied when SETTING prices in the admin panel.
       results.push({
         currencyCode: targetCurrency,
-        amount: rounded,
+        amount,
         type,
       });
       seenCurrencies.add(targetCurrency);
@@ -419,11 +421,6 @@ export async function resolveProductPrices(
     viewerCountryCode,
   );
 
-  // Build rounding map
-  const roundingMap = await getCurrencyRoundingMap(
-    visibleCountries.map((c) => c.currencyCode),
-  );
-
   // Fetch exchange rates once (based on main currency)
   let exchangeRates: Record<string, number> | null = null;
   const needsExchange = visibleCountries.some(
@@ -454,7 +451,6 @@ export async function resolveProductPrices(
           baseCurrency,
           visibleCountries,
           mainCurrencyCode,
-          roundingMap,
           exchangeRates,
         );
       } catch {
