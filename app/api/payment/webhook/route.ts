@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
+import { logException } from '@/lib/services/error-logger';
 import Order, { type IOrder, type IPayment, type PaymentMethod } from '@/lib/models/Order';
 import PaymentLink from '@/lib/models/PaymentLink';
 import {
@@ -654,6 +655,12 @@ export async function POST(request: NextRequest) {
     auditPayload.responseStatus = 500;
     auditPayload.errorMessage =
       error instanceof Error ? error.message : String(error);
+
+    await logException(request, error, {
+      source: 'POST /api/payment/webhook',
+      level: 'fatal',
+      statusCode: 500,
+    });
 
     return NextResponse.json(
       { success: false, error: 'Webhook processing failed' },

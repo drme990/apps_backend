@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
+import { logError, logException } from '@/lib/services/error-logger';
 import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
@@ -878,6 +879,17 @@ export async function POST(request: NextRequest) {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Unknown error';
+      await logException(request, err, {
+        source: 'checkout.resolveUnitPrice',
+        level: 'error',
+        statusCode: 400,
+        metadata: {
+          currency: currencyUpper,
+          productId: product._id?.toString(),
+          sizeIndex: activeSizeIndex,
+          detectedCountry: resolvedDetectedCountry,
+        },
+      });
       return NextResponse.json(
         {
           success: false,
@@ -888,6 +900,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (unitPrice <= 0) {
+      await logError(request, {
+        source: 'checkout.unitPriceZero',
+        level: 'error',
+        statusCode: 400,
+        message: `Product price is not configured for ${currencyUpper}`,
+        metadata: {
+          currency: currencyUpper,
+          productId: product._id?.toString(),
+          sizeIndex: activeSizeIndex,
+        },
+      });
       return NextResponse.json(
         {
           success: false,
@@ -1368,20 +1391,80 @@ export async function POST(request: NextRequest) {
         easykashAmount = Math.ceil(convertedAmount);
         paymentCurrency = 'EGP';
       } catch (conversionError) {
+        // Fallback 1: try the EGP price from the product's prices[] array
+        let egpUnitPrice: number | null = null;
         const egpPriceEntry = selectedSize.prices?.find(
           (p: { currencyCode: string; amount: number }) =>
             p.currencyCode === 'EGP',
         );
 
         if (
-          typeof egpPriceEntry?.amount !== 'number' ||
-          egpPriceEntry.amount <= 0
+          typeof egpPriceEntry?.amount === 'number' &&
+          egpPriceEntry.amount > 0
         ) {
+          egpUnitPrice = egpPriceEntry.amount;
+        }
+
+        // Fallback 2: try converting from the base currency to EGP
+        if (egpUnitPrice === null) {
+          const baseCur = (product.baseCurrency || 'SAR').toUpperCase();
+          const basePriceEntry = selectedSize.prices?.find(
+            (p: { currencyCode: string; amount: number }) =>
+              p.currencyCode.toUpperCase() === baseCur,
+          );
+          const basePrice = basePriceEntry?.amount ?? selectedSize.price ?? 0;
+          if (basePrice > 0) {
+            try {
+              const converted = await convertCurrency(basePrice, baseCur, 'EGP');
+              if (Number.isFinite(converted) && converted > 0) {
+                egpUnitPrice = converted;
+              }
+            } catch {
+              // base conversion also failed
+            }
+          }
+        }
+
+        // Fallback 3: try ANY price entry and convert to EGP
+        if (egpUnitPrice === null) {
+          for (const entry of selectedSize.prices || []) {
+            if (typeof entry.amount === 'number' && entry.amount > 0) {
+              try {
+                const converted = await convertCurrency(
+                  entry.amount,
+                  entry.currencyCode,
+                  'EGP',
+                );
+                if (Number.isFinite(converted) && converted > 0) {
+                  egpUnitPrice = converted;
+                  break;
+                }
+              } catch {
+                // try next entry
+              }
+            }
+          }
+        }
+
+        if (egpUnitPrice === null || egpUnitPrice <= 0) {
           await Order.findByIdAndDelete(order._id);
           const reason =
             conversionError instanceof Error
               ? conversionError.message
               : 'Unknown conversion error';
+
+          await logException(request, conversionError, {
+            source: 'checkout.egpConversionFailed',
+            level: 'fatal',
+            statusCode: 500,
+            metadata: {
+              fromCurrency: currencyUpper,
+              toCurrency: 'EGP',
+              productId: product._id?.toString(),
+              orderNumber: order.orderNumber,
+              reason,
+            },
+          });
 
           return NextResponse.json(
             {
@@ -1392,7 +1475,6 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        const egpUnitPrice = egpPriceEntry.amount;
         const egpTotal = egpUnitPrice * quantity;
         const couponRatio = totalAmount > 0 ? couponDiscount / totalAmount : 0;
         const egpAfterDiscount = egpTotal - egpTotal * couponRatio;
@@ -1562,6 +1644,13 @@ export async function POST(request: NextRequest) {
       operation: 'POST',
       severity: 'critical',
     });
+
+    await logException(request, error, {
+      source: 'POST /api/payment/checkout',
+      level: 'fatal',
+      statusCode: 500,
+    });
+
     return NextResponse.json(
       { success: false, error: 'Failed to create checkout' },
       { status: 500 },

@@ -168,10 +168,14 @@ export async function resolveUnitPriceWithVisibility(
       }
 
       // Fetch exchange rates with the main currency as base
-      const rates = await getExchangeRates(mainCurrencyCode);
-      const rate = rates[target];
-      if (rate) {
-        return roundPrice(mainPriceMatch.amount * rate, target, roundingMap);
+      try {
+        const rates = await getExchangeRates(mainCurrencyCode);
+        const rate = rates[target];
+        if (rate) {
+          return roundPrice(mainPriceMatch.amount * rate, target, roundingMap);
+        }
+      } catch {
+        // Exchange rate fetch failed — fall through to real price
       }
     }
 
@@ -196,8 +200,45 @@ export async function resolveUnitPriceWithVisibility(
 
     // 3. Convert from base currency to target via exchange rates
     if (basePrice > 0) {
-      const converted = await convertCurrency(basePrice, base, target);
-      return roundPrice(converted, target, roundingMap);
+      try {
+        const converted = await convertCurrency(basePrice, base, target);
+        return roundPrice(converted, target, roundingMap);
+      } catch {
+        // Exchange rate conversion failed — fall through to any-price fallback
+      }
+    }
+  }
+
+  // ── Last-resort fallback: use ANY available price in prices[] ──
+  // This ensures checkout never fails just because one currency's
+  // exchange rate is temporarily unavailable. We try the base currency
+  // price first, then any other price, converting if possible.
+  const fallbackBasePrice = getBasePrice(size, base);
+  if (fallbackBasePrice > 0) {
+    if (base === target) return fallbackBasePrice;
+    try {
+      const converted = await convertCurrency(fallbackBasePrice, base, target);
+      if (converted > 0) return roundPrice(converted, target, roundingMap);
+    } catch {
+      // Can't convert — return base price as-is (better than failing checkout)
+    }
+    return fallbackBasePrice;
+  }
+
+  // Try any price entry in the array
+  for (const entry of size.prices || []) {
+    if (typeof entry.amount === 'number' && entry.amount > 0) {
+      if (entry.currencyCode.toUpperCase() === target) return entry.amount;
+      try {
+        const converted = await convertCurrency(
+          entry.amount,
+          entry.currencyCode,
+          target,
+        );
+        if (converted > 0) return roundPrice(converted, target, roundingMap);
+      } catch {
+        // skip this entry
+      }
     }
   }
 

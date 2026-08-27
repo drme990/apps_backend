@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
+import { logException } from '@/lib/services/error-logger';
 import Order from '@/lib/models/Order';
 import Referral from '@/lib/models/Referral';
 import Product from '@/lib/models/Product';
@@ -313,6 +314,11 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error fetching payment status:', error);
+    await logException(request, error, {
+      source: 'GET /api/payment/status',
+      level: 'error',
+      statusCode: 500,
+    });
     return NextResponse.json(
       { success: false, error: 'Failed to fetch payment status' },
       { status: 500 },

@@ -76,7 +76,8 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'crm',
         'accounts',
         'orderDesignLogs',
-        'orderDesigns'
+        'orderDesigns',
+        'errorLogs'
       ],
       default: [],
     },
