@@ -4,7 +4,7 @@ Canonical API and business-logic service for Admin Panel, Ghadaq, and Manasik.
 
 ## Latest Updates (April 2026)
 
-- Product media migration completed:
+- Product media migration completed :
   - removed legacy `images` field from model and API contracts
   - standardized `media[]` entries with per-item platform visibility
   - valid platforms: `shared`, `ghadaq`, `manasik`
