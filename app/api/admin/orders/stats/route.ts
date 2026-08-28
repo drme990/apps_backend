@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { PipelineStage } from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
@@ -104,12 +105,16 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = { $regex: escaped, $options: 'i' };
       andConditions.push({
         $or: [
-          { orderNumber: { $regex: search, $options: 'i' } },
-          { 'billingData.fullName': { $regex: search, $options: 'i' } },
-          { 'billingData.email': { $regex: search, $options: 'i' } },
-          { 'billingData.phone': { $regex: search, $options: 'i' } },
+          { orderNumber: regex },
+          { 'billingData.fullName': regex },
+          { 'billingData.email': regex },
+          { 'billingData.phone': regex },
+          { 'items.productName.ar': regex },
+          { 'items.productName.en': regex },
         ],
       });
     }
@@ -156,7 +161,7 @@ export async function GET(request: NextRequest) {
       query.$and = andConditions;
     }
 
-    const pipeline: any[] = [
+    const pipeline: PipelineStage[] = [
       { $match: query },
       { $unwind: '$items' },
       {

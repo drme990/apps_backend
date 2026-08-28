@@ -27,7 +27,6 @@ interface PriceEntry {
 
 function getRealPrice(
     size: {
-        price?: number;
         prices: { currencyCode: string; amount: number; isManual?: boolean }[];
     },
     targetCurrency: string,

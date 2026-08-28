@@ -1416,7 +1416,7 @@ export async function POST(request: NextRequest) {
             (p: { currencyCode: string; amount: number }) =>
               p.currencyCode.toUpperCase() === baseCur,
           );
-          const basePrice = basePriceEntry?.amount ?? selectedSize.price ?? 0;
+          const basePrice = basePriceEntry?.amount ?? 0;
           if (basePrice > 0) {
             try {
               const converted = await convertCurrency(basePrice, baseCur, 'EGP');

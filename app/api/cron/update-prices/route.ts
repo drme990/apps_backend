@@ -3,7 +3,7 @@ import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
 import Coupon from '@/lib/models/Coupon';
 import Country from '@/lib/models/Country';
-import CronLog from '@/lib/models/CronLog';
+import CronLog, { type IPriceChange } from '@/lib/models/CronLog';
 import { convertToMultipleCurrencies } from '@/lib/services/currency';
 import { buildCurrencyRoundingMap, roundPrice } from '@/lib/currency-rounding';
 import { getBasePrice } from '@/lib/services/price-resolver';
@@ -48,13 +48,26 @@ export async function GET(request: Request) {
     ]);
     let updatedCount = 0;
     let updatedCouponCount = 0;
+    const priceChanges: IPriceChange[] = [];
 
     for (const product of products) {
       let modified = false;
+      const productId = String(product._id);
+      const productNameAr = product.name?.ar || '';
+      const productNameEn = product.name?.en || '';
 
-      // Update size prices
+      // Update size prices — convert from the base-currency entry in
+      // prices[] to all target currencies, overwriting non-manual entries.
       for (const size of product.sizes) {
         const basePrice = getBasePrice(size, product.baseCurrency);
+
+        // Skip sizes with no base price — don't overwrite existing
+        // prices with 0 (which would destroy them).
+        if (basePrice <= 0) continue;
+
+        const sizeNameAr = size.name?.ar || '';
+        const sizeNameEn = size.name?.en || '';
+
         const converted = await convertToMultipleCurrencies(
           basePrice,
           product.baseCurrency,
@@ -62,27 +75,44 @@ export async function GET(request: Request) {
         );
 
         for (const [code, amount] of Object.entries(converted)) {
+          const newAmount = roundPrice(amount, code, roundingMap);
           const existingIndex = size.prices.findIndex(
             (p: { currencyCode: string }) => p.currencyCode === code,
           );
 
+          let prevValue = 0;
+          let isManual = false;
+
           if (existingIndex >= 0) {
-            if (!size.prices[existingIndex].isManual) {
-              size.prices[existingIndex].amount = roundPrice(
-                amount,
-                code,
-                roundingMap,
-              );
+            prevValue = size.prices[existingIndex].amount;
+            isManual = !!size.prices[existingIndex].isManual;
+            if (!isManual) {
+              size.prices[existingIndex].amount = newAmount;
               modified = true;
             }
           } else {
             size.prices.push({
               currencyCode: code,
-              amount: roundPrice(amount, code, roundingMap),
+              amount: newAmount,
               isManual: false,
             });
             modified = true;
           }
+
+          // Record this evaluation for the log
+          const changed = prevValue !== newAmount;
+          priceChanges.push({
+            productId,
+            productNameAr,
+            productNameEn,
+            sizeNameAr,
+            sizeNameEn,
+            currencyCode: code,
+            prevValue,
+            newValue: isManual ? prevValue : newAmount,
+            changed: isManual ? false : changed,
+            isManual,
+          });
         }
       }
 
@@ -159,6 +189,7 @@ export async function GET(request: Request) {
       updatedCouponCount,
       targetCurrencies,
       duration: Date.now() - startTime,
+      priceChanges,
     });
 
     return NextResponse.json({

@@ -40,11 +40,11 @@ jobs:
           aws s3 cp $FILE_NAME s3://${{ secrets.R2_BUCKET_NAME }}/backups/$FILE_NAME \
             --endpoint-url https://${{ secrets.R2_PUBLIC_URL }}
 
-      - name: Keep only last 4 backups
+      - name: Keep only last 6 backups
         run: |
           aws s3 ls s3://${{ secrets.R2_BUCKET_NAME }}/backups/ \
             --endpoint-url https://${{ secrets.R2_PUBLIC_URL }} \
-            | sort | head -n -4 | awk '{print $4}' | while read file; do
+            | sort | head -n -6 | awk '{print $4}' | while read file; do
               aws s3 rm s3://${{ secrets.R2_BUCKET_NAME }}/backups/$file \
                 --endpoint-url https://${{ secrets.R2_PUBLIC_URL }}
             done

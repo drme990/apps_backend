@@ -89,6 +89,8 @@ export async function GET(request: NextRequest) {
           { 'billingData.phone': regex },
           { 'billingData.email': regex },
           { 'reservationData.value': regex },
+          { 'items.productName.ar': regex },
+          { 'items.productName.en': regex },
         ],
       };
     }

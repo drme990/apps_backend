@@ -133,12 +133,16 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = { $regex: escaped, $options: 'i' };
       andConditions.push({
         $or: [
-          { orderNumber: { $regex: search, $options: 'i' } },
-          { 'billingData.fullName': { $regex: search, $options: 'i' } },
-          { 'billingData.email': { $regex: search, $options: 'i' } },
-          { 'billingData.phone': { $regex: search, $options: 'i' } },
+          { orderNumber: regex },
+          { 'billingData.fullName': regex },
+          { 'billingData.email': regex },
+          { 'billingData.phone': regex },
+          { 'items.productName.ar': regex },
+          { 'items.productName.en': regex },
         ],
       });
     }

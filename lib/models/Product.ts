@@ -18,13 +18,7 @@ export interface IProductSize {
   name: { ar: string; en: string };
   /** Design-only name — used by the design app instead of `name`. Falls back to `name`. */
   designName?: string;
-  /**
-   * @deprecated Use `prices[]` instead. The base-currency price is now
-   * stored as an entry in `prices[]` with `currencyCode === baseCurrency`.
-   * Kept only for backward compatibility with unmigrated products.
-   */
-  price?: number;
-  /** Single source of truth for all currency prices. */
+  /** Single source of truth for all currency prices. The base-currency price is the entry with `currencyCode === product.baseCurrency`. */
   prices: ICurrencyPrice[];
   /** Manual order price in EGP (single currency). Null = use regular price. */
   manualPrice?: number | null;
@@ -124,9 +118,6 @@ const ProductSizeSchema = new mongoose.Schema({
     en: { type: String, required: true, trim: true },
   },
   designName: { type: String, trim: true, default: '' },
-  // price is deprecated — base price lives in prices[] as the baseCurrency entry.
-  // Kept for backward compatibility with unmigrated products.
-  price: { type: Number, min: 0, default: 0 },
   prices: [CurrencyPriceSchema],
   manualPrice: { type: Number, min: 0, default: null },
   feedsUp: { type: Number, min: 0, default: 0 },

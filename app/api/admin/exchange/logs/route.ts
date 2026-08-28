@@ -9,9 +9,11 @@ export async function GET() {
     const auth = await requireAdminPageAccess('exchange');
     if ('error' in auth) return auth.error;
 
+    // Limit to 10 most recent logs — each log may contain a large
+    // priceChanges array, so we keep the response size manageable.
     const logs = await CronLog.find({ jobName: 'update-prices' })
       .sort({ createdAt: -1 })
-      .limit(20)
+      .limit(10)
       .lean();
 
     return NextResponse.json({ success: true, data: logs });

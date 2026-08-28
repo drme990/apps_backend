@@ -47,6 +47,11 @@ export async function POST(
 
     for (const size of product.sizes) {
       const basePrice = getBasePrice(size, product.baseCurrency);
+
+      // Skip sizes with no base price — don't overwrite existing
+      // prices with 0 (which would destroy them).
+      if (basePrice <= 0) continue;
+
       const converted = await convertToMultipleCurrencies(
         basePrice,
         product.baseCurrency,

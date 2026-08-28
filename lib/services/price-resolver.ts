@@ -13,15 +13,14 @@ interface CurrencyPriceEntry {
 /**
  * Get the base-currency price for a size from its `prices[]` array.
  *
- * With the refactored pricing model, `prices[]` is the single source of
- * truth — there is no separate `size.price` field. The base price is
- * simply the entry in `prices[]` whose `currencyCode` matches the
- * product's `baseCurrency`.
+ * `prices[]` is the single source of truth. The base price is the entry
+ * in `prices[]` whose `currencyCode` matches the product's
+ * `baseCurrency`.
  *
  * @returns The base price, or 0 if not found.
  */
 export function getBasePrice(
-  size: { prices?: CurrencyPriceEntry[]; price?: number },
+  size: { prices?: CurrencyPriceEntry[] },
   baseCurrency: string,
 ): number {
   const base = baseCurrency.toUpperCase();
@@ -31,9 +30,7 @@ export function getBasePrice(
   if (match && typeof match.amount === 'number') {
     return match.amount;
   }
-  // Legacy fallback: if prices[] doesn't have the base currency,
-  // fall back to the deprecated size.price field (for unmigrated products).
-  return size.price ?? 0;
+  return 0;
 }
 
 type CountryRecord = CountryVisibilityRecord & {
@@ -74,7 +71,7 @@ export const PAYMENT_GATEWAY_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'] as const;
  * Real prices are returned as-is (already set by the admin).
  */
 export async function resolveUnitPrice(
-  size: { price?: number; prices?: CurrencyPriceEntry[] },
+  size: { prices?: CurrencyPriceEntry[] },
   baseCurrency: string,
   targetCurrency: string,
 ): Promise<number> {
@@ -113,13 +110,13 @@ export async function resolveUnitPrice(
  *
  *   2. If the target country has `realPrice: true` (or exchangePrice is false):
  *      - Use the pre-defined price for the target currency from `size.prices[]`
- *      - Fall back to `size.price` if the target currency matches the base
+ *      - Fall back to the base price from `prices[]` if the target currency matches the base
  *      - Fall back to exchange rate conversion from the base currency
  *
  * NOTE: No rounding is applied here. Rounding rules are only used when
  * SETTING prices in the admin panel — never during price resolution.
  *
- * @param size               The product size with `price` and `prices[]`
+ * @param size               The product size with `prices[]`
  * @param baseCurrency       The product's base currency (e.g. "SAR")
  * @param targetCurrency     The currency to resolve the price in (e.g. "EGP")
  * @param viewerCountryCode  The viewer's home country code (e.g. "SA")
@@ -128,7 +125,7 @@ export async function resolveUnitPrice(
  * @returns The resolved unit price in the target currency.
  */
 export async function resolveUnitPriceWithVisibility(
-  size: { price?: number; prices?: CurrencyPriceEntry[] },
+  size: { prices?: CurrencyPriceEntry[] },
   baseCurrency: string,
   targetCurrency: string,
   viewerCountryCode: string,
@@ -303,7 +300,7 @@ export async function convertToPaymentCurrency(
  * NOTE: No rounding is applied here. Rounding rules are only used when
  * SETTING prices in the admin panel — never during price resolution.
  *
- * @param size               The product size with `price` and `prices[]`
+ * @param size               The product size with `prices[]`
  * @param baseCurrency       The product's base currency
  * @param viewerCountryCode  The viewer's home country code (2-letter)
  * @param visibleCountries   Pre-computed visible countries for the viewer
@@ -311,7 +308,7 @@ export async function convertToPaymentCurrency(
  * @param exchangeRates      Pre-fetched exchange rates (based on main currency)
  */
 async function resolveSizePrices(
-  size: { price?: number; prices?: CurrencyPriceEntry[] },
+  size: { prices?: CurrencyPriceEntry[] },
   baseCurrency: string,
   visibleCountries: Array<CountryRecord & { viewerVisibility: CountryVisibilityOptions }>,
   mainCurrencyCode: string,
@@ -452,7 +449,6 @@ export async function resolveProductPrices(
     for (const size of sizes) {
       const sizeData = {
         prices: size.prices as CurrencyPriceEntry[] | undefined,
-        price: size.price as number | undefined, // legacy fallback
       };
       try {
         size.resolvedPrices = await resolveSizePrices(
