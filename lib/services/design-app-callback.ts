@@ -13,7 +13,7 @@
  *                                `x-callback-secret` header
  */
 
-const DEFAULT_TIMEOUT_MS = 300_000;
+const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes — render queue can be long
 
 function getDesignAppUrl(): string {
   const url = (process.env.DESIGN_APP_URL || '').replace(/\/$/, '');
@@ -203,7 +203,7 @@ export async function generateDesignForProduct(params: {
         success: false,
         productId,
         error: 'timeout',
-        message: 'Design app did not respond within 300s.',
+        message: 'Design app did not respond within 600s.',
       };
     }
     return {

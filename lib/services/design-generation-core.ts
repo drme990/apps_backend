@@ -161,7 +161,7 @@ export async function generateDesignsForOrder(
     };
   });
 
-  // ── Retry retriable products (up to 3 times with increasing delay) ──
+  // ── Retry retriable products (up to 5 times with increasing delay) ──
   // A timeout usually means the design app's render queue was full at
   // the time of the request. fetchFailed usually means a transient
   // network drop or the design app returned an HTML error page (e.g.
@@ -170,9 +170,13 @@ export async function generateDesignsForOrder(
   // products that hit these retriable errors — no retry for other
   // errors (noTemplate, noBookingProduct, etc.) since those won't fix
   // themselves.
+  //
+  // 5 retries with longer delays (up to 60s) gives the design app
+  // plenty of time to recover from transient issues — render queue
+  // drain, reverse proxy restart, network blip, etc.
   const retriableErrorCodes = new Set(['timeout', 'fetchFailed']);
-  const MAX_RETRIES = 3;
-  const retryDelays = [3000, 8000, 15000]; // 3s, 8s, 15s
+  const MAX_RETRIES = 5;
+  const retryDelays = [3000, 8000, 15000, 30000, 60000]; // 3s, 8s, 15s, 30s, 60s
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const retryIndices = results
