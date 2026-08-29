@@ -34,7 +34,7 @@ const OrderDesignVersionCounterSchema = new mongoose.Schema<IOrderDesignVersionC
     nextVersion: { type: Number, required: true, default: 1, min: 1 },
   },
   {
-    collection: 'order_design_version_counters',
+    collection: 'design_order_version_counters',
     timestamps: true,
   },
 );

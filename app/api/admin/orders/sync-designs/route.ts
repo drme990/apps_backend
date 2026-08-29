@@ -16,7 +16,7 @@ const POLL_INTERVAL_MS = 500;
  * POST /api/admin/orders/sync-designs
  *
  * Syncs the order's `designUrls[].url` and `currentVersion` with the
- * latest version in the `order_design_versions` collection.
+ * latest version in the `design_order_versions` collection.
  *
  * **Long-poll mode** (default): when `wait: true` is in the body, the
  * endpoint checks for newer versions, and if none found, waits up to 10

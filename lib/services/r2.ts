@@ -11,6 +11,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
+import sharp from 'sharp';
 
 const accountId = process.env.R2_ACCOUNT_ID;
 const accessKeyId = process.env.R2_ACCESS_KEY_ID;
@@ -33,6 +34,9 @@ function sanitizeObjectName(name: string): string {
  *
  * Format: `{folder}/{timestamp}-{random8}-{sanitized-name}`
  *
+ * Tier 1 — Immutable asset. Every upload gets a unique key
+ * ({timestamp}-{random8}). Old objects stay in R2 until explicitly deleted.
+ *
  * The timestamp (ms since epoch) gives chronological ordering and
  * human-readability. The 8-char random hex component eliminates any
  * collision risk when multiple uploads happen in the same millisecond
@@ -42,6 +46,43 @@ function sanitizeObjectName(name: string): string {
 function buildObjectKey(folder: string, name: string): string {
   const random = randomBytes(4).toString('hex');
   return `${folder}/${Date.now()}-${random}-${sanitizeObjectName(name)}`;
+}
+
+/**
+ * Compress an image buffer server-side using sharp.
+ *
+ * - Max dimension: 1920px (preserving aspect ratio)
+ * - JPEG quality: 80 (on sharp's 0-100 scale)
+ * - Target: < 500KB
+ *
+ * Used by the checkout route to compress customer reservation photos
+ * before uploading to R2 (defense-in-depth, even if the frontend already
+ * compressed the image).
+ *
+ * @param buffer   Raw image buffer (JPEG, PNG, WebP, GIF, etc.)
+ * @param mimeType Original MIME type (used to determine output format)
+ * @returns Compressed JPEG buffer + the output MIME type ('image/jpeg')
+ */
+export async function compressImageBuffer(
+  buffer: Buffer<ArrayBufferLike>,
+  _mimeType: string,
+  options?: { maxWidth?: number; quality?: number },
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  const maxWidth = options?.maxWidth ?? 1920;
+  const quality = options?.quality ?? 80;
+
+  // Cast to Buffer — sharp's SharpInput type uses the bare Buffer type
+  // (Buffer<ArrayBuffer>), but Buffer.from() returns Buffer<ArrayBufferLike>.
+  // The runtime behavior is identical; this is just a TS 5.7+ typing quirk.
+  const compressed = await sharp(buffer as Buffer)
+    .resize(maxWidth, maxWidth, {
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality, mozjpeg: true })
+    .toBuffer();
+
+  return { buffer: compressed, mimeType: 'image/jpeg' };
 }
 
 export const s3Client = new S3Client({

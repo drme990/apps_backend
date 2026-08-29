@@ -18,7 +18,16 @@ export interface IProductSize {
   name: { ar: string; en: string };
   /** Design-only name — used by the design app instead of `name`. Falls back to `name`. */
   designName?: string;
-  /** Single source of truth for all currency prices. The base-currency price is the entry with `currencyCode === product.baseCurrency`. */
+  /**
+   * Base price in the product's base currency. Required — every size must
+   * have one. Used ONLY by the cron job, auto-price, and exchange update
+   * routes for calculating exchange-converted prices. The `prices[]` array
+   * is the source of truth for display/checkout.
+   */
+  basePrice: number;
+  /** The currency code for `basePrice` (e.g. "SAR"). Required — saved alongside basePrice so each size is self-contained for exchange calculations. */
+  baseCurrency: string;
+  /** All currency prices (including the base-currency entry). Source of truth for display/checkout. */
   prices: ICurrencyPrice[];
   /** Manual order price in EGP (single currency). Null = use regular price. */
   manualPrice?: number | null;
@@ -118,6 +127,8 @@ const ProductSizeSchema = new mongoose.Schema({
     en: { type: String, required: true, trim: true },
   },
   designName: { type: String, trim: true, default: '' },
+  basePrice: { type: Number, required: true, min: 0 },
+  baseCurrency: { type: String, required: true, uppercase: true, trim: true },
   prices: [CurrencyPriceSchema],
   manualPrice: { type: Number, min: 0, default: null },
   feedsUp: { type: Number, min: 0, default: 0 },

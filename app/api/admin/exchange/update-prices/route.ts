@@ -52,10 +52,14 @@ export async function POST() {
       const productNameAr = product.name?.ar || '';
       const productNameEn = product.name?.en || '';
 
-      // Update size prices — convert from the base-currency entry in
-      // prices[] to all target currencies, overwriting non-manual entries.
+      // Update size prices — convert from the size's basePrice to all
+      // target currencies, overwriting non-manual entries.
+      // basePrice is the dedicated field for exchange calculations.
+      // Fall back to prices[] lookup for old docs without basePrice.
       for (const size of product.sizes) {
-        const basePrice = getBasePrice(size, product.baseCurrency);
+        const basePrice = size.basePrice > 0
+          ? size.basePrice
+          : getBasePrice(size, product.baseCurrency);
 
         // Skip sizes with no base price — don't overwrite existing
         // prices with 0 (which would destroy them).

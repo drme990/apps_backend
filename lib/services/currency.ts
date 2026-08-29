@@ -121,7 +121,7 @@ export async function convertCurrency(
       `No exchange rate found for ${fromCurrency} → ${toCurrency}`,
     );
 
-  return Math.round(amount * rate * 100) / 100;
+  return Math.ceil(amount * rate * 100) / 100;
 }
 
 export async function convertToMultipleCurrencies(
@@ -137,7 +137,7 @@ export async function convertToMultipleCurrencies(
     if (code === baseCurrency.toUpperCase()) {
       result[code] = amount;
     } else if (rates[code]) {
-      result[code] = Math.round(amount * rates[code] * 100) / 100;
+      result[code] = Math.ceil(amount * rates[code] * 100) / 100;
     }
   }
 

@@ -46,7 +46,11 @@ export async function POST(
     }
 
     for (const size of product.sizes) {
-      const basePrice = getBasePrice(size, product.baseCurrency);
+      // basePrice is the dedicated field for exchange calculations.
+      // Fall back to prices[] lookup for old docs without basePrice.
+      const basePrice = size.basePrice > 0
+        ? size.basePrice
+        : getBasePrice(size, product.baseCurrency);
 
       // Skip sizes with no base price — don't overwrite existing
       // prices with 0 (which would destroy them).

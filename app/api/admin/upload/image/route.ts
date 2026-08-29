@@ -30,11 +30,11 @@ function resolveImageFolder(folder?: string): string {
     case 'products':
       return 'products/images';
     case 'customers':
-      return 'images/customers';
+      return 'Website Images/customers';
     case 'website':
     case 'appearance':
     default:
-      return 'images/website';
+      return 'Website Images/website';
   }
 }
 

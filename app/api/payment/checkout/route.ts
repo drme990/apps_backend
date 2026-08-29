@@ -50,7 +50,7 @@ import {
 } from '@/lib/services/partial-payment-guard';
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
-import { uploadFileToR2 } from '@/lib/services/r2';
+import { uploadFileToR2, compressImageBuffer } from '@/lib/services/r2';
 import { convertCurrency } from '@/lib/services/currency';
 import {
   resolveUnitPriceWithVisibility,
@@ -805,26 +805,36 @@ export async function POST(request: NextRequest) {
             const [header, base64Data] = imageValue.split(',');
             const mimeType =
               header.match(/data:(.*?);base64/)?.[1] || 'image/png';
-            const imageBuffer = Buffer.from(base64Data || '', 'base64');
-            // Derive the file extension from the MIME type so the stored
-            // object has a proper extension (e.g. .jpg, .png, .webp).
-            // Without this, the R2 key has no extension which breaks
-            // content-type detection and CDN caching.
-            const ext =
-              mimeType === 'image/jpeg' || mimeType === 'image/jpg'
-                ? 'jpg'
-                : mimeType === 'image/png'
-                  ? 'png'
-                  : mimeType === 'image/webp'
-                    ? 'webp'
-                    : mimeType === 'image/gif'
-                      ? 'gif'
-                      : 'jpg';
+            const rawBuffer = Buffer.from(base64Data || '', 'base64');
+
+            // Server-side compression (defense-in-depth, even if the
+            // frontend already compressed the image). Max 1920px,
+            // JPEG quality 80, target < 500KB.
+            let imageBuffer: Uint8Array = rawBuffer;
+            let outputMimeType = mimeType;
+            try {
+              const compressed = await compressImageBuffer(rawBuffer, mimeType);
+              imageBuffer = compressed.buffer;
+              outputMimeType = compressed.mimeType;
+            } catch {
+              // Compression failed — use the raw buffer (best-effort)
+            }
+
+            // Store under `Website Images/customers/` with a timestamp-based
+            // subfolder for grouping. The order number isn't available yet
+            // at this point in the checkout flow (order is created later).
+            const ext = 'jpg';
+            // Cast through unknown: TS 5.7+ made Uint8Array generic, and
+            // Buffer.from() returns Buffer<ArrayBufferLike>, which isn't
+            // assignable to BlobPart (expects ArrayBuffer-backed). The
+            // runtime data is always a real ArrayBuffer — this is purely
+            // a type-system limitation.
+            const blobPart = imageBuffer as unknown as BlobPart;
             const uploaded = await uploadFileToR2(
-              new File([imageBuffer], `reservation-picture.${ext}`, {
-                type: mimeType,
+              new File([blobPart], `reservation-picture.${ext}`, {
+                type: outputMimeType,
               }),
-              'images/customers',
+              'Website Images/customers',
               `reservation-picture.${ext}`,
             );
             uploadedUrls.push(uploaded.url);

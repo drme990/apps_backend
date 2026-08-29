@@ -136,7 +136,7 @@ const OrderDesignVersionSchema = new mongoose.Schema<IOrderDesignVersion>(
     operationId: { type: String, required: true },
   },
   {
-    collection: 'order_design_versions',
+    collection: 'design_order_versions',
     timestamps: false,
     // Disable auto-_id management on subdocuments and minimize empty
     // objects — the design app writes via the raw driver and doesn't
