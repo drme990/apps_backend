@@ -11,7 +11,17 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
-import sharp from 'sharp';
+
+// sharp is loaded lazily inside compressImageBuffer() so that this module
+// (and everything that imports it — e.g. the checkout route) doesn't crash
+// on platforms where sharp's native binary is unavailable. Image compression
+// is optional (defense-in-depth); the caller falls back to the raw buffer.
+let sharpModule: typeof import('sharp') | null = null;
+async function getSharp() {
+  if (sharpModule) return sharpModule;
+  sharpModule = await import('sharp');
+  return sharpModule;
+}
 
 const accountId = process.env.R2_ACCOUNT_ID;
 const accessKeyId = process.env.R2_ACCESS_KEY_ID;
@@ -70,6 +80,11 @@ export async function compressImageBuffer(
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const maxWidth = options?.maxWidth ?? 1920;
   const quality = options?.quality ?? 80;
+
+  // Lazy-load sharp so this module doesn't crash on platforms where the
+  // native binary is unavailable. The caller (checkout route) catches any
+  // error here and falls back to the raw buffer.
+  const { default: sharp } = await getSharp();
 
   // Cast to Buffer — sharp's SharpInput type uses the bare Buffer type
   // (Buffer<ArrayBuffer>), but Buffer.from() returns Buffer<ArrayBufferLike>.
