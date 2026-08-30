@@ -10,6 +10,7 @@ import {
 import { resolveProductPrices } from '@/lib/services/price-resolver';
 import { stripProductForPublic } from '@/lib/product-public-mapper';
 import { normalizeCountryCode, type CountryVisibilityMode } from '@/lib/country-visibility';
+import { getClientCountry } from '@/lib/utils/ip';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
 
@@ -61,7 +62,12 @@ export async function GET(
     // Resolve prices for public apps (platform is set).
     // Admin panel (no platform) gets raw prices[] for editing.
     if (platform) {
-      const effectiveViewerCode = viewerCountryCode || 'EG';
+      // Use the viewerCountryCode from the query string, or fall back to
+      // IP-based country detection from request headers (CF/Vercel).
+      // If neither is available, use 'OT' (Other) — the user will see
+      // all currencies with real prices, but no exchange conversion
+      // (since there's no home country to convert from).
+      const effectiveViewerCode = viewerCountryCode || normalizeCountryCode(getClientCountry(request)) || 'OT';
       const allCountries = await Country.find({ isActive: true }).lean();
       await resolveProductPrices(
         [productData],

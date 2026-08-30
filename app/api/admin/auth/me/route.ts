@@ -26,7 +26,7 @@ export async function GET() {
           email: fullUser.email,
           role: fullUser.role,
           allowedPages: fullUser.allowedPages,
-          ref: fullUser.ref,
+          ref: fullUser.ref ?? [],
           createdAt: fullUser.createdAt,
         },
       },

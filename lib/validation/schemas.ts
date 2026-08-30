@@ -225,7 +225,7 @@ export const userCreateSchema = z
     password: z.string().min(6),
     role: z.enum(['admin', 'super_admin']).optional(),
     allowedPages: z.array(z.string().trim().min(1)).optional(),
-    ref: z.string().trim().optional(),
+    ref: z.array(z.string().trim().min(1)).optional(),
   })
   .strict();
 
@@ -236,7 +236,7 @@ export const userUpdateSchema = z
     password: z.string().min(6).optional(),
     role: z.enum(['admin', 'super_admin']).optional(),
     allowedPages: z.array(z.string().trim().min(1)).optional(),
-    ref: z.string().trim().optional(),
+    ref: z.array(z.string().trim().min(1)).optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

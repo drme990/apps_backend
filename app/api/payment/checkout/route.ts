@@ -489,20 +489,43 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Determine the viewer country for price resolution.
+    //
+    // PRIORITY (matches the currency provider's order):
+    //   a. DB detectedCountry (already set in resolvedDetectedCountry for
+    //      logged-in users — the currency provider overwrites the cookie
+    //      with this value, so the product page and checkout stay
+    //      consistent)
+    //   b. viewerCountryCode from the request body (from the cookie — set
+    //      by IP/geolocation detection for guests)
+    //   c. IP headers (cf-ipcountry / x-vercel-ip-country)
+    //   d. 'OT' (Other) — final fallback when no country can be detected
+    //
+    // 'OT' (Other) is used when no country can be detected — the user sees
+    // all currencies with real prices, no exchange conversion.
+
+    // If the DB didn't provide a detectedCountry (guest user, or DB field
+    // is empty), fall back to the viewerCountryCode from the request body.
+    if (!resolvedDetectedCountry && viewerCountryCode) {
+      resolvedDetectedCountry = normalizeCountryCode(viewerCountryCode) || '';
+    }
+
     // Normalize resolvedDetectedCountry to a 2-letter code.
     // The DB's detectedCountry field may store full country names (e.g.
     // "Saudi Arabia") from older records — convert them to ISO codes.
-    // If normalization fails, fall back to the viewerCountryCode sent by
-    // the frontend (from the currency provider's homeCountryCode).
     if (resolvedDetectedCountry) {
       const normalized = countryNameToCode(resolvedDetectedCountry);
       if (normalized) {
         resolvedDetectedCountry = normalized;
-      } else if (viewerCountryCode) {
-        resolvedDetectedCountry = viewerCountryCode;
+      } else {
+        // If normalization fails, try IP headers as a last resort.
+        const ipCountry = getClientCountry(request);
+        resolvedDetectedCountry = normalizeCountryCode(ipCountry) || 'OT';
       }
-    } else if (viewerCountryCode) {
-      resolvedDetectedCountry = viewerCountryCode;
+    } else {
+      // No detected country at all — try IP headers, then 'OT'.
+      const ipCountry = getClientCountry(request);
+      resolvedDetectedCountry = normalizeCountryCode(ipCountry) || 'OT';
     }
 
     // Outstanding balance check removed - users can now pay for new orders

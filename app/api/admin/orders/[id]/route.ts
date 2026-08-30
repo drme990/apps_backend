@@ -376,9 +376,11 @@ export async function PATCH(
       previousValue: string | null;
       newValue: string | null;
     }> = [];
-    // Track whether any invoice was newly confirmed during this PATCH —
-    // used to recompute the execution date if the day has ended.
-    let invoiceNewlyConfirmed = false;
+    // Track whether a whileCreating invoice was newly confirmed during
+    // this PATCH — only the first invoice (uploaded during order creation)
+    // should trigger an execution date recompute. Later invoices
+    // (whileCreating=false, added via PATCH) must NOT change the date.
+    let firstInvoiceNewlyConfirmed = false;
 
     // Track the last confirmed invoice's value and the remaining before it
     // was added — used for the allowRate tolerance check.
@@ -616,10 +618,11 @@ export async function PATCH(
           newValue: JSON.stringify(newEntry),
         });
 
-        // Track if this new invoice is confirmed — used to recompute
-        // the execution date if the day has ended.
-        if (invoiceStatus === 'confirmed') {
-          invoiceNewlyConfirmed = true;
+        // Track if this new invoice is confirmed AND was uploaded during
+        // order creation (whileCreating). Only whileCreating invoices
+        // trigger an execution date recompute.
+        if (invoiceStatus === 'confirmed' && newEntry.whileCreating) {
+          firstInvoiceNewlyConfirmed = true;
         }
 
         // ── Only record a payment entry when the invoice is confirmed.
@@ -687,9 +690,12 @@ export async function PATCH(
                 previousValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: prevEntry.invoiceStatus, rejectionReason: prevEntry.rejectionReason }),
                 newValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: nextEntry.invoiceStatus, rejectionReason: nextEntry.rejectionReason }),
               });
-              // Track transition to 'confirmed'
+              // Track transition to 'confirmed' — only whileCreating
+              // invoices trigger an execution date recompute.
               if (nextEntry.invoiceStatus === 'confirmed' && prevEntry.invoiceStatus !== 'confirmed') {
-                invoiceNewlyConfirmed = true;
+                if (nextEntry.whileCreating) {
+                  firstInvoiceNewlyConfirmed = true;
+                }
                 // Add payment for newly confirmed invoice
                 await addInvoicePayment(nextEntry);
               }
@@ -722,9 +728,12 @@ export async function PATCH(
                   previousValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: prevEntry.invoiceStatus, rejectionReason: prevEntry.rejectionReason }),
                   newValue: JSON.stringify({ url: nextEntry.url, invoiceStatus: nextEntry.invoiceStatus, rejectionReason: nextEntry.rejectionReason }),
                 });
-                // Track transition to 'confirmed'
+                // Track transition to 'confirmed' — only whileCreating
+                // invoices trigger an execution date recompute.
                 if (nextEntry.invoiceStatus === 'confirmed' && prevEntry.invoiceStatus !== 'confirmed') {
-                  invoiceNewlyConfirmed = true;
+                  if (nextEntry.whileCreating) {
+                    firstInvoiceNewlyConfirmed = true;
+                  }
                   // Add payment for newly confirmed invoice
                   await addInvoicePayment(nextEntry);
                 }
@@ -930,19 +939,13 @@ export async function PATCH(
       }
     }
 
-    // ── Recompute execution date when an invoice is newly confirmed ──
-    // Only recompute if ALL invoices on the order are confirmed. If any
-    // invoice is still waiting/pending/rejected, the order is not yet
-    // ready for execution and the date should not change.
+    // ── Recompute execution date when the first invoice is confirmed ──
+    // Only the first invoice (whileCreating=true, uploaded during order
+    // creation) triggers an execution date recompute. Later invoices
+    // (whileCreating=false, added via PATCH) do NOT affect the date.
     // If the confirmation happens after the day's cutoff time, the order
     // cannot be processed on that day and must roll to the next.
-    const allInvoicesConfirmed =
-      invoiceNewlyConfirmed &&
-      Array.isArray(order.invoiceUrls) &&
-      order.invoiceUrls.length > 0 &&
-      order.invoiceUrls.every((inv: IInvoiceUrl) => inv.invoiceStatus === 'confirmed');
-
-    if (allInvoicesConfirmed) {
+    if (firstInvoiceNewlyConfirmed) {
       try {
         const booking = await Booking.findOne({ key: 'global' }).lean();
         if (booking) {
@@ -965,7 +968,7 @@ export async function PATCH(
                 order.internalNotes = [];
               }
               order.internalNotes.push({
-                text: `Execution date changed from ${previousDate} to ${newDate} due to invoice confirmation after day end.`,
+                text: `Execution date changed from ${previousDate} to ${newDate} due to first invoice confirmation after day end.`,
                 author: 'system',
                 createdAt: new Date(),
               });

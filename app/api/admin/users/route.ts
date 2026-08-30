@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       password,
       role: role || 'admin',
       allowedPages: allowedPages || [],
-      ref: ref || '',
+      ref: ref || [],
     });
 
     await logActivity({
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       action: 'create',
       resource: 'user',
       resourceId: user._id.toString(),
-      details: `Created user: ${user.name} (${user.email}) with role: ${user.role}${user.ref ? ` ref: ${user.ref}` : ''}`,
+      details: `Created user: ${user.name} (${user.email}) with role: ${user.role}${user.ref?.length ? ` ref: ${user.ref.join(', ')}` : ''}`,
     });
 
     return NextResponse.json(

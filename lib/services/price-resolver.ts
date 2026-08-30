@@ -411,30 +411,46 @@ export async function resolveProductPrices(
     return products;
   }
 
-  // Determine the viewer's home currency
+  // Determine the viewer's home currency.
+  // If the viewer country isn't in the DB (e.g. 'OT' for "Other" when
+  // IP/location detection failed), fall back to the first product's
+  // baseCurrency — this mirrors resolveUnitPriceWithVisibility's behavior
+  // of using the product's base currency as the exchange base.
   const viewerCountry = allCountries.find(
     (c) => c.code.toUpperCase() === viewerCountryCode.toUpperCase(),
   );
-  if (!viewerCountry) {
-    return products;
-  }
+  const mainCurrencyCode = viewerCountry?.currencyCode?.toUpperCase() || '';
 
-  const mainCurrencyCode = viewerCountry.currencyCode?.toUpperCase() || '';
-
-  // Get visible countries for the viewer
+  // Get visible countries for the viewer.
+  // For unknown viewers ('OT'), getVisibleCountriesForViewer returns all
+  // countries with realPrice=true, exchangePrice=true — so the user sees
+  // all currencies with real prices, and exchange prices are converted
+  // from the product's base currency.
   const visibleCountries = getVisibleCountriesForViewer(
     allCountries,
     viewerCountryCode,
   );
 
-  // Fetch exchange rates once (based on main currency)
+  if (visibleCountries.length === 0) {
+    return products;
+  }
+
+  // Fetch exchange rates once (based on main currency if available, or
+  // the first product's base currency as fallback for 'OT' viewers).
   let exchangeRates: Record<string, number> | null = null;
   const needsExchange = visibleCountries.some(
     (c) => c.viewerVisibility?.exchangePrice === true,
   );
-  if (needsExchange && mainCurrencyCode) {
+  if (needsExchange) {
+    // For unknown viewers, use the first product's base currency as the
+    // exchange base. This is determined per-product in resolveSizePrices
+    // via the baseCurrency parameter, so we fetch rates for the first
+    // product's base currency here.
+    const fallbackBase = mainCurrencyCode ||
+      (products[0]?.baseCurrency as string) ||
+      'SAR';
     try {
-      exchangeRates = await getExchangeRates(mainCurrencyCode);
+      exchangeRates = await getExchangeRates(fallbackBase);
     } catch (err) {
       console.error('[resolveProductPrices] Failed to fetch exchange rates:', err);
     }

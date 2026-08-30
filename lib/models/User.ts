@@ -8,7 +8,7 @@ export interface IUser {
   password: string;
   role: 'admin' | 'super_admin';
   allowedPages?: string[];
-  ref?: string;
+  ref?: string[];
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -83,15 +83,25 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
       default: [],
     },
     ref: {
-      type: String,
+      type: [String],
       trim: true,
-      default: '',
+      default: [],
     },
   },
   { timestamps: true, collection: 'users_admin_panel' },
 );
 
 UserSchema.pre('save', async function () {
+  // Migrate legacy ref: string → ref: string[]
+  // Cast to unknown first because Mongoose types ref as string[] based
+  // on the schema, but old documents may still have a string value.
+  const rawRef = this.ref as unknown;
+  if (typeof rawRef === 'string') {
+    this.ref = rawRef.trim() ? [rawRef.trim()] : [];
+  } else if (rawRef == null) {
+    this.ref = [];
+  }
+
   if (!this.isModified('password')) return;
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);

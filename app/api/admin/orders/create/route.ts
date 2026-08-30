@@ -107,15 +107,19 @@ export async function POST(request: NextRequest) {
     const isSuperAdmin = auth.user.role === 'super_admin';
     if (!isSuperAdmin) {
       const adminUser = await User.findById(auth.user.userId).select('ref').lean();
-      const adminRef = adminUser?.ref;
-      if (effectiveReferralId && effectiveReferralId !== adminRef) {
+      const adminRefs = Array.isArray(adminUser?.ref)
+        ? adminUser.ref
+        : adminUser?.ref
+          ? [adminUser.ref]
+          : [];
+      if (effectiveReferralId && !adminRefs.includes(effectiveReferralId)) {
         return NextResponse.json(
-          { success: false, error: 'You can only create orders with your own referral code' },
+          { success: false, error: 'You can only create orders with your own referral codes' },
           { status: 403 },
         );
       }
-      if (!effectiveReferralId && adminRef) {
-        effectiveReferralId = adminRef;
+      if (!effectiveReferralId && adminRefs.length > 0) {
+        effectiveReferralId = adminRefs[0];
       }
     }
 
