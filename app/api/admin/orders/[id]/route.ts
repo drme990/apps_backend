@@ -566,15 +566,59 @@ export async function PATCH(
       });
     }
 
+    let itemsChanged = false;
     if (Array.isArray(body.items) && body.items.length > 0) {
       const previousItems = JSON.stringify(order.items || []);
       const nextItems = body.items;
       if (JSON.stringify(nextItems) !== previousItems) {
         order.items = nextItems;
+        itemsChanged = true;
         changes.push({
           changeType: 'items',
           previousValue: previousItems,
           newValue: JSON.stringify(nextItems),
+        });
+      }
+    }
+
+    // ── Recalculate order total when items change ──
+    // When the admin edits item prices, quantities, or swaps products,
+    // the order's totalAmount and fullAmount must be recomputed so that
+    // the paid/remaining amounts and status stay accurate.
+    if (itemsChanged) {
+      const orderCurrency = (order.currency || 'EGP').toUpperCase();
+      let newTotal = 0;
+      for (const item of order.items) {
+        const itemCurrency = (item.currency || orderCurrency).toUpperCase();
+        const itemSubtotal = (item.price || 0) * (item.quantity || 1);
+        if (itemCurrency === orderCurrency) {
+          newTotal += itemSubtotal;
+        } else {
+          try {
+            newTotal += await convertCurrency(itemSubtotal, itemCurrency, orderCurrency);
+          } catch {
+            // If conversion fails, use the raw subtotal as fallback
+            newTotal += itemSubtotal;
+          }
+        }
+      }
+      const previousTotal = order.fullAmount ?? order.totalAmount ?? 0;
+      const roundedTotal = Math.round(newTotal * 100) / 100;
+      if (roundedTotal !== previousTotal) {
+        order.totalAmount = roundedTotal;
+        order.fullAmount = roundedTotal;
+        changes.push({
+          changeType: 'totalAmount',
+          previousValue: String(previousTotal),
+          newValue: String(roundedTotal),
+        });
+        if (!Array.isArray(order.internalNotes)) {
+          order.internalNotes = [];
+        }
+        order.internalNotes.push({
+          text: `Order total changed from ${previousTotal} to ${roundedTotal} ${orderCurrency} due to item edit.`,
+          author: 'system',
+          createdAt: new Date(),
         });
       }
     }
@@ -801,7 +845,7 @@ export async function PATCH(
     // NOTE: paidAmount and remainingAmount are set by the pre('save')
     // hook via calculateOrderFinancials(), so we only handle the status
     // transition here.
-    const FINANCIAL_CHANGE_TYPES = new Set(['invoice', 'invoiceStatus', 'invoiceValue', 'invoiceImage', 'payment']);
+    const FINANCIAL_CHANGE_TYPES = new Set(['invoice', 'invoiceStatus', 'invoiceValue', 'invoiceImage', 'payment', 'items', 'totalAmount']);
     const hasFinancialChange = changes.some((c) => FINANCIAL_CHANGE_TYPES.has(c.changeType));
     if (hasFinancialChange) {
       const { totalPaid, fullAmount } = calculateOrderFinancials(order);
