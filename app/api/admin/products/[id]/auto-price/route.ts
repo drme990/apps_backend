@@ -46,6 +46,19 @@ export async function POST(
     }
 
     for (const size of product.sizes) {
+      // Migrate old sizes that are missing basePrice/baseCurrency
+      // (now required by the schema). Populate from prices[] so
+      // product.save() doesn't fail with a ValidationError.
+      if (!size.basePrice || size.basePrice <= 0) {
+        const fallback = getBasePrice(size, product.baseCurrency);
+        if (fallback > 0) {
+          size.basePrice = fallback;
+        }
+      }
+      if (!size.baseCurrency) {
+        size.baseCurrency = product.baseCurrency;
+      }
+
       // basePrice is the dedicated field for exchange calculations.
       // Fall back to prices[] lookup for old docs without basePrice.
       const basePrice = size.basePrice > 0

@@ -334,6 +334,27 @@ const ProductSchema = new mongoose.Schema<IProduct>(
 
 ProductSchema.index({ isDeleted: 1, isActive: 1, displayOrder: 1 });
 
+// Auto-migrate old sizes that are missing basePrice/baseCurrency (now
+// required by the schema). Populate from prices[] so save() doesn't fail
+// with a ValidationError on legacy documents. This runs on every save,
+// covering all routes (exchange, cron, auto-price, PUT, PATCH, DELETE).
+ProductSchema.pre('validate', function () {
+  const baseCurrency = (this.baseCurrency || 'SAR').toUpperCase();
+  for (const size of this.sizes) {
+    if (typeof size.basePrice !== 'number' || size.basePrice <= 0) {
+      const entry = size.prices?.find(
+        (p) => p.currencyCode?.toUpperCase() === baseCurrency,
+      );
+      if (entry && typeof entry.amount === 'number' && entry.amount > 0) {
+        size.basePrice = entry.amount;
+      }
+    }
+    if (!size.baseCurrency) {
+      size.baseCurrency = baseCurrency;
+    }
+  }
+});
+
 if (process.env.NODE_ENV !== 'production' && mongoose.models.Product) {
   mongoose.deleteModel('Product');
 }
