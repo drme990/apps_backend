@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       password,
       role: role || 'admin',
       allowedPages: allowedPages || [],
-      ref: ref || [],
+      ref: (ref || []).filter((r: string) => r.length > 0),
     });
 
     await logActivity({

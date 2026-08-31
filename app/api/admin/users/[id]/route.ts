@@ -78,7 +78,7 @@ export async function PUT(
     if (password) targetUser.password = password;
     if (role) targetUser.role = role;
     if (allowedPages !== undefined) targetUser.allowedPages = allowedPages;
-    if (ref !== undefined) targetUser.ref = ref;
+    if (ref !== undefined) targetUser.ref = ref.filter((r: string) => r.length > 0);
 
     await targetUser.save();
 
