@@ -137,6 +137,36 @@ function sanitizeOrderForAdmin(order: {
   return sanitized;
 }
 
+/**
+ * Build a human-readable summary of what changed between the previous
+ * and next item arrays. Each item is shown as:
+ *   "Product name (size) × qty @ price currency"
+ * This is recorded in the order change history so admins can see
+ * exactly what was edited at any point in time.
+ */
+function summarizeItemChanges(
+  prev: IOrder['items'],
+  next: IOrder['items'],
+): { previous: string; next: string } {
+  const formatItem = (item: IOrder['items'][number]): string => {
+    const name = item.productName?.ar || item.productName?.en || item.productId || 'Unknown';
+    const size = item.customSize || item.sizeName?.ar || item.sizeName?.en || '';
+    const sizeStr = size ? ` (${size})` : '';
+    const qty = item.quantity || 1;
+    const price = item.price ?? 0;
+    const currency = item.currency || '';
+    return `${name}${sizeStr} × ${qty} @ ${price} ${currency}`.trim();
+  };
+
+  const formatList = (items: IOrder['items']): string =>
+    items.map((item, i) => `${i + 1}. ${formatItem(item)}`).join('\n');
+
+  return {
+    previous: formatList(prev),
+    next: formatList(next),
+  };
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -566,17 +596,36 @@ export async function PATCH(
       });
     }
 
+    // ── Referral code ───────────────────────────────────────────
+    if (
+      typeof body.referralId === 'string' &&
+      body.referralId !== (order.referralId || '')
+    ) {
+      const previousValue = order.referralId || null;
+      order.referralId = body.referralId || undefined;
+      changes.push({
+        changeType: 'referral',
+        previousValue,
+        newValue: body.referralId || null,
+      });
+    }
+
     let itemsChanged = false;
     if (Array.isArray(body.items) && body.items.length > 0) {
-      const previousItems = JSON.stringify(order.items || []);
+      const prevItemsArr = order.items || [];
+      const previousItems = JSON.stringify(prevItemsArr);
       const nextItems = body.items;
       if (JSON.stringify(nextItems) !== previousItems) {
         order.items = nextItems;
         itemsChanged = true;
+
+        // Build a human-readable summary of what changed in the items
+        // so the admin can see exactly what was edited in the order history.
+        const itemSummary = summarizeItemChanges(prevItemsArr, nextItems);
         changes.push({
           changeType: 'items',
-          previousValue: previousItems,
-          newValue: JSON.stringify(nextItems),
+          previousValue: itemSummary.previous,
+          newValue: itemSummary.next,
         });
       }
     }
