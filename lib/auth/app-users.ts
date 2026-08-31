@@ -31,6 +31,7 @@ export const ADMIN_ALLOWED_PAGES = [
   'orderDesigns',
   'orderDesignLogs',
   'errorLogs',
+  'export',
 ] as const;
 
 export type AdminAllowedPage = (typeof ADMIN_ALLOWED_PAGES)[number];

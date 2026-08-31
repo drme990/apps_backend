@@ -70,16 +70,6 @@ export async function PUT(
       );
     }
 
-    if (
-      targetUser.role === 'super_admin' &&
-      auth.user.userId !== targetUser._id.toString()
-    ) {
-      return NextResponse.json(
-        { success: false, error: 'Cannot modify another super admin' },
-        { status: 403 },
-      );
-    }
-
     const parsed = await parseJsonBody(request, userUpdateSchema);
     if (!parsed.success) return parsed.response;
     const { name, email, password, role, allowedPages, ref } = parsed.data;
