@@ -477,6 +477,7 @@ export const referralCreateSchema = z
           message: 'Invalid phone number format',
         },
       ),
+    appId: z.enum(['manasik', 'ghadaq']),
   })
   .strict();
 
@@ -499,6 +500,7 @@ export const referralUpdateSchema = z
           message: 'Invalid phone number format',
         },
       ),
+    appId: z.enum(['manasik', 'ghadaq']).optional(),
     isActive: z.boolean().optional(),
   })
   .strict()

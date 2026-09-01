@@ -1,10 +1,13 @@
 import mongoose from 'mongoose';
 
+export type ReferralAppId = 'manasik' | 'ghadaq';
+
 export interface IReferral {
   _id?: string;
   name: string;
   referralId: string;
   phone: string;
+  appId: ReferralAppId;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -20,6 +23,12 @@ const ReferralSchema = new mongoose.Schema<IReferral>(
       index: true,
     },
     phone: { type: String, required: true, trim: true },
+    appId: {
+      type: String,
+      required: true,
+      enum: ['manasik', 'ghadaq'],
+      index: true,
+    },
   },
   { timestamps: true },
 );

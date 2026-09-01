@@ -19,10 +19,16 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '100');
     const maxLimit = limit > 200 ? 200 : limit;
     const skip = (page - 1) * maxLimit;
+    const appId = request.nextUrl.searchParams.get('appId');
+
+    const filter: Record<string, unknown> = {};
+    if (appId === 'manasik' || appId === 'ghadaq') {
+      filter.appId = appId;
+    }
 
     const [referrals, total] = await Promise.all([
-      Referral.find().sort({ createdAt: -1 }).skip(skip).limit(maxLimit).lean(),
-      Referral.countDocuments(),
+      Referral.find(filter).sort({ createdAt: -1 }).skip(skip).limit(maxLimit).lean(),
+      Referral.countDocuments(filter),
     ]);
 
     const totalPages = Math.ceil(total / maxLimit);
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJsonBody(request, referralCreateSchema);
     if (!parsed.success) return parsed.response;
-    const { name, referralId, phone } = parsed.data;
+    const { name, referralId, phone, appId } = parsed.data;
 
     const existing = await Referral.findOne({ referralId });
     if (existing) {
@@ -57,7 +63,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const referral = await Referral.create({ name, referralId, phone });
+    const referral = await Referral.create({ name, referralId, phone, appId });
 
     await logActivity({
       userId: auth.user.userId,

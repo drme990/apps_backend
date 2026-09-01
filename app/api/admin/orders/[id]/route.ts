@@ -601,6 +601,17 @@ export async function PATCH(
       typeof body.referralId === 'string' &&
       body.referralId !== (order.referralId || '')
     ) {
+      // Validate that the new referral code belongs to the order's app
+      if (body.referralId) {
+        const { validateReferralCode } = await import('@/lib/services/referral-validation');
+        const refValidation = await validateReferralCode(body.referralId, order.source);
+        if (!refValidation.valid) {
+          return NextResponse.json(
+            { success: false, error: refValidation.message || 'Invalid referral code for this app' },
+            { status: 400 },
+          );
+        }
+      }
       const previousValue = order.referralId || null;
       order.referralId = body.referralId || undefined;
       changes.push({

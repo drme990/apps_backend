@@ -401,7 +401,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
 
       let resolvedRef: string | null = null;
       if (ref) {
-        const referralValidation = await validateReferralCode(ref);
+        const referralValidation = await validateReferralCode(ref, appId);
         if (referralValidation.valid) {
           resolvedRef = ref.trim();
         }

@@ -464,7 +464,7 @@ export async function POST(request: NextRequest) {
 
     let resolvedRef: string | undefined;
     const incomingReferralId = referralId ?? ref ?? null;
-    const referralValidation = await validateReferralCode(incomingReferralId);
+    const referralValidation = await validateReferralCode(incomingReferralId, checkoutAppId);
     if (referralValidation.valid) {
       resolvedRef = incomingReferralId?.trim() || undefined;
     }

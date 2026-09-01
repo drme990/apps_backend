@@ -7,6 +7,7 @@ import { validateReferralCode } from '@/lib/services/referral-validation';
 const referralValidationSchema = z
   .object({
     ref: z.string().trim().min(1),
+    appId: z.enum(['manasik', 'ghadaq']).optional(),
   })
   .strict();
 
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
     const parsed = await parseJsonBody(request, referralValidationSchema);
     if (!parsed.success) return parsed.response;
 
-    const result = await validateReferralCode(parsed.data.ref);
+    const result = await validateReferralCode(parsed.data.ref, parsed.data.appId);
 
     // Return 200 regardless of validity — the response body contains
     // { valid: boolean }. Don't log "not found" as an error; it's a

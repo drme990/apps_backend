@@ -128,6 +128,18 @@ export async function POST(request: NextRequest) {
       effectiveReferralId = orderSource === 'ghadaq' ? 'GHD-D' : 'MNK-D';
     }
 
+    // Validate that the referral code belongs to the selected app
+    if (effectiveReferralId) {
+      const { validateReferralCode } = await import('@/lib/services/referral-validation');
+      const refValidation = await validateReferralCode(effectiveReferralId, orderSource);
+      if (!refValidation.valid) {
+        return NextResponse.json(
+          { success: false, error: refValidation.message || 'Invalid referral code for this app' },
+          { status: 400 },
+        );
+      }
+    }
+
     const currencyUpper = currency.toUpperCase();
 
     // ── Resolve the effective customer name ──

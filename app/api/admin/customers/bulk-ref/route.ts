@@ -8,6 +8,7 @@ import {
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
 import CustomerHistory from '@/lib/models/CustomerHistory';
+import { validateReferralCode } from '@/lib/services/referral-validation';
 import type { Model } from 'mongoose';
 
 const bodySchema = z.object({
@@ -44,8 +45,26 @@ export async function PATCH(request: NextRequest) {
 
     const requestedRef = parsedBody.data.ref || null;
 
+    // Validate that the requested ref belongs to each customer's app.
+    // We check once per app present in the payload.
+    const appsInPayload = new Set(parsedBody.data.customers.map((c) => c.appId));
+    const refValidationByApp = new Map<string, boolean>();
+    for (const appId of appsInPayload) {
+      if (requestedRef) {
+        const validation = await validateReferralCode(requestedRef, appId);
+        refValidationByApp.set(appId, validation.valid);
+      } else {
+        refValidationByApp.set(appId, true);
+      }
+    }
+
     const results = await Promise.all(
       parsedBody.data.customers.map(async ({ id, appId }) => {
+        // Skip if the ref doesn't belong to this customer's app
+        if (requestedRef && !refValidationByApp.get(appId)) {
+          return { id, appId, updated: false, reason: 'ref_app_mismatch' as const };
+        }
+
         const customerModel = getUserModelByAppId(
           appId,
         ) as unknown as AppCustomerModel;
