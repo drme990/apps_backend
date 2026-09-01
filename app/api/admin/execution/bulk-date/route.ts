@@ -5,6 +5,7 @@ import Order from '@/lib/models/Order';
 import OrderChangeHistory from '@/lib/models/OrderChangeHistory';
 import { logActivity } from '@/lib/services/logger';
 import { triggerDesignRegeneration } from '@/lib/services/auto-design-generation';
+import { renumberExecutionDay } from '@/lib/services/execution-number';
 
 export async function PUT(request: NextRequest) {
   try {
@@ -86,6 +87,22 @@ export async function PUT(request: NextRequest) {
         }),
       );
     }
+
+    // Renumber the target execution date so all orders on it (including
+    // the newly moved ones) form a clean 1..N sequence. Also renumber
+    // any old dates that orders moved from (the post-save hook handles
+    // this per-order, but we do it once more here to be safe with
+    // concurrent saves).
+    const oldDatesToRenumber = new Set<string>();
+    for (const oldDate of oldDates.values()) {
+      if (oldDate && oldDate !== executionDate) {
+        oldDatesToRenumber.add(oldDate);
+      }
+    }
+    for (const date of oldDatesToRenumber) {
+      await renumberExecutionDay(date);
+    }
+    await renumberExecutionDay(executionDate);
 
     // Create order change history for each modified order
     const historyEntries = [];

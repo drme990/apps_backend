@@ -5,6 +5,7 @@ import Order from '@/lib/models/Order';
 import OrderChangeHistory from '@/lib/models/OrderChangeHistory';
 import { logActivity } from '@/lib/services/logger';
 import { triggerDesignRegeneration } from '@/lib/services/auto-design-generation';
+import { renumberExecutionDay } from '@/lib/services/execution-number';
 
 export async function PUT(
   request: NextRequest,
@@ -59,6 +60,17 @@ export async function PUT(
     }
     order.reservationData = reservationData;
     await order.save();
+
+    // Renumber both the old and new execution dates so all orders on
+    // each day form a clean 1..N sequence with no gaps. The post-save
+    // hook handles the old date, but we also renumber the new date
+    // here to ensure the moved order gets a proper sequential position.
+    if (oldExecutionDate !== executionDate) {
+      if (oldExecutionDate) {
+        await renumberExecutionDay(oldExecutionDate);
+      }
+      await renumberExecutionDay(executionDate);
+    }
 
     // Track execution date change in history
     if (oldExecutionDate !== executionDate) {

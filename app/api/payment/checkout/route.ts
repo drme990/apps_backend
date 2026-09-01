@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
-import { logError, logException } from '@/lib/services/error-logger';
 import { normalizeCurrencyCode } from '@/lib/currencies';
 import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
@@ -916,16 +915,10 @@ export async function POST(request: NextRequest) {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Unknown error';
-      await logException(request, err, {
-        source: 'checkout.resolveUnitPrice',
-        level: 'error',
-        statusCode: 400,
-        metadata: {
-          currency: currencyUpper,
-          productId: product._id?.toString(),
-          sizeIndex: activeSizeIndex,
-          detectedCountry: resolvedDetectedCountry,
-        },
+      captureException(err, {
+        service: 'Checkout',
+        operation: 'resolveUnitPrice',
+        severity: 'medium',
       });
       return NextResponse.json(
         {
@@ -937,16 +930,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (unitPrice <= 0) {
-      await logError(request, {
-        source: 'checkout.unitPriceZero',
-        level: 'error',
-        statusCode: 400,
-        message: `Product price is not configured for ${currencyUpper}`,
-        metadata: {
-          currency: currencyUpper,
-          productId: product._id?.toString(),
-          sizeIndex: activeSizeIndex,
-        },
+      console.error(`[checkout.unitPriceZero] Product price is not configured for ${currencyUpper}`, {
+        productId: product._id?.toString(),
+        sizeIndex: activeSizeIndex,
       });
       return NextResponse.json(
         {
@@ -1490,17 +1476,10 @@ export async function POST(request: NextRequest) {
               ? conversionError.message
               : 'Unknown conversion error';
 
-          await logException(request, conversionError, {
-            source: 'checkout.egpConversionFailed',
-            level: 'fatal',
-            statusCode: 500,
-            metadata: {
-              fromCurrency: currencyUpper,
-              toCurrency: 'EGP',
-              productId: product._id?.toString(),
-              orderNumber: order.orderNumber,
-              reason,
-            },
+          captureException(conversionError, {
+            service: 'Checkout',
+            operation: 'egpConversion',
+            severity: 'critical',
           });
 
           return NextResponse.json(
@@ -1680,12 +1659,6 @@ export async function POST(request: NextRequest) {
       service: 'Checkout',
       operation: 'POST',
       severity: 'critical',
-    });
-
-    await logException(request, error, {
-      source: 'POST /api/payment/checkout',
-      level: 'fatal',
-      statusCode: 500,
     });
 
     return NextResponse.json(

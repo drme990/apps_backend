@@ -6,6 +6,7 @@ import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { bulkOrderStatusSchema } from '@/lib/validation/schemas';
+import { renumberExecutionDay } from '@/lib/services/execution-number';
 
 const BULK_ALLOWED_STATUSES: ReadonlySet<OrderStatus> = new Set([
   'completed',
@@ -58,6 +59,27 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Fetch the execution dates of the orders being moved out of
+    // paid/partial-paid so we can renumber those days afterwards.
+    // updateMany bypasses Mongoose hooks, so we handle renumbering here.
+    const affectedOrders = await Order.find(
+      {
+        _id: { $in: orderIds },
+        status: { $in: ['paid', 'partial-paid'] },
+      },
+      { reservationData: 1 },
+    ).lean();
+
+    const affectedDates = new Set<string>();
+    for (const order of affectedOrders) {
+      const dateField = (
+        order.reservationData as Array<{ key: string; value: string }> | undefined
+      )?.find((f) => f.key === 'executionDate');
+      if (dateField && /^\d{4}-\d{2}-\d{2}$/.test(dateField.value)) {
+        affectedDates.add(dateField.value);
+      }
+    }
+
     const result = await Order.updateMany(
       { _id: { $in: orderIds }, status: { $ne: normalizedStatus } },
       {
@@ -67,6 +89,12 @@ export async function PUT(request: NextRequest) {
         },
       },
     );
+
+    // Renumber each affected execution date so remaining orders have a
+    // clean 1..N sequence with no gaps.
+    for (const date of affectedDates) {
+      await renumberExecutionDay(date);
+    }
 
     await logActivity({
       userId: auth.user.userId,

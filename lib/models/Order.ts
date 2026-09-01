@@ -4,7 +4,7 @@ import Category from '@/lib/models/Categories';
 import Booking from '@/lib/models/Booking';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { updateOrderExecutionDateOnPaid } from '@/lib/execution-date';
-import { getOrderExecutionDate, allocateExecutionNumber } from '@/lib/services/execution-number';
+import { getOrderExecutionDate, allocateExecutionNumber, renumberExecutionDay } from '@/lib/services/execution-number';
 
 function getMonthKey(): string {
   const now = new Date();
@@ -820,6 +820,36 @@ OrderSchema.pre('save', async function () {
 OrderSchema.post('init', function (doc) {
   doc._previousStatus = doc.status;
   doc._previousExecutionDate = getOrderExecutionDate(doc) || undefined;
+});
+
+// After saving, if the order left its previous execution date (date changed,
+// or status moved away from paid/partial-paid), renumber the old date so the
+// remaining orders form a clean 1..N sequence with no gaps. Best-effort.
+OrderSchema.post('save', function (doc) {
+  const previousDate = doc._previousExecutionDate;
+  const previousStatus = doc._previousStatus;
+  const currentDate = getOrderExecutionDate(doc) || undefined;
+  const currentStatus = doc.status;
+
+  const wasPayable = previousStatus === 'paid' || previousStatus === 'partial-paid';
+  const isPayable = currentStatus === 'paid' || currentStatus === 'partial-paid';
+
+  // The old date needs renumbering if:
+  // 1. The execution date changed (order moved to a different day), OR
+  // 2. The status changed from payable to non-payable (order left the
+  //    execution table for that day)
+  const dateChanged = previousDate && previousDate !== currentDate;
+  const statusLeftPayable = wasPayable && !isPayable;
+
+  if (dateChanged || statusLeftPayable) {
+    renumberExecutionDay(previousDate!).catch((err) => {
+      console.error('[Order post-save] renumberExecutionDay failed:', err);
+    });
+  }
+
+  // Update tracked previous values for the next save cycle.
+  doc._previousStatus = currentStatus;
+  doc._previousExecutionDate = currentDate;
 });
 
 OrderSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function () {

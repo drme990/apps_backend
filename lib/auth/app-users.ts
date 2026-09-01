@@ -30,7 +30,6 @@ export const ADMIN_ALLOWED_PAGES = [
   'storage-manager',
   'orderDesigns',
   'orderDesignLogs',
-  'errorLogs',
   'export',
 ] as const;
 
