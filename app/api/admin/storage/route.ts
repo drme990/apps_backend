@@ -74,8 +74,13 @@ export async function GET(request: NextRequest) {
 // because they're referenced by many projects/templates. Deleting these
 // would break designs across the entire system.
 const PROTECTED_FOLDER_PREFIXES = [
-  'design/shapes/',   // shared PNG shapes used by all projects/templates
-  'design/fonts/',    // shared font files used by all projects
+  'design/shapes/',         // shared PNG shapes used by all projects/templates
+  'design/fonts/',          // shared font files used by all projects
+  'design/template-bg/',    // template background images — shared by
+  // duplicates and order designs (which inherit
+  // the template's bg URL by reference). Bulk
+  // deletion would break all templates and
+  // their generated order designs.
 ];
 
 function isProtectedKey(key: string): boolean {
