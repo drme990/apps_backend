@@ -19,6 +19,7 @@ import {
 
 import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
+import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } from '@/lib/auth/app-users';
 import { MANUAL_ORDER_PRODUCT_ID } from '@/lib/constants/manual-order';
 import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generation';
@@ -238,6 +239,11 @@ export async function POST(request: NextRequest) {
 
     let totalAmount = 0;
 
+    // Collect the union of REQUIRED reservation field keys across all selected
+    // existing products. Custom products contribute nothing. executionDate is
+    // excluded — the backend always assigns it (defaults to next available day).
+    const requiredReservationFieldKeys = new Set<string>();
+
     for (const item of items) {
       if (item.type === 'custom') {
         if (item.price <= 0) {
@@ -283,6 +289,14 @@ export async function POST(request: NextRequest) {
           { success: false, error: `Product unavailable: ${product.name.en || product.name.ar}` },
           { status: 400 },
         );
+      }
+
+      // Collect required reservation field keys from this product
+      const productFields = normalizeReservationFields(product.reservationFields);
+      for (const field of productFields) {
+        if (field.required && field.key !== 'executionDate') {
+          requiredReservationFieldKeys.add(field.key);
+        }
       }
 
       const activeSizeIndex =
@@ -378,6 +392,28 @@ export async function POST(request: NextRequest) {
         },
         sizeDesignName: selectedSize?.designName || '',
       });
+    }
+
+    // ── Validate required reservation fields per selected products ──
+    if (requiredReservationFieldKeys.size > 0) {
+      const providedKeys = new Set(
+        reservationInput
+          .filter(
+            (r): r is { key: string; value: string } =>
+              typeof r === 'object' && r !== null && typeof r.key === 'string' && typeof r.value === 'string' && r.value.trim() !== '',
+          )
+          .map((r) => r.key),
+      );
+      const missing = [...requiredReservationFieldKeys].filter((k) => !providedKeys.has(k));
+      if (missing.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Missing required reservation field(s): ${missing.join(', ')}`,
+          },
+          { status: 400 },
+        );
+      }
     }
 
     // ── Resolve execution date (same logic as checkout) ──
