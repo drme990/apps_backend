@@ -272,19 +272,40 @@ export async function generateDesignsForOrder(
     }
   }
 
-  // ── Merge into the order's designUrls ────────────────────────────
+  // ── Merge into the order's designUrls (atomic) ──────────────────
   // Replace any existing entries for the same productId so re-running
   // doesn't pile up duplicates — the latest generation wins.
+  //
+  // This uses atomic $pull + $push instead of a read-modify-write
+  // ($set with a merged array). The old approach loaded the order at
+  // the start of triggerAutoDesignGeneration and wrote back the merged
+  // array — if another process (the other backend, a re-render
+  // callback, etc.) updated designUrls in between, those updates were
+  // silently overwritten. The atomic approach pulls only the entries
+  // for the productIds we just generated, then pushes the new ones —
+  // concurrent updates to OTHER productIds are preserved.
   if (generated.length > 0) {
-    const existing = (order.designUrls || []).filter(
-      (d) => !generated.some((g) => g.productId === d.productId),
-    );
-    const merged = [...existing, ...generated];
-
-    await Order.updateOne(
-      { _id: order._id },
-      { $set: { designUrls: merged } },
-    );
+    const generatedProductIds = generated.map((g) => g.productId);
+    await Order.bulkWrite([
+      {
+        updateOne: {
+          filter: { _id: order._id },
+          update: {
+            $pull: {
+              designUrls: { productId: { $in: generatedProductIds } },
+            },
+          },
+        },
+      },
+      {
+        updateOne: {
+          filter: { _id: order._id },
+          update: {
+            $push: { designUrls: { $each: generated } },
+          },
+        },
+      },
+    ]);
   }
 
   return { generated, skipped, logResults, hasReservationPhoto };

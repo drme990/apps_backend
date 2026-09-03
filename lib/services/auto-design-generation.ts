@@ -108,7 +108,7 @@ export function shouldTriggerAutoDesignGeneration(
 }
 
 /**
- * Check if an order needs design generation but doesn't have any.
+ * Check if an order needs design generation but doesn't have all of them.
  *
  * This catches cases where:
  *   - The order transitioned to paid but the initial auto-generation
@@ -117,15 +117,42 @@ export function shouldTriggerAutoDesignGeneration(
  *   - The order was already partial-paid with no designs and later
  *     transitions to paid (shouldTriggerAutoDesignGeneration returns
  *     false for this case, but the order still needs designs)
+ *   - The order has SOME designs but is missing others (partial
+ *     failure — one product had no template, the generation was killed
+ *     mid-way, etc.)
+ *
+ * When `items` is provided, this checks per-product: every item with a
+ * `productId` should have a matching entry in `designUrls`. If any
+ * product is missing its design, the order needs generation.
+ *
+ * When `items` is NOT provided (backward compat with old callers),
+ * this falls back to the original behavior: needs generation if
+ * `designUrls` is empty.
  *
  * The actual generation function (triggerAutoDesignGeneration) already
- * skips orders that have designs, so calling it extra times is safe.
+ * skips orders that have ALL designs, so calling it extra times is safe.
  */
 export function needsDesignGeneration(
   status: string,
-  designUrls: Array<{ url?: string }> | undefined | null,
+  designUrls: Array<{ url?: string; productId?: string }> | undefined | null,
+  items?: Array<{ productId?: unknown }> | undefined | null,
 ): boolean {
   if (!PAID_LIKE_STATUSES.has(status)) return false;
+
+  // If items is provided, check per-product gaps
+  if (items) {
+    const productsWithId = items.filter((i) => i.productId);
+    if (productsWithId.length === 0) return false;
+    const generatedProductIds = new Set(
+      (designUrls || []).map((d) => String(d.productId)),
+    );
+    // Re-trigger if ANY product is missing its design
+    return productsWithId.some(
+      (i) => !generatedProductIds.has(String(i.productId)),
+    );
+  }
+
+  // Backward compat: no items → needs generation if designUrls is empty
   return !designUrls || designUrls.length === 0;
 }
 
@@ -140,7 +167,7 @@ export function needsDesignGeneration(
  * shouldTriggerAutoDesignGeneration + needsDesignGeneration.
  *
  * @param order       The order document (must have _id, orderNumber,
- *                    status, designUrls, source)
+ *                    status, designUrls, source, items)
  * @param previousStatus  The status BEFORE the transition
  * @param trigger     Who/what triggered this evaluation
  */
@@ -149,7 +176,8 @@ export async function evaluateAndTriggerAutoDesign(
     _id: unknown;
     orderNumber: string;
     status: string;
-    designUrls?: Array<{ url?: string }> | null;
+    designUrls?: Array<{ url?: string; productId?: string }> | null;
+    items?: Array<{ productId?: unknown }> | null;
     source?: string;
   },
   previousStatus: string,
@@ -163,7 +191,11 @@ export async function evaluateAndTriggerAutoDesign(
     previousStatus,
     order.status,
   );
-  const needsDesign = needsDesignGeneration(order.status, order.designUrls);
+  const needsDesign = needsDesignGeneration(
+    order.status,
+    order.designUrls,
+    order.items,
+  );
 
   if (shouldTrigger || needsDesign) {
     // Trigger generation — fire-and-forget
@@ -184,8 +216,11 @@ export async function evaluateAndTriggerAutoDesign(
 
   if (!PAID_LIKE_STATUSES.has(order.status)) {
     skipReason = `Status '${order.status}' is not a paid-like status — no design generation needed`;
-  } else if (order.designUrls && order.designUrls.length > 0) {
-    skipReason = `Order already has ${order.designUrls.length} design URL(s) — no regeneration needed`;
+  } else if (!needsDesign) {
+    // needsDesign was false → all products have designs
+    const designCount = order.designUrls?.length ?? 0;
+    const itemCount = (order.items || []).filter((i) => i.productId).length;
+    skipReason = `Order already has ${designCount}/${itemCount} design URL(s) — all products covered, no regeneration needed`;
   } else if (PAID_LIKE_STATUSES.has(previousStatus)) {
     skipReason = `Status was already '${previousStatus}' (paid-like) → '${order.status}' — no new transition, and order already has designs or was already processed`;
   } else {
@@ -276,10 +311,16 @@ export async function triggerAutoDesignGeneration(
       return;
     }
 
-    // If the order already has design URLs, don't regenerate.
-    if (order.designUrls && order.designUrls.length > 0) {
+    // If the order already has ALL designs (one per product with a
+    // productId), don't regenerate. But if it has SOME designs and is
+    // missing others (partial failure), continue — the generation core
+    // merges by productId and the design app deduplicates by
+    // operationId, so re-running only fills the gaps.
+    if (!needsDesignGeneration(order.status, order.designUrls, order.items)) {
+      const designCount = (order.designUrls || []).length;
+      const itemCount = (order.items || []).filter((i) => i.productId).length;
       console.log(
-        `${logPrefix} Order already has ${order.designUrls.length} design URL(s) — skipping.`,
+        `${logPrefix} Order already has ${designCount}/${itemCount} design URL(s) — skipping.`,
       );
       // Record the skip so the admin can see the trigger fired
       await recordDesignGenLog({
@@ -291,7 +332,7 @@ export async function triggerAutoDesignGeneration(
         startedAt,
         finishedAt: new Date(),
         results: [],
-        skipReason: `Order already has ${order.designUrls.length} design URL(s)`,
+        skipReason: `Order already has ${designCount}/${itemCount} design URL(s) — all products covered`,
       });
       return;
     }

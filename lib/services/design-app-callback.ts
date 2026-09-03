@@ -14,6 +14,7 @@
  */
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes — render queue can be long
+const AUTO_TIMEOUT_MS = 120_000; // 2 minutes — shorter for auto path (serverless-safe)
 
 function getDesignAppUrl(): string {
   const url = (process.env.DESIGN_APP_URL || '').replace(/\/$/, '');
@@ -139,8 +140,15 @@ export async function generateDesignForProduct(params: {
     };
   }
 
+  // Use a shorter timeout for the auto path (webhook/status-change)
+  // since it may run on Vercel serverless where long-running requests
+  // are killed. The manual admin button uses the full 10-min timeout
+  // since the admin is waiting and the VPS process is long-lived.
+  // The retry loop in design-generation-core.ts handles transient
+  // timeouts from the shorter window.
+  const timeoutMs = trigger === 'auto' ? AUTO_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${baseUrl}/api/orders/generate-design`, {
@@ -203,7 +211,7 @@ export async function generateDesignForProduct(params: {
         success: false,
         productId,
         error: 'timeout',
-        message: 'Design app did not respond within 600s.',
+        message: `Design app did not respond within ${timeoutMs / 1000}s.`,
       };
     }
     return {

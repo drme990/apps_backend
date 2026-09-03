@@ -54,14 +54,14 @@ function toEgyptTimeString(date: Date, summerTime: SummerTimeOverride): string {
 /**
  * Get the current date in Egypt as a YYYY-MM-DD string.
  */
-function getEgyptToday(summerTime: SummerTimeOverride = undefined): string {
+export function getEgyptToday(summerTime: SummerTimeOverride = undefined): string {
   return toEgyptDateString(new Date(), summerTime);
 }
 
 /**
  * Add days to a YYYY-MM-DD string and return the new YYYY-MM-DD string.
  */
-function addDays(dateStr: string, days: number): string {
+export function addDays(dateStr: string, days: number): string {
   const [year, month, day] = dateStr.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
   date.setUTCDate(date.getUTCDate() + days);
