@@ -143,12 +143,19 @@ export async function GET(request: NextRequest) {
       ...(country && country !== 'all' ? [{ $match: { 'billingData.country': { $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } } }] : []),
       // Invoice filter: same as the main execution route.
       // - No invoices → show normally
-      // - Has invoices → ALL must be "confirmed"
-      // - Any not confirmed → excluded
+      // - Has invoices → only the FIRST invoice (whileCreating: true) must be
+      //   "confirmed". Additional invoices uploaded later that are not yet
+      //   confirmed do NOT block the order. Soft-deleted invoices are ignored.
       {
         $match: {
           invoiceUrls: {
-            $not: { $elemMatch: { invoiceStatus: { $ne: 'confirmed' } } },
+            $not: {
+              $elemMatch: {
+                deleted: { $ne: true },
+                whileCreating: true,
+                invoiceStatus: { $ne: 'confirmed' },
+              },
+            },
           },
         },
       },

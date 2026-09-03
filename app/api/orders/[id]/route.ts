@@ -35,18 +35,21 @@ function normalizeInvoiceUrls(
     rejectionReason?: string;
     value?: number;
     currency?: string;
+    deleted?: boolean;
   }>,
 ): IInvoiceUrl[] {
-  return (invoiceUrls || []).map((invoice) => ({
-    url: invoice.url,
-    invoiceStatus:
-      invoice.invoiceStatus && VALID_INVOICE_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_INVOICE_STATUSES)[number])
-        ? (invoice.invoiceStatus as (typeof VALID_INVOICE_STATUSES)[number])
-        : 'waiting',
-    rejectionReason: invoice.rejectionReason || '',
-    value: typeof invoice.value === 'number' ? invoice.value : 0,
-    currency: invoice.currency || 'EGP',
-  }));
+  return (invoiceUrls || [])
+    .filter((invoice) => !invoice.deleted)
+    .map((invoice) => ({
+      url: invoice.url,
+      invoiceStatus:
+        invoice.invoiceStatus && VALID_INVOICE_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_INVOICE_STATUSES)[number])
+          ? (invoice.invoiceStatus as (typeof VALID_INVOICE_STATUSES)[number])
+          : 'waiting',
+      rejectionReason: invoice.rejectionReason || '',
+      value: typeof invoice.value === 'number' ? invoice.value : 0,
+      currency: invoice.currency || 'EGP',
+    }));
 }
 
 const putSchema = z.object({

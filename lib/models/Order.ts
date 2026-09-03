@@ -205,6 +205,38 @@ export interface IInvoiceUrl {
    * the timeline.
    */
   whileCreating?: boolean;
+  /** Soft-delete flag. When true, the invoice is hidden from normal
+   * views but retained in the database for audit purposes. The linked
+   * payment (if any) is set to status 'failed' so it stays visible in
+   * the payment timeline but is excluded from paid-amount calculations. */
+  deleted?: boolean;
+  /** Timestamp of the soft-delete. */
+  deletedAt?: Date;
+}
+
+/**
+ * Audit trail entry for a deleted invoice. Tracks why the admin removed
+ * an invoice from the order. The invoice URL, value, and currency are
+ * snapshotted here so the audit record survives even after the R2 file
+ * is deleted.
+ */
+export type InvoiceDeletionReason =
+  | 'returned'
+  | 'duplicate'
+  | 'fake'
+  | 'test'
+  | 'uploaded_by_mistake'
+  | 'other';
+
+export interface IDeletedInvoice {
+  url: string;
+  reason: InvoiceDeletionReason;
+  customReason?: string;
+  value: number;
+  currency?: string;
+  invoiceStatus?: InvoiceStatus;
+  deletedAt: Date;
+  deletedBy?: string;
 }
 
 /**
@@ -286,6 +318,7 @@ export interface IOrder {
   referralId?: string;
   cancellationReason?: string;
   invoiceUrls?: IInvoiceUrl[];
+  deletedInvoices?: IDeletedInvoice[];
   /** Generated design images — one entry per product with a template */
   designUrls?: IOrderDesignUrl[];
   termsAgreedAt?: Date;
@@ -488,6 +521,29 @@ const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
     value: { type: Number, required: true, min: 0, default: 0 },
     currency: { type: String, trim: true, default: 'EGP' },
     whileCreating: { type: Boolean, default: false },
+    deleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
+  },
+  { _id: false },
+);
+
+const DeletedInvoiceSchema = new mongoose.Schema<IDeletedInvoice>(
+  {
+    url: { type: String, required: true, trim: true },
+    reason: {
+      type: String,
+      enum: ['returned', 'duplicate', 'fake', 'test', 'uploaded_by_mistake', 'other'],
+      required: true,
+    },
+    customReason: { type: String, trim: true, default: '' },
+    value: { type: Number, required: true, min: 0, default: 0 },
+    currency: { type: String, trim: true, default: 'EGP' },
+    invoiceStatus: {
+      type: String,
+      enum: ['confirmed', 'waiting', 'pending', 'rejected'],
+    },
+    deletedAt: { type: Date, required: true, default: () => new Date() },
+    deletedBy: { type: String, trim: true },
   },
   { _id: false },
 );
@@ -683,6 +739,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     referralId: { type: String, trim: true, index: true },
     cancellationReason: { type: String, trim: true },
     invoiceUrls: { type: [InvoiceUrlSchema], default: [] },
+    deletedInvoices: { type: [DeletedInvoiceSchema], default: [] },
     designUrls: { type: [OrderDesignUrlSchema], default: [] },
     statusUpdateTime: {
       type: Date,

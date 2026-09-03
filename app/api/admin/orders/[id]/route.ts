@@ -82,6 +82,7 @@ function normalizeInvoiceUrls(
     rejectionReason?: string;
     value?: number;
     currency?: string;
+    deleted?: boolean;
   }>,
 ): Array<{
   url: string;
@@ -91,25 +92,29 @@ function normalizeInvoiceUrls(
   currency: string;
 }> {
   const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
-  return (invoiceUrls || []).map((invoice: {
-    url: string;
-    invoiceStatus?: string;
-    rejectionReason?: string;
-    value?: number;
-    currency?: string;
-  }) => {
-    const invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected' =
-      invoice.invoiceStatus && VALID_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
-        ? (invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
-        : 'waiting';
-    return {
-      url: invoice.url,
-      invoiceStatus,
-      rejectionReason: typeof invoice.rejectionReason === 'string' ? invoice.rejectionReason : '',
-      value: typeof invoice.value === 'number' ? invoice.value : 0,
-      currency: typeof invoice.currency === 'string' ? invoice.currency.trim() || 'EGP' : 'EGP',
-    };
-  });
+  // Filter out soft-deleted invoices — they're retained in the DB for
+  // audit but hidden from normal API responses.
+  return (invoiceUrls || [])
+    .filter((invoice) => !invoice.deleted)
+    .map((invoice: {
+      url: string;
+      invoiceStatus?: string;
+      rejectionReason?: string;
+      value?: number;
+      currency?: string;
+    }) => {
+      const invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected' =
+        invoice.invoiceStatus && VALID_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
+          ? (invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
+          : 'waiting';
+      return {
+        url: invoice.url,
+        invoiceStatus,
+        rejectionReason: typeof invoice.rejectionReason === 'string' ? invoice.rejectionReason : '',
+        value: typeof invoice.value === 'number' ? invoice.value : 0,
+        currency: typeof invoice.currency === 'string' ? invoice.currency.trim() || 'EGP' : 'EGP',
+      };
+    });
 }
 
 function sanitizeOrderForAdmin(order: {
@@ -417,21 +422,59 @@ export async function PATCH(
     let allowRateInvoiceValue: number | null = null;
     let allowRateRemainingBefore: number | null = null;
 
-    // ── Helpers to add/remove payment entries linked to invoices ──
-    // Payments are only recorded for confirmed invoices. When an invoice
-    // is confirmed, a payment entry is added. When it's un-confirmed, the
-    // matching payment is removed so the order's paid amount reverts.
+    // ── Helpers to manage payment entries linked to invoices ──
+    // Every invoice uploaded to an order gets a payment entry in the
+    // timeline with status 'pending'. When the invoice is confirmed,
+    // the payment status is updated to 'paid' (with currency conversion).
+    // When the invoice is rejected or deleted, the payment status is
+    // set to 'failed'. This keeps the payment visible in the timeline
+    // at all times so admins can track the invoice's lifecycle.
     const invoicePaymentId = (url: string) => `manual_invoice_${url.slice(-50)}`;
 
-    const addInvoicePayment = async (invoice: IInvoiceUrl, paymentMethodOverride?: IPayment['paymentMethod']) => {
+    // Create a pending payment entry for a newly uploaded invoice.
+    // No currency conversion yet — that happens when the invoice is
+    // confirmed and the payment transitions to 'paid'.
+    const createInvoicePaymentPending = (
+      invoice: IInvoiceUrl,
+      paymentMethodOverride?: IPayment['paymentMethod'],
+    ) => {
       // Skip invoices uploaded during order creation — their amount was
       // already accounted for via the manually-entered paidAmount field.
       if (invoice.whileCreating) return;
-      if (invoice.value <= 0) return;
       if (!Array.isArray(order.payments)) order.payments = [];
       const pid = invoicePaymentId(invoice.url);
       // Don't add duplicate
       if (order.payments.some((p: IPayment) => p.paymentId === pid)) return;
+
+      const invoiceCurrency = (invoice.currency || order.currency || 'EGP').toUpperCase();
+      const pm = paymentMethodOverride || (order.paymentMethod || 'bank_transfer') as IPayment['paymentMethod'];
+
+      order.payments.push({
+        paymentId: pid,
+        easykashOrderId: `manual-invoice-${invoice.url.slice(-50)}`,
+        orderAmount: invoice.value,
+        gatewayAmount: invoice.value,
+        gatewayCurrency: invoiceCurrency,
+        amount: invoice.value,
+        currency: invoiceCurrency,
+        status: 'pending',
+        paymentMethod: pm,
+        createdAt: new Date(),
+      });
+    };
+
+    // Transition an invoice's payment to 'paid' status. If a pending
+    // payment already exists, update it in-place (with currency conversion).
+    // If no payment exists (e.g. legacy orders), create a new 'paid' entry.
+    const confirmInvoicePayment = async (
+      invoice: IInvoiceUrl,
+      paymentMethodOverride?: IPayment['paymentMethod'],
+    ) => {
+      if (invoice.whileCreating) return;
+      if (invoice.value <= 0) return;
+      if (!Array.isArray(order.payments)) order.payments = [];
+      const pid = invoicePaymentId(invoice.url);
+      const idx = order.payments.findIndex((p: IPayment) => p.paymentId === pid);
 
       // Capture the remaining before this payment is added — used for
       // the allowRate tolerance check later.
@@ -443,28 +486,21 @@ export async function PATCH(
       const pm = paymentMethodOverride || (order.paymentMethod || 'bank_transfer') as IPayment['paymentMethod'];
 
       // ── Currency conversion logic ──
-      // The gateway currency follows the order's currency. If the order
-      // currency is NOT supported by EasyKash, fall back to EGP.
       const gatewayCurrency = EASYKASH_SUPPORTED_CURRENCIES.has(orderCurrency)
         ? orderCurrency
         : 'EGP';
 
-      // orderAmount: the invoice value converted to the order's currency
-      // (used for accounting and remaining-balance math).
       let orderAmount = invoice.value;
       if (invoiceCurrency !== orderCurrency) {
         try {
           orderAmount = await convertCurrency(invoice.value, invoiceCurrency, orderCurrency);
         } catch {
-          // If conversion fails, use the raw invoice value as fallback
           orderAmount = invoice.value;
         }
       }
 
-      // The allowRate comparison uses the order-currency amount
       allowRateInvoiceValue = orderAmount;
 
-      // gatewayAmount: the invoice value converted to the gateway currency.
       let gatewayAmount = orderAmount;
       if (orderCurrency !== gatewayCurrency) {
         try {
@@ -480,19 +516,31 @@ export async function PATCH(
         }
       }
 
-      order.payments.push({
-        paymentId: pid,
-        easykashOrderId: `manual-invoice-${invoice.url.slice(-50)}`,
-        orderAmount,
-        gatewayAmount,
-        gatewayCurrency,
-        amount: invoice.value,
-        currency: invoiceCurrency,
-        status: 'paid',
-        paymentMethod: pm,
-        createdAt: new Date(),
-        paidAt: new Date(),
-      });
+      if (idx >= 0) {
+        // Update existing pending payment to 'paid'
+        const existing = order.payments[idx];
+        existing.status = 'paid';
+        existing.orderAmount = orderAmount;
+        existing.gatewayAmount = gatewayAmount;
+        existing.gatewayCurrency = gatewayCurrency;
+        existing.paymentMethod = pm;
+        existing.paidAt = new Date();
+      } else {
+        // Legacy: no pending payment exists, create a new 'paid' entry
+        order.payments.push({
+          paymentId: pid,
+          easykashOrderId: `manual-invoice-${invoice.url.slice(-50)}`,
+          orderAmount,
+          gatewayAmount,
+          gatewayCurrency,
+          amount: invoice.value,
+          currency: invoiceCurrency,
+          status: 'paid',
+          paymentMethod: pm,
+          createdAt: new Date(),
+          paidAt: new Date(),
+        });
+      }
       changes.push({
         changeType: 'payment',
         previousValue: null,
@@ -500,21 +548,69 @@ export async function PATCH(
       });
     };
 
-    const removeInvoicePayment = (invoice: IInvoiceUrl) => {
-      // Skip invoices uploaded during order creation — they never had
-      // a payment entry, so there's nothing to remove.
+    // Update an invoice's payment status (for reject → failed, un-confirm → pending).
+    const setInvoicePaymentStatus = (
+      invoice: IInvoiceUrl,
+      status: 'pending' | 'failed' | 'expired',
+    ) => {
       if (invoice.whileCreating) return;
       if (!Array.isArray(order.payments)) return;
       const pid = invoicePaymentId(invoice.url);
       const idx = order.payments.findIndex((p: IPayment) => p.paymentId === pid);
       if (idx >= 0) {
-        const removed = order.payments[idx];
-        order.payments.splice(idx, 1);
+        const payment = order.payments[idx];
+        const previousStatus = payment.status;
+        payment.status = status;
+        // This function only transitions to non-paid statuses, so always
+        // clear paidAt (the 'paid' status is set by confirmInvoicePayment).
+        payment.paidAt = undefined;
         changes.push({
           changeType: 'payment',
-          previousValue: JSON.stringify({ paidAmount: removed.amount, invoiceUrl: invoice.url, currency: removed.currency }),
-          newValue: null,
+          previousValue: JSON.stringify({ status: previousStatus, invoiceUrl: invoice.url, amount: payment.amount }),
+          newValue: JSON.stringify({ status, invoiceUrl: invoice.url, amount: payment.amount }),
         });
+      }
+    };
+
+    // Update the linked payment's amounts when an invoice value/currency changes.
+    // Only applies to confirmed invoices with an existing payment entry.
+    const updateInvoicePaymentAmounts = async (invoice: IInvoiceUrl) => {
+      if (invoice.whileCreating) return;
+      if (!Array.isArray(order.payments)) return;
+      const pid = invoicePaymentId(invoice.url);
+      const idx = order.payments.findIndex((p: IPayment) => p.paymentId === pid);
+      if (idx < 0) return;
+      const payment = order.payments[idx];
+      if (payment.status !== 'paid') return; // only update 'paid' payments
+
+      const invoiceCurrency = (invoice.currency || order.currency || 'EGP').toUpperCase();
+      const orderCurrency = (order.currency || 'EGP').toUpperCase();
+      payment.amount = invoice.value;
+      payment.currency = invoiceCurrency;
+
+      // Recalculate orderAmount (invoice value → order currency)
+      if (invoiceCurrency !== orderCurrency) {
+        try {
+          payment.orderAmount = await convertCurrency(invoice.value, invoiceCurrency, orderCurrency);
+        } catch {
+          payment.orderAmount = invoice.value;
+        }
+      } else {
+        payment.orderAmount = invoice.value;
+      }
+
+      // Recalculate gatewayAmount (order currency → gateway currency)
+      const gatewayCurrency = EASYKASH_SUPPORTED_CURRENCIES.has(orderCurrency)
+        ? orderCurrency
+        : 'EGP';
+      if (orderCurrency !== gatewayCurrency) {
+        try {
+          payment.gatewayAmount = await convertCurrency(payment.orderAmount, orderCurrency, gatewayCurrency);
+        } catch {
+          payment.gatewayAmount = payment.orderAmount;
+        }
+      } else {
+        payment.gatewayAmount = payment.orderAmount;
       }
     };
 
@@ -729,12 +825,17 @@ export async function PATCH(
           firstInvoiceNewlyConfirmed = true;
         }
 
-        // ── Only record a payment entry when the invoice is confirmed.
-        //    If the invoice is waiting/pending/rejected, the paid amount
-        //    is NOT added to the order — it will be added later when the
-        //    invoice status changes to "confirmed". ──
+        // ── Always create a payment entry for the uploaded invoice. ──
+        //    The payment starts as 'pending'. If the invoice is uploaded
+        //    directly as 'confirmed', transition it to 'paid' immediately.
         if (invoiceStatus === 'confirmed') {
-          await addInvoicePayment(newEntry, paymentMethod);
+          createInvoicePaymentPending(newEntry, paymentMethod);
+          await confirmInvoicePayment(newEntry, paymentMethod);
+        } else if (invoiceStatus === 'rejected') {
+          createInvoicePaymentPending(newEntry, paymentMethod);
+          setInvoicePaymentStatus(newEntry, 'failed');
+        } else {
+          createInvoicePaymentPending(newEntry, paymentMethod);
         }
       }
     }
@@ -800,13 +901,17 @@ export async function PATCH(
                 if (nextEntry.whileCreating) {
                   firstInvoiceNewlyConfirmed = true;
                 }
-                // Add payment for newly confirmed invoice
-                await addInvoicePayment(nextEntry);
+                // Transition payment to 'paid'
+                await confirmInvoicePayment(nextEntry);
               }
-              // Track transition FROM 'confirmed' to non-confirmed
-              if (prevEntry.invoiceStatus === 'confirmed' && nextEntry.invoiceStatus !== 'confirmed') {
-                // Remove the payment linked to this invoice
-                removeInvoicePayment(prevEntry);
+              // Track transition to 'rejected' → set payment to 'failed'
+              if (nextEntry.invoiceStatus === 'rejected' && prevEntry.invoiceStatus !== 'rejected') {
+                setInvoicePaymentStatus(nextEntry, 'failed');
+              }
+              // Track transition FROM 'confirmed'/'rejected' back to 'waiting'/'pending'
+              if (prevEntry.invoiceStatus !== 'waiting' && prevEntry.invoiceStatus !== 'pending' &&
+                (nextEntry.invoiceStatus === 'waiting' || nextEntry.invoiceStatus === 'pending')) {
+                setInvoicePaymentStatus(nextEntry, 'pending');
               }
             }
 
@@ -816,6 +921,8 @@ export async function PATCH(
                 previousValue: JSON.stringify({ url: nextEntry.url, value: prevEntry.value, currency: prevEntry.currency }),
                 newValue: JSON.stringify({ url: nextEntry.url, value: nextEntry.value, currency: nextEntry.currency }),
               });
+              // Update the linked payment amounts for confirmed invoices
+              await updateInvoicePaymentAmounts(nextEntry);
             }
           }
         } else {
@@ -838,13 +945,17 @@ export async function PATCH(
                   if (nextEntry.whileCreating) {
                     firstInvoiceNewlyConfirmed = true;
                   }
-                  // Add payment for newly confirmed invoice
-                  await addInvoicePayment(nextEntry);
+                  // Transition payment to 'paid'
+                  await confirmInvoicePayment(nextEntry);
                 }
-                // Track transition FROM 'confirmed' to non-confirmed
-                if (prevEntry.invoiceStatus === 'confirmed' && nextEntry.invoiceStatus !== 'confirmed') {
-                  // Remove the payment linked to this invoice
-                  removeInvoicePayment(prevEntry);
+                // Track transition to 'rejected' → set payment to 'failed'
+                if (nextEntry.invoiceStatus === 'rejected' && prevEntry.invoiceStatus !== 'rejected') {
+                  setInvoicePaymentStatus(nextEntry, 'failed');
+                }
+                // Track transition FROM 'confirmed'/'rejected' back to 'waiting'/'pending'
+                if (prevEntry.invoiceStatus !== 'waiting' && prevEntry.invoiceStatus !== 'pending' &&
+                  (nextEntry.invoiceStatus === 'waiting' || nextEntry.invoiceStatus === 'pending')) {
+                  setInvoicePaymentStatus(nextEntry, 'pending');
                 }
               }
 
@@ -854,6 +965,8 @@ export async function PATCH(
                   previousValue: JSON.stringify({ url: nextEntry.url, value: prevEntry.value, currency: prevEntry.currency }),
                   newValue: JSON.stringify({ url: nextEntry.url, value: nextEntry.value, currency: nextEntry.currency }),
                 });
+                // Update the linked payment amounts for confirmed invoices
+                await updateInvoicePaymentAmounts(nextEntry);
               }
             }
           }
@@ -875,10 +988,9 @@ export async function PATCH(
                 previousValue: JSON.stringify(prevEntry),
                 newValue: null,
               });
-              // If the removed invoice was confirmed, remove its payment too
-              if (prevEntry.invoiceStatus === 'confirmed') {
-                removeInvoicePayment(prevEntry);
-              }
+              // Set the removed invoice's payment to 'failed' so it stays
+              // visible in the payment timeline but is excluded from totals.
+              setInvoicePaymentStatus(prevEntry, 'failed');
             }
           }
         }

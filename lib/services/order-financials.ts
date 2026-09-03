@@ -10,6 +10,7 @@ type InvoiceLite = {
   invoiceStatus?: string;
   value?: number;
   whileCreating?: boolean;
+  deleted?: boolean;
 };
 
 type OrderLite = {
@@ -78,6 +79,7 @@ export function calculateOrderFinancials(order: OrderLite) {
   const confirmedInvoicesTotal = !hasPaymentRecords
     ? (order.invoiceUrls || []).reduce((sum, invoice) => {
       if (invoice.whileCreating) return sum;
+      if (invoice.deleted) return sum;
       if (invoice.invoiceStatus === 'confirmed') {
         return sum + toPositiveNumber(invoice.value);
       }
