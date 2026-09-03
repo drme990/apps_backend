@@ -181,7 +181,7 @@ export async function evaluateAndTriggerAutoDesign(
     source?: string;
   },
   previousStatus: string,
-  trigger: 'auto_webhook' | 'auto_admin',
+  trigger: 'auto_webhook' | 'auto_admin' | 'auto_cron',
 ): Promise<void> {
   const startedAt = new Date();
   const orderId = String(order._id);
@@ -261,7 +261,7 @@ export async function evaluateAndTriggerAutoDesign(
  */
 export async function triggerAutoDesignGeneration(
   orderId: string,
-  trigger: 'auto_webhook' | 'auto_admin' = 'auto_webhook',
+  trigger: 'auto_webhook' | 'auto_admin' | 'auto_cron' = 'auto_webhook',
 ): Promise<void> {
   const logPrefix = `[auto-design-gen order=${orderId}]`;
   const startedAt = new Date();

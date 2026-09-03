@@ -143,7 +143,7 @@ export async function GET(request: Request) {
       console.log(
         `[cron/rescue-designs] Triggering generation for order ${order.orderNumber} (status=${order.status}, designs=${designCount}/${itemCount})`,
       );
-      triggerAutoDesignGeneration(orderId, 'auto_admin').catch((err) => {
+      triggerAutoDesignGeneration(orderId, 'auto_cron').catch((err) => {
         console.error(
           `[cron/rescue-designs] Generation failed for order ${order.orderNumber}:`,
           err instanceof Error ? err.message : err,

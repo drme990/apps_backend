@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     }
 
     const trigger = searchParams.get('trigger');
-    if (trigger && ['auto_webhook', 'auto_admin', 'manual_admin'].includes(trigger)) {
+    if (trigger && ['auto_webhook', 'auto_admin', 'auto_cron', 'manual_admin'].includes(trigger)) {
       filter.trigger = trigger;
     }
 

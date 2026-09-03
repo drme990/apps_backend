@@ -20,7 +20,7 @@ import OrderDesignLog, {
   type IOrderDesignLogResult,
 } from '@/lib/models/OrderDesignLog';
 
-export type DesignGenTrigger = 'auto_webhook' | 'auto_admin' | 'manual_admin';
+export type DesignGenTrigger = 'auto_webhook' | 'auto_admin' | 'auto_cron' | 'manual_admin';
 
 export interface DesignGenLogInput {
   orderId: string;

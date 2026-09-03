@@ -63,7 +63,7 @@ export interface IOrderDesignLog {
    *  - 'auto_admin'      — admin manually changed status to paid/partial
    *  - 'manual_admin'    — admin clicked "Generate Design" button
    */
-  trigger: 'auto_webhook' | 'auto_admin' | 'manual_admin';
+  trigger: 'auto_webhook' | 'auto_admin' | 'auto_cron' | 'manual_admin';
   /**
    * Overall status of the attempt:
    *  - 'success'   — at least one product generated successfully
@@ -124,7 +124,7 @@ const OrderDesignLogSchema = new mongoose.Schema<IOrderDesignLog>(
     trigger: {
       type: String,
       required: true,
-      enum: ['auto_webhook', 'auto_admin', 'manual_admin'],
+      enum: ['auto_webhook', 'auto_admin', 'auto_cron', 'manual_admin'],
       index: true,
     },
     status: {
