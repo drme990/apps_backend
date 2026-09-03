@@ -118,7 +118,7 @@ const OrderDesignLogSchema = new mongoose.Schema<IOrderDesignLog>(
   {
     orderId: { type: String, required: true, index: true },
     orderNumber: { type: String, required: true, index: true },
-    source: { type: String, enum: ['manasik', 'ghadaq'] },
+    source: { type: String, enum: ['manasik', 'ghadaq', 'cron'] },
     orderStatus: { type: String },
     hasReservationPhoto: { type: Boolean },
     trigger: {

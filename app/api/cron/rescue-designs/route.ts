@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Booking from '@/lib/models/Booking';
 import Order from '@/lib/models/Order';
+import OrderDesignLog from '@/lib/models/OrderDesignLog';
 import { getEgyptToday, addDays } from '@/lib/execution-date';
 import { triggerAutoDesignGeneration } from '@/lib/services/auto-design-generation';
 
@@ -32,6 +33,14 @@ import { triggerAutoDesignGeneration } from '@/lib/services/auto-design-generati
  * (e.g. fire-and-forget promise killed on Vercel serverless — see
  * auto_generate_design.md Bug #1).
  *
+ * Logging:
+ *   Every cron run writes a summary entry to `OrderDesignLog` with
+ *   trigger='auto_cron' so it appears in the admin panel's "Order
+ *   Design Logs" page. This includes runs that found 0 orphans — the
+ *   admin can see that the cron is alive and working.
+ *   Each individual order generation also writes its own log entry
+ *   (via `triggerAutoDesignGeneration` → `recordDesignGenLog`).
+ *
  * Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`.
  * The route refuses all requests if CRON_SECRET is not configured.
  */
@@ -54,6 +63,7 @@ export async function GET(request: Request) {
   }
 
   const startTime = Date.now();
+  const startedAt = new Date();
 
   try {
     await connectDB();
@@ -84,10 +94,19 @@ export async function GET(request: Request) {
     // The $expr compares the count of designUrls against the count of
     // items that have a productId. Custom items (no productId) are
     // excluded — they never get designs.
-    const orphans = await Order.find({
+    const baseFilter = {
       status: { $in: ['paid', 'partial-paid', 'completed'] },
       'reservationData.key': 'executionDate',
       'reservationData.value': tomorrow,
+    };
+
+    // Diagnostic: count ALL paid orders with tomorrow's execution date
+    // (regardless of design status) so we can see if the issue is
+    // "no orders at all" vs "all orders already have designs".
+    const totalWithExecutionDate = await Order.countDocuments(baseFilter);
+
+    const orphans = await Order.find({
+      ...baseFilter,
       $expr: {
         $lt: [
           { $size: { $ifNull: ['$designUrls', []] } },
@@ -96,46 +115,56 @@ export async function GET(request: Request) {
               $filter: {
                 input: { $ifNull: ['$items', []] },
                 as: 'it',
-                cond: {
-                  $and: [
-                    { $ifNull: ['$$it.productId', false] },
-                    { $ne: ['$$it.productId', null] },
-                  ],
-                },
+                cond: { $ne: ['$$it.productId', null] },
               },
             },
           },
         ],
       },
     })
-      .select('_id orderNumber status designUrls items')
+      .select('_id orderNumber status designUrls items source')
       .limit(20)
       .lean();
 
     console.log(
-      `[cron/rescue-designs] Found ${orphans.length} orphaned order(s) for executionDate=${tomorrow}`,
+      `[cron/rescue-designs] Found ${orphans.length} orphaned order(s) for executionDate=${tomorrow}` +
+      ` (total paid orders with this executionDate: ${totalWithExecutionDate})`,
     );
 
-    if (orphans.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: 'No orphaned orders found',
-        executionDate: tomorrow,
-        found: 0,
-        triggered: 0,
-        duration: Date.now() - startTime,
-      });
+    // If we found 0 orphans but there ARE orders with this execution
+    // date, log a sample so we can debug why they're not orphaned.
+    if (orphans.length === 0 && totalWithExecutionDate > 0) {
+      const samples = await Order.find(baseFilter)
+        .select('orderNumber status designUrls items')
+        .limit(3)
+        .lean();
+      for (const s of samples) {
+        const dCount = (s.designUrls || []).length;
+        const iCount = (s.items || []).filter((i) => i.productId).length;
+        console.log(
+          `[cron/rescue-designs] Sample order ${s.orderNumber}: status=${s.status}, designs=${dCount}, itemsWithProductId=${iCount}`,
+        );
+      }
     }
 
-    // ── Trigger generation for each orphan ─────────────────────────
-    // triggerAutoDesignGeneration is fire-and-forget on the webhook
-    // path (where Vercel kills the promise), but here we're in a cron
-    // route. On the VPS backend (Docker), the process stays alive so
-    // the generation completes. On Vercel, the cron function has a
-    // maxDuration — we fire-and-forget here too, but the cron runs
-    // every 30 min so orphans are retried on the next run if this
-    // invocation is killed before completion.
-    let triggered = 0;
+    // ── Trigger generation for each orphan (awaited, not fire-and-forget) ──
+    // Unlike the webhook path (where Vercel kills the promise), here we
+    // AWAIT each generation so that:
+    //   1. The per-order log entries are written before the cron responds
+    //   2. The cron summary log accurately reflects success/failure
+    //
+    // On the VPS backend (Docker), the process stays alive so awaiting
+    // is safe. On Vercel, the cron function has a maxDuration — if it
+    // times out, the cron runs again in 30 min and retries (the per-order
+    // logs from the timed-out run may not be written, but the summary
+    // log will reflect the partial completion).
+    const results: Array<{
+      orderNumber: string;
+      orderId: string;
+      success: boolean;
+      error?: string;
+    }> = [];
+
     for (const order of orphans) {
       const orderId = String(order._id);
       const designCount = (order.designUrls || []).length;
@@ -143,35 +172,139 @@ export async function GET(request: Request) {
       console.log(
         `[cron/rescue-designs] Triggering generation for order ${order.orderNumber} (status=${order.status}, designs=${designCount}/${itemCount})`,
       );
-      triggerAutoDesignGeneration(orderId, 'auto_cron').catch((err) => {
+      try {
+        await triggerAutoDesignGeneration(orderId, 'auto_cron');
+        results.push({
+          orderNumber: order.orderNumber,
+          orderId,
+          success: true,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         console.error(
           `[cron/rescue-designs] Generation failed for order ${order.orderNumber}:`,
-          err instanceof Error ? err.message : err,
+          errMsg,
         );
-      });
-      triggered++;
+        results.push({
+          orderNumber: order.orderNumber,
+          orderId,
+          success: false,
+          error: errMsg,
+        });
+      }
     }
 
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    const duration = Date.now() - startTime;
+
     console.log(
-      `[cron/rescue-designs] Triggered generation for ${triggered}/${orphans.length} order(s) in ${Date.now() - startTime}ms`,
+      `[cron/rescue-designs] Done: ${succeeded} succeeded, ${failed} failed, ${orphans.length} total in ${duration}ms`,
     );
+
+    // ── Write cron summary log to OrderDesignLog ───────────────────
+    // This ensures every cron run is visible in the admin panel's
+    // "Order Design Logs" page — even runs that found 0 orphans.
+    // The admin can filter by trigger='auto_cron' to see cron activity.
+    try {
+      const summaryStatus =
+        orphans.length === 0
+          ? 'skipped'
+          : failed === 0
+            ? 'success'
+            : succeeded === 0
+              ? 'failed'
+              : 'partial';
+
+      const skipReason =
+        orphans.length === 0
+          ? totalWithExecutionDate > 0
+            ? `Cron scan: 0 orphans found for executionDate=${tomorrow}, but ${totalWithExecutionDate} paid order(s) exist with this date (all have complete designs)`
+            : `Cron scan: no paid orders found for executionDate=${tomorrow}`
+          : undefined;
+
+      const errorReason =
+        failed > 0 && succeeded === 0
+          ? `All ${failed} order(s) failed: ${results.filter((r) => !r.success).map((r) => `${r.orderNumber} (${r.error})`).join(', ')}`
+          : undefined;
+
+      await OrderDesignLog.create({
+        orderId: 'cron-summary',
+        orderNumber: `CRON ${tomorrow}`,
+        source: 'cron',
+        trigger: 'auto_cron',
+        status: summaryStatus,
+        totalProducts: orphans.length,
+        generatedCount: succeeded,
+        failedCount: failed,
+        results: results.map((r) => ({
+          productId: r.orderId,
+          productName: r.orderNumber,
+          success: r.success,
+          errorCode: r.success ? undefined : 'cronRescueFailed',
+          errorMessage: r.error,
+        })),
+        startedAt,
+        finishedAt: new Date(),
+        durationMs: duration,
+        skipReason,
+        error: errorReason,
+      });
+    } catch (logErr) {
+      // Best-effort — don't let logging failure break the cron response
+      console.error(
+        '[cron/rescue-designs] Failed to write summary log:',
+        logErr instanceof Error ? logErr.message : logErr,
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      message: `Triggered design generation for ${triggered} orphaned order(s)`,
+      message:
+        orphans.length === 0
+          ? `No orphaned orders found for executionDate=${tomorrow} (total paid with this date: ${totalWithExecutionDate})`
+          : `Rescued ${succeeded}/${orphans.length} order(s) (${failed} failed)`,
       executionDate: tomorrow,
+      egyptToday: today,
       found: orphans.length,
-      triggered,
-      duration: Date.now() - startTime,
+      totalWithExecutionDate,
+      triggered: results.length,
+      succeeded,
+      failed,
+      results,
+      duration,
     });
   } catch (error) {
+    const duration = Date.now() - startTime;
     console.error('[cron/rescue-designs] Error:', error);
+
+    // Write an error summary log so the admin can see cron failures
+    try {
+      await OrderDesignLog.create({
+        orderId: 'cron-summary',
+        orderNumber: 'CRON ERROR',
+        source: 'cron',
+        trigger: 'auto_cron',
+        status: 'failed',
+        totalProducts: 0,
+        generatedCount: 0,
+        failedCount: 0,
+        results: [],
+        startedAt,
+        finishedAt: new Date(),
+        durationMs: duration,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } catch {
+      // Best-effort
+    }
+
     return NextResponse.json(
       {
         success: false,
         error: 'Failed to rescue designs',
         message: error instanceof Error ? error.message : 'Unknown error',
-        duration: Date.now() - startTime,
+        duration,
       },
       { status: 500 },
     );
