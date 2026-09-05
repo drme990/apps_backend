@@ -28,7 +28,8 @@ function normalizeCountryCode(raw: string | null): string | null {
   if (!/^[A-Z]{2}$/.test(code)) return null;
   if (code === 'XX' || code === 'ZZ') return null;
 
-  return code;
+  // Map Israel → Palestine everywhere in the app.
+  return code === 'IL' ? 'PS' : code;
 }
 import {
   findReservationInputByField,

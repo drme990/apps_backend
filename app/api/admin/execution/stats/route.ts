@@ -145,15 +145,14 @@ export async function GET(request: NextRequest) {
       // - No invoices → show normally
       // - Has invoices → only the FIRST invoice (whileCreating: true) must be
       //   "confirmed". Additional invoices uploaded later that are not yet
-      //   confirmed do NOT block the order. Soft-deleted invoices are ignored.
+      //   confirmed do NOT block the order. Deleted invoices are ignored.
       {
         $match: {
           invoiceUrls: {
             $not: {
               $elemMatch: {
-                deleted: { $ne: true },
+                invoiceStatus: { $nin: ['confirmed', 'deleted'] },
                 whileCreating: true,
-                invoiceStatus: { $ne: 'confirmed' },
               },
             },
           },

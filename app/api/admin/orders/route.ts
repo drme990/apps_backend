@@ -273,6 +273,11 @@ export async function GET(request: NextRequest) {
       statusUpdateTime: 1,
       payments: 1,
       invoiceUrls: 1,
+      isFreeOrder: 1,
+      freeOrderReason: 1,
+      createdByAdminId: 1,
+      createdByAdminEmail: 1,
+      createdByAdminName: 1,
     };
 
     const [orders, total] = await Promise.all([
@@ -294,11 +299,10 @@ export async function GET(request: NextRequest) {
           ? undefined
           : order.referralId;
 
-      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; invoiceStatus?: string; rejectionReason?: string; value?: number; currency?: string; deleted?: boolean }>)
-        .filter((invoice) => !invoice.deleted)
+      const invoiceUrls = ((order.invoiceUrls || []) as Array<{ url: string; invoiceStatus?: string; rejectionReason?: string; value?: number; currency?: string }>)
         .map((invoice) => ({
           url: invoice.url,
-          invoiceStatus: ['confirmed', 'waiting', 'pending', 'rejected'].includes(invoice.invoiceStatus || '') ? invoice.invoiceStatus : 'waiting',
+          invoiceStatus: ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'].includes(invoice.invoiceStatus || '') ? invoice.invoiceStatus : 'waiting',
           rejectionReason: invoice.rejectionReason || '',
           value: typeof invoice.value === 'number' ? invoice.value : 0,
           currency: invoice.currency || 'EGP',

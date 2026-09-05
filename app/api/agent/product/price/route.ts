@@ -55,12 +55,17 @@ async function buildPriceResponse(productId: string, country: string) {
         );
     }
 
-    const escapedCountry = country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Map Israel → Palestine: if someone queries 'IL' or 'Israel',
+    // redirect the lookup to Palestine ('PS').
+    const normalizedCountryLookup = country.toUpperCase() === 'IL' || /^israel$/i.test(country)
+        ? 'PS'
+        : country;
+    const escapedNormalized = normalizedCountryLookup.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const countryQuery = {
         $or: [
-            { code: country.toUpperCase() },
-            { 'name.en': { $regex: `^${escapedCountry}$`, $options: 'i' } },
-            { 'name.ar': { $regex: `^${escapedCountry}$`, $options: 'i' } },
+            { code: normalizedCountryLookup.toUpperCase() },
+            { 'name.en': { $regex: `^${escapedNormalized}$`, $options: 'i' } },
+            { 'name.ar': { $regex: `^${escapedNormalized}$`, $options: 'i' } },
         ],
     };
 

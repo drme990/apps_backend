@@ -26,7 +26,7 @@ const allowedPatchFields = [
   'remainingAmount',
 ];
 
-const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'] as const;
 
 function normalizeInvoiceUrls(
   invoiceUrls?: Array<{
@@ -35,11 +35,10 @@ function normalizeInvoiceUrls(
     rejectionReason?: string;
     value?: number;
     currency?: string;
-    deleted?: boolean;
   }>,
 ): IInvoiceUrl[] {
   return (invoiceUrls || [])
-    .filter((invoice) => !invoice.deleted)
+    .filter((invoice) => invoice.invoiceStatus !== 'deleted')
     .map((invoice) => ({
       url: invoice.url,
       invoiceStatus:

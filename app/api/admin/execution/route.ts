@@ -203,20 +203,17 @@ export async function GET(request: NextRequest) {
     //       the one uploaded during manual order creation) must be "confirmed".
     //     - Additional invoices uploaded later (whileCreating: false) that are
     //       not yet confirmed do NOT block the order from appearing.
-    //     - Soft-deleted invoices (deleted: true) are ignored entirely.
+    //     - Deleted invoices (invoiceStatus: 'deleted') are ignored entirely.
     //
     //     Logic: exclude the order if there exists a non-deleted invoice with
-    //     whileCreating: true AND invoiceStatus != 'confirmed'.
-    //     $not: { $elemMatch: { deleted: { $ne: true }, whileCreating: true,
-    //                            invoiceStatus: { $ne: 'confirmed' } } }
+    //     whileCreating: true AND invoiceStatus != 'confirmed' AND != 'deleted'.
     prePipeline.push({
       $match: {
         invoiceUrls: {
           $not: {
             $elemMatch: {
-              deleted: { $ne: true },
+              invoiceStatus: { $nin: ['confirmed', 'deleted'] },
               whileCreating: true,
-              invoiceStatus: { $ne: 'confirmed' },
             },
           },
         },
@@ -301,6 +298,11 @@ export async function GET(request: NextRequest) {
           designUrls: 1,
           payments: 1,
           internalNotes: 1,
+          isFreeOrder: 1,
+          freeOrderReason: 1,
+          createdByAdminId: 1,
+          createdByAdminEmail: 1,
+          createdByAdminName: 1,
         },
       },
 
@@ -335,14 +337,13 @@ export async function GET(request: NextRequest) {
     const orders = facetResult[0]?.orders || [];
 
     const normalizedOrders = orders.map((order: Record<string, unknown>) => {
-      const rawInvoices = order.invoiceUrls as Array<{ url: string; invoiceStatus?: string; rejectionReason?: string; value?: number; currency?: string; deleted?: boolean }> | undefined;
+      const rawInvoices = order.invoiceUrls as Array<{ url: string; invoiceStatus?: string; rejectionReason?: string; value?: number; currency?: string }> | undefined;
       return {
         ...order,
         invoiceUrls: (rawInvoices || [])
-          .filter((invoice) => !invoice.deleted)
           .map((invoice) => ({
             url: invoice.url,
-            invoiceStatus: ['confirmed', 'waiting', 'pending', 'rejected'].includes(invoice.invoiceStatus || '') ? invoice.invoiceStatus : 'waiting',
+            invoiceStatus: ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'].includes(invoice.invoiceStatus || '') ? invoice.invoiceStatus : 'waiting',
             rejectionReason: invoice.rejectionReason || '',
             value: typeof invoice.value === 'number' ? invoice.value : 0,
             currency: invoice.currency || 'EGP',

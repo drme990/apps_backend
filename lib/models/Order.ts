@@ -185,7 +185,7 @@ export interface IPaymentAttempt {
   userId?: string;
 }
 
-export type InvoiceStatus = 'confirmed' | 'waiting' | 'pending' | 'rejected';
+export type InvoiceStatus = 'confirmed' | 'waiting' | 'pending' | 'rejected' | 'deleted';
 
 export interface IInvoiceUrl {
   url: string;
@@ -205,13 +205,6 @@ export interface IInvoiceUrl {
    * the timeline.
    */
   whileCreating?: boolean;
-  /** Soft-delete flag. When true, the invoice is hidden from normal
-   * views but retained in the database for audit purposes. The linked
-   * payment (if any) is set to status 'failed' so it stays visible in
-   * the payment timeline but is excluded from paid-amount calculations. */
-  deleted?: boolean;
-  /** Timestamp of the soft-delete. */
-  deletedAt?: Date;
 }
 
 /**
@@ -348,6 +341,13 @@ export interface IOrder {
   tiktokPurchaseServerSentAt?: Date;
   /** Internal notes appended by the system or admins */
   internalNotes?: IInternalNote[];
+  // Free order tracking
+  isFreeOrder?: boolean;
+  freeOrderReason?: string;
+  // Admin who created this manual order
+  createdByAdminId?: string;
+  createdByAdminEmail?: string;
+  createdByAdminName?: string;
   createdAt?: Date;
   updatedAt?: Date;
   _previousStatus?: OrderStatus;
@@ -514,15 +514,13 @@ const InvoiceUrlSchema = new mongoose.Schema<IInvoiceUrl>(
     url: { type: String, required: true, trim: true },
     invoiceStatus: {
       type: String,
-      enum: ['confirmed', 'waiting', 'pending', 'rejected'],
+      enum: ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'],
       default: 'waiting',
     },
     rejectionReason: { type: String, default: '' },
     value: { type: Number, required: true, min: 0, default: 0 },
     currency: { type: String, trim: true, default: 'EGP' },
     whileCreating: { type: Boolean, default: false },
-    deleted: { type: Boolean, default: false },
-    deletedAt: { type: Date },
   },
   { _id: false },
 );
@@ -540,7 +538,7 @@ const DeletedInvoiceSchema = new mongoose.Schema<IDeletedInvoice>(
     currency: { type: String, trim: true, default: 'EGP' },
     invoiceStatus: {
       type: String,
-      enum: ['confirmed', 'waiting', 'pending', 'rejected'],
+      enum: ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'],
     },
     deletedAt: { type: Date, required: true, default: () => new Date() },
     deletedBy: { type: String, trim: true },
@@ -774,6 +772,13 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     },
     location: { type: String, trim: true },
     locale: { type: String, trim: true, default: 'ar' },
+    // Free order tracking — set when an admin creates a complimentary order
+    isFreeOrder: { type: Boolean, default: false },
+    freeOrderReason: { type: String, trim: true, default: '' },
+    // Admin who created this manual order
+    createdByAdminId: { type: String, trim: true, index: true },
+    createdByAdminEmail: { type: String, trim: true },
+    createdByAdminName: { type: String, trim: true },
     internalNotes: {
       type: [
         new mongoose.Schema(

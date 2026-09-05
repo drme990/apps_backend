@@ -765,16 +765,16 @@ export const manualOrderCreateSchema = z
       )
       .optional()
       .default([]),
-    paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash', 'bank_transfer', 'paypal', 'binance']),
+    paymentMethod: z.enum(['easykash', 'insta_pay', 'vodafone_cash', 'bank_transfer', 'paypal', 'binance']).optional(),
     invoiceUrl: z.string().trim().optional(),
-    invoiceStatus: z.enum(['confirmed', 'waiting', 'pending', 'rejected']).optional().default('waiting'),
+    invoiceStatus: z.enum(['confirmed', 'waiting', 'pending', 'rejected', 'deleted']).optional().default('waiting'),
     invoiceValue: z.coerce.number().min(0).optional().default(0),
     invoiceCurrency: z.string().trim().optional().default('EGP'),
     invoiceUrls: z
       .array(
         z.object({
           url: z.string().trim(),
-          invoiceStatus: z.enum(['confirmed', 'waiting', 'pending', 'rejected']).optional().default('waiting'),
+          invoiceStatus: z.enum(['confirmed', 'waiting', 'pending', 'rejected', 'deleted']).optional().default('waiting'),
           value: z.coerce.number().min(0).optional().default(0),
           currency: z.string().trim().optional().default('EGP'),
         }),
@@ -783,8 +783,24 @@ export const manualOrderCreateSchema = z
     locale: z.string().trim().optional().default('ar'),
     userId: z.string().trim().optional(),
     paidAmount: z.coerce.number().min(0).optional(),
+    isFreeOrder: z.boolean().optional().default(false),
+    freeOrderReason: z.string().trim().optional().default(''),
   })
   .strict()
+  .refine(
+    (data) => {
+      // Free orders don't need a payment method
+      if (data.isFreeOrder) {
+        return data.freeOrderReason.trim().length > 0;
+      }
+      // Non-free orders need a payment method
+      return Boolean(data.paymentMethod);
+    },
+    {
+      message: 'Payment method is required for non-free orders; free orders require a reason',
+      path: ['paymentMethod'],
+    },
+  )
   .refine(
     (data) => {
       const fullName = data.billingData.fullName.trim();

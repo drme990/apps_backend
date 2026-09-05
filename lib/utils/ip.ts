@@ -41,7 +41,8 @@ export function getClientCountry(request: NextRequest): string | null {
 
   // Only accept valid 2-letter country codes
   if (/^[A-Z]{2}$/.test(code) && code !== 'XX' && code !== 'ZZ') {
-    return code;
+    // Map Israel → Palestine everywhere in the app.
+    return code === 'IL' ? 'PS' : code;
   }
 
   // Some proxies/CDNs occasionally return full country names instead

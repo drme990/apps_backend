@@ -68,12 +68,14 @@ export async function POST(request: NextRequest) {
       locale,
       userId,
       paidAmount: requestedPaidAmount,
+      isFreeOrder,
+      freeOrderReason,
     } = body;
 
-    const paymentMethod = rawPaymentMethod as PaymentMethod;
+    const paymentMethod = (rawPaymentMethod || 'other') as PaymentMethod;
 
-    const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
-    const resolveInvoiceStatus = (status?: string): 'confirmed' | 'waiting' | 'pending' | 'rejected' =>
+    const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'] as const;
+    const resolveInvoiceStatus = (status?: string): 'confirmed' | 'waiting' | 'pending' | 'rejected' | 'deleted' =>
       status && VALID_INVOICE_STATUSES.includes(status as (typeof VALID_INVOICE_STATUSES)[number])
         ? (status as (typeof VALID_INVOICE_STATUSES)[number])
         : 'waiting';
@@ -536,6 +538,88 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Determine order status and payments ──
+
+    // Free order: no payment method, no invoice, no EasyKash.
+    // The order is marked as 'paid' with zero amounts.
+    if (isFreeOrder) {
+      console.log('[Create Manual Order] Creating FREE order for', effectiveFullName, 'reason:', freeOrderReason.trim());
+      const order = await Order.create({
+        items: orderItemsPayload,
+        isGuest: !resolvedUserId,
+        userId: resolvedUserId || undefined,
+        totalAmount: 0,
+        fullAmount: 0,
+        paidAmount: 0,
+        remainingAmount: 0,
+        isPartialPayment: false,
+        paymentType: 'full',
+        paymentMethod: 'other',
+        currency: currencyUpper,
+        status: 'paid',
+        billingData: {
+          fullName: effectiveFullName,
+          email: billingData.email.trim().toLowerCase(),
+          phone: billingData.phone.trim(),
+          country: billingData.country.trim() || 'N/A',
+        },
+        termsAgreedAt: new Date(),
+        reservationData: reservationAnswers,
+        source: orderSource,
+        referralId: effectiveReferralId || undefined,
+        locale,
+        payments: [],
+        paymentAttempts: [],
+        invoiceUrls: [],
+        isFreeOrder: true,
+        freeOrderReason: freeOrderReason.trim(),
+        createdByAdminId: auth.user.userId,
+        createdByAdminEmail: auth.user.email,
+        createdByAdminName: auth.user.name,
+      });
+      order.orderNumber = `W${order.orderNumber}`;
+      await order.save();
+      console.log('[Create Manual Order] Free order created:', order.orderNumber);
+
+      await logActivity({
+        userId: auth.user.userId,
+        userName: auth.user.name,
+        userEmail: auth.user.email,
+        action: 'create',
+        resource: 'order',
+        resourceId: order._id.toString(),
+        details: `Manually created FREE order ${order.orderNumber} via admin panel — reason: ${freeOrderReason.trim()}`,
+      });
+
+      // Auto-generate design for free orders (they're 'paid')
+      evaluateAndTriggerAutoDesign(
+        order.toObject(),
+        'pending',
+        'auto_admin',
+      ).catch((err) => {
+        console.error(`[Create Manual Order] Auto design evaluation failed for ${order.orderNumber}:`, err);
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          order: {
+            _id: order._id,
+            orderNumber: order.orderNumber,
+            totalAmount: 0,
+            fullAmount: 0,
+            paidAmount: 0,
+            remainingAmount: 0,
+            isPartialPayment: false,
+            currency: order.currency,
+            status: order.status,
+          },
+          checkoutUrl: null,
+          createdUser,
+        },
+      });
+    }
+
+    // ── Normal (non-free) order flow ──
     const isEasykash = paymentMethod === 'easykash';
 
     // For order creation, the paid amount is the manually-entered
@@ -615,6 +699,10 @@ export async function POST(request: NextRequest) {
       }>,
       paymentAttempts: [],
       invoiceUrls: initialInvoiceUrls,
+      // Track the admin who created this manual order
+      createdByAdminId: auth.user.userId,
+      createdByAdminEmail: auth.user.email,
+      createdByAdminName: auth.user.name,
     };
 
     // ── Create order ──

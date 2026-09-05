@@ -20,7 +20,8 @@ export function normalizeCountryCode(raw: unknown): string | null {
   const code = raw.trim().toUpperCase();
   if (!/^[A-Z]{2}$/.test(code)) return null;
   if (code === 'XX' || code === 'ZZ') return null;
-  return code;
+  // Map Israel → Palestine everywhere in the app.
+  return code === 'IL' ? 'PS' : code;
 }
 
 function normalizeVisibilityOptions(
@@ -42,7 +43,7 @@ function normalizeVisibilityOptions(
 const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   // Other
   'other': 'OT',
-  
+
   // Middle East & North Africa
   'egypt': 'EG',
   'saudi arabia': 'SA',
@@ -68,7 +69,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'mauritania': 'MR',
   'djibouti': 'DJ',
   'comoros': 'KM',
-  
+
   // Turkey & Central Asia
   'turkey': 'TR',
   'azerbaijan': 'AZ',
@@ -79,7 +80,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'tajikistan': 'TJ',
   'georgia': 'GE',
   'armenia': 'AM',
-  
+
   // South & Southeast Asia
   'india': 'IN',
   'pakistan': 'PK',
@@ -97,13 +98,13 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'cambodia': 'KH',
   'singapore': 'SG',
   'brunei': 'BN',
-  
+
   // East Asia
   'china': 'CN',
   'japan': 'JP',
   'south korea': 'KR',
   'mongolia': 'MN',
-  
+
   // Europe
   'united states': 'US',
   'usa': 'US',
@@ -151,7 +152,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'cyprus': 'CY',
   'malta': 'MT',
   'luxembourg': 'LU',
-  
+
   // Africa
   'nigeria': 'NG',
   'south africa': 'ZA',
@@ -178,7 +179,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'botswana': 'BW',
   'namibia': 'NA',
   'mauritius': 'MU',
-  
+
   // Americas
   'canada': 'CA',
   'mexico': 'MX',
@@ -192,7 +193,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'guyana': 'GY',
   'suriname': 'SR',
   'trinidad and tobago': 'TT',
-  
+
   // Oceania
   'australia': 'AU',
   'new zealand': 'NZ',
@@ -202,18 +203,22 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
 
 export function countryNameToCode(countryName: string): string | null {
   if (!countryName || typeof countryName !== 'string') return null;
-  
+
   const normalized = countryName.trim().toLowerCase();
-  
-  // If it's already a 2-letter code, return it
+
+  // If it's already a 2-letter code, return it (map IL → PS)
   if (/^[a-z]{2}$/.test(normalized)) {
-    return normalized.toUpperCase();
+    const upper = normalized.toUpperCase();
+    return upper === 'IL' ? 'PS' : upper;
   }
-  
+
+  // Map 'israel' → 'PS' (Palestine)
+  if (normalized === 'israel') return 'PS';
+
   // Look up in the mapping
   const code = COUNTRY_NAME_TO_CODE[normalized];
   if (code) return code;
-  
+
   return null;
 }
 

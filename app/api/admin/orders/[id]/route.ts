@@ -86,16 +86,13 @@ function normalizeInvoiceUrls(
   }>,
 ): Array<{
   url: string;
-  invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected';
+  invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected' | 'deleted';
   rejectionReason: string;
   value: number;
   currency: string;
 }> {
-  const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
-  // Filter out soft-deleted invoices — they're retained in the DB for
-  // audit but hidden from normal API responses.
+  const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'] as const;
   return (invoiceUrls || [])
-    .filter((invoice) => !invoice.deleted)
     .map((invoice: {
       url: string;
       invoiceStatus?: string;
@@ -103,7 +100,7 @@ function normalizeInvoiceUrls(
       value?: number;
       currency?: string;
     }) => {
-      const invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected' =
+      const invoiceStatus: 'confirmed' | 'waiting' | 'pending' | 'rejected' | 'deleted' =
         invoice.invoiceStatus && VALID_STATUSES.includes(invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
           ? (invoice.invoiceStatus as (typeof VALID_STATUSES)[number])
           : 'waiting';
@@ -782,7 +779,7 @@ export async function PATCH(
     if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
       const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
-      const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+      const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'] as const;
       const rawStatus = body.invoiceStatus;
       const invoiceStatus =
         typeof rawStatus === 'string' && VALID_STATUSES.includes(rawStatus as (typeof VALID_STATUSES)[number])
@@ -841,7 +838,7 @@ export async function PATCH(
     }
 
     if (Array.isArray(body.invoiceUrls)) {
-      const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected'] as const;
+      const VALID_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'] as const;
       const previousInvoiceUrlsForLookup: IInvoiceUrl[] = Array.isArray(order.invoiceUrls) ? order.invoiceUrls : [];
       const previousByUrl = new Map(previousInvoiceUrlsForLookup.map((entry: IInvoiceUrl) => [entry.url, entry]));
       const nextInvoiceUrls: IInvoiceUrl[] = body.invoiceUrls
@@ -856,6 +853,19 @@ export async function PATCH(
           // Preserve whileCreating from the existing entry (if any).
           // New invoices uploaded via this path default to whileCreating=false.
           const prevEntry = previousByUrl.get(url);
+          // ── Guard: once an invoice is 'deleted', its status is frozen. ──
+          // Any attempt to change it to a different status is silently
+          // ignored — the 'deleted' status is preserved.
+          if (prevEntry && prevEntry.invoiceStatus === 'deleted' && invoiceStatus !== 'deleted') {
+            return {
+              url,
+              invoiceStatus: 'deleted' as const,
+              rejectionReason: prevEntry.rejectionReason || '',
+              value: prevEntry.value,
+              currency: prevEntry.currency || 'EGP',
+              whileCreating: prevEntry.whileCreating ?? false,
+            };
+          }
           return {
             url,
             invoiceStatus,
@@ -908,6 +918,10 @@ export async function PATCH(
               if (nextEntry.invoiceStatus === 'rejected' && prevEntry.invoiceStatus !== 'rejected') {
                 setInvoicePaymentStatus(nextEntry, 'failed');
               }
+              // Track transition to 'deleted' → set payment to 'failed'
+              if (nextEntry.invoiceStatus === 'deleted' && prevEntry.invoiceStatus !== 'deleted') {
+                setInvoicePaymentStatus(nextEntry, 'failed');
+              }
               // Track transition FROM 'confirmed'/'rejected' back to 'waiting'/'pending'
               if (prevEntry.invoiceStatus !== 'waiting' && prevEntry.invoiceStatus !== 'pending' &&
                 (nextEntry.invoiceStatus === 'waiting' || nextEntry.invoiceStatus === 'pending')) {
@@ -950,6 +964,10 @@ export async function PATCH(
                 }
                 // Track transition to 'rejected' → set payment to 'failed'
                 if (nextEntry.invoiceStatus === 'rejected' && prevEntry.invoiceStatus !== 'rejected') {
+                  setInvoicePaymentStatus(nextEntry, 'failed');
+                }
+                // Track transition to 'deleted' → set payment to 'failed'
+                if (nextEntry.invoiceStatus === 'deleted' && prevEntry.invoiceStatus !== 'deleted') {
                   setInvoicePaymentStatus(nextEntry, 'failed');
                 }
                 // Track transition FROM 'confirmed'/'rejected' back to 'waiting'/'pending'
