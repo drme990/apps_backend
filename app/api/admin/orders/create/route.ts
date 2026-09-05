@@ -74,6 +74,17 @@ export async function POST(request: NextRequest) {
 
     const paymentMethod = (rawPaymentMethod || 'other') as PaymentMethod;
 
+    // Free orders require an additional permission
+    if (isFreeOrder) {
+      const freeOrderAuth = await requireAdminPageAccess(['freeOrders']);
+      if ('error' in freeOrderAuth) {
+        return NextResponse.json(
+          { success: false, error: 'You do not have permission to create free orders' },
+          { status: 403 },
+        );
+      }
+    }
+
     const VALID_INVOICE_STATUSES = ['confirmed', 'waiting', 'pending', 'rejected', 'deleted'] as const;
     const resolveInvoiceStatus = (status?: string): 'confirmed' | 'waiting' | 'pending' | 'rejected' | 'deleted' =>
       status && VALID_INVOICE_STATUSES.includes(status as (typeof VALID_INVOICE_STATUSES)[number])
