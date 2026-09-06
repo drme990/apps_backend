@@ -259,7 +259,7 @@ export async function POST(request: NextRequest) {
 
     for (const item of items) {
       if (item.type === 'custom') {
-        if (item.price <= 0) {
+        if (item.price < 0 || (!isFreeOrder && item.price <= 0)) {
           return NextResponse.json(
             { success: false, error: `Custom item price must be greater than zero: ${item.name}` },
             { status: 400 },
@@ -377,7 +377,7 @@ export async function POST(request: NextRequest) {
       const customPrice = typeof item.customPrice === 'number' ? item.customPrice : null;
       const unitPrice = customPrice !== null && customPrice >= 0 ? customPrice : originalPrice;
 
-      if (unitPrice <= 0) {
+      if (unitPrice < 0 || (!isFreeOrder && unitPrice <= 0)) {
         return NextResponse.json(
           {
             success: false,
