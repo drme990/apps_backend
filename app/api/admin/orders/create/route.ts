@@ -185,6 +185,11 @@ export async function POST(request: NextRequest) {
       }
       if (existingUser) {
         resolvedUserId = String(existingUser._id);
+        // Update termsAgreedAt on the existing user if not already set
+        await AppUserModel.updateOne(
+          { _id: existingUser._id, termsAgreedAt: { $exists: false } },
+          { $set: { termsAgreedAt: new Date() } },
+        );
       } else {
         try {
           const newUser = await AppUserModel.create({
@@ -195,6 +200,7 @@ export async function POST(request: NextRequest) {
             country: billingData.country.trim() || '',
             appId: orderSource,
             isAdminCreated: true,
+            termsAgreedAt: new Date(),
           });
           resolvedUserId = String(newUser._id);
           createdUser = { email: trimmedEmail, password: trimmedEmail };
@@ -573,7 +579,6 @@ export async function POST(request: NextRequest) {
           phone: billingData.phone.trim(),
           country: billingData.country.trim() || 'N/A',
         },
-        termsAgreedAt: new Date(),
         reservationData: reservationAnswers,
         source: orderSource,
         referralId: effectiveReferralId || undefined,
@@ -688,7 +693,6 @@ export async function POST(request: NextRequest) {
         phone: billingData.phone.trim(),
         country: billingData.country.trim() || 'N/A',
       },
-      termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
       source: orderSource,
       referralId: effectiveReferralId || undefined,

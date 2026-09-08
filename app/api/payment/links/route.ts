@@ -16,6 +16,7 @@ import {
 import { getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
+import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 
@@ -470,6 +471,13 @@ export async function POST(request: NextRequest) {
     });
 
     await order.save();
+
+    // ── Sync shared fields with linked sub-order/parent ──
+    if (order.isSubOrder || order.hasSubOrder) {
+      await syncSharedFields(String(order._id)).catch((err) => {
+        console.error(`[payment/links] syncSharedFields failed:`, err);
+      });
+    }
 
     log('info', 'create_link.created', {
       ip,

@@ -6,6 +6,7 @@ import { createPayment, getEasykashCashExpiryHours } from '@/lib/services/easyka
 import { convertCurrency } from '@/lib/services/currency';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { logActivity } from '@/lib/services/logger';
+import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { randomBytes } from 'crypto';
 
 function generatePaymentId(): string {
@@ -198,6 +199,14 @@ export async function POST(
     await Order.findByIdAndUpdate(id, {
       $push: { payments: newPayment },
     });
+
+    // ── Sync shared fields with linked sub-order/parent ──
+    const orderForSync = await Order.findById(id).lean();
+    if (orderForSync && (orderForSync.isSubOrder || orderForSync.hasSubOrder)) {
+      await syncSharedFields(id).catch((err) => {
+        console.error(`[regenerate-payment-link] syncSharedFields failed:`, err);
+      });
+    }
 
     await logActivity({
       userId: auth.user.userId,

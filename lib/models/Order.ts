@@ -314,7 +314,6 @@ export interface IOrder {
   deletedInvoices?: IDeletedInvoice[];
   /** Generated design images — one entry per product with a template */
   designUrls?: IOrderDesignUrl[];
-  termsAgreedAt?: Date;
   reservationData?: IReservationAnswer[];
   payments?: IPayment[];
   paymentAttempts?: IPaymentAttempt[];
@@ -348,6 +347,11 @@ export interface IOrder {
   createdByAdminId?: string;
   createdByAdminEmail?: string;
   createdByAdminName?: string;
+  // Sub-order linking
+  parentOrderId?: mongoose.Types.ObjectId | string;
+  isSubOrder?: boolean;
+  hasSubOrder?: boolean;
+  subOrderId?: mongoose.Types.ObjectId | string;
   createdAt?: Date;
   updatedAt?: Date;
   _previousStatus?: OrderStatus;
@@ -753,7 +757,6 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     },
     fbPurchaseServerSentAt: { type: Date },
     tiktokPurchaseServerSentAt: { type: Date },
-    termsAgreedAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
     payments: { type: [PaymentSchema], default: [] },
     paymentAttempts: { type: [PaymentAttemptSchema], default: [] },
@@ -779,6 +782,11 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     createdByAdminId: { type: String, trim: true, index: true },
     createdByAdminEmail: { type: String, trim: true },
     createdByAdminName: { type: String, trim: true },
+    // Sub-order linking
+    parentOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', index: true },
+    isSubOrder: { type: Boolean, default: false, index: true },
+    hasSubOrder: { type: Boolean, default: false },
+    subOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
     internalNotes: {
       type: [
         new mongoose.Schema(

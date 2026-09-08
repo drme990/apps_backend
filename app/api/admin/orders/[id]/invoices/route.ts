@@ -7,6 +7,7 @@ import Order, {
 import OrderChangeHistory from '@/lib/models/OrderChangeHistory';
 import { parseJsonBody } from '@/lib/validation/http';
 import { z } from 'zod';
+import { syncSharedFields } from '@/lib/services/sub-order-sync';
 
 export const maxDuration = 60;
 
@@ -162,6 +163,13 @@ export async function PATCH(
     delete sanitized.easykashProductCode;
     delete sanitized.easykashVoucher;
     delete sanitized.easykashResponse;
+
+    // ── Sync shared fields with linked sub-order/parent ──
+    if (order.isSubOrder || order.hasSubOrder) {
+      await syncSharedFields(String(order._id)).catch((err) => {
+        console.error(`[PATCH invoices] syncSharedFields failed:`, err);
+      });
+    }
 
     return NextResponse.json({
       success: true,

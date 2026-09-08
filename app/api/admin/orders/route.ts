@@ -243,6 +243,11 @@ export async function GET(request: NextRequest) {
       statusUpdateTime: 1,
       payments: 1,
       paymentMethod: 1,
+      isFreeOrder: 1,
+      parentOrderId: 1,
+      isSubOrder: 1,
+      hasSubOrder: 1,
+      subOrderId: 1,
     };
 
     const fullProjection = {
@@ -264,7 +269,6 @@ export async function GET(request: NextRequest) {
       paymentType: 1,
       referralId: 1,
       isWhatsappButtonClicked: 1,
-      termsAgreedAt: 1,
       source: 1,
       location: 1,
       locale: 1,
@@ -278,6 +282,10 @@ export async function GET(request: NextRequest) {
       createdByAdminId: 1,
       createdByAdminEmail: 1,
       createdByAdminName: 1,
+      parentOrderId: 1,
+      isSubOrder: 1,
+      hasSubOrder: 1,
+      subOrderId: 1,
     };
 
     const [orders, total] = await Promise.all([
@@ -315,6 +323,56 @@ export async function GET(request: NextRequest) {
         referralId: normalizedReferralId,
       };
     });
+
+    // ── Merge shared data for sub-orders ──
+    // Sub-orders share invoiceUrls and payments with their parent.
+    // Fetch parents in batch and merge those fields into sub-order responses.
+    // Also fetch the linked order's orderNumber for both sub-orders and parents
+    // so the frontend can display both order numbers on invoice rows.
+    const subOrderParentIds = normalizedOrders
+      .filter((o) => o.isSubOrder && o.parentOrderId)
+      .map((o) => String(o.parentOrderId));
+    const parentSubOrderIds = normalizedOrders
+      .filter((o) => o.hasSubOrder && o.subOrderId)
+      .map((o) => String(o.subOrderId));
+
+    if (subOrderParentIds.length > 0) {
+      const parents = await Order.find(
+        { _id: { $in: subOrderParentIds } },
+        { invoiceUrls: 1, payments: 1, orderNumber: 1 },
+      ).lean();
+      const parentMap = new Map(
+        parents.map((p) => [String(p._id), p]),
+      );
+      for (const order of normalizedOrders) {
+        if (order.isSubOrder && order.parentOrderId) {
+          const parent = parentMap.get(String(order.parentOrderId));
+          if (parent) {
+            order.invoiceUrls = parent.invoiceUrls as typeof order.invoiceUrls;
+            order.payments = parent.payments as typeof order.payments;
+            (order as Record<string, unknown>).linkedOrderNumber = parent.orderNumber;
+          }
+        }
+      }
+    }
+
+    if (parentSubOrderIds.length > 0) {
+      const subOrders = await Order.find(
+        { _id: { $in: parentSubOrderIds } },
+        { orderNumber: 1 },
+      ).lean();
+      const subOrderMap = new Map(
+        subOrders.map((s) => [String(s._id), s]),
+      );
+      for (const order of normalizedOrders) {
+        if (order.hasSubOrder && order.subOrderId) {
+          const sub = subOrderMap.get(String(order.subOrderId));
+          if (sub) {
+            (order as Record<string, unknown>).linkedOrderNumber = sub.orderNumber;
+          }
+        }
+      }
+    }
 
     const totalPages = Math.ceil(total / maxLimit);
 

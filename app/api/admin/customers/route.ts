@@ -21,12 +21,7 @@ function parseIsoDateParts(
   return { year, month, day };
 }
 
-function parseTimezoneOffsetMinutes(value: string | null): number {
-  const parsed = Number.parseInt(value || '', 10);
-  if (Number.isNaN(parsed)) return 0;
-  if (parsed < -840 || parsed > 840) return 0;
-  return parsed;
-}
+
 
 function getUtcStartOfLocalDay(
   dateParts: { year: number; month: number; day: number },
@@ -89,6 +84,7 @@ type CustomerDTO = {
   lastLoginAt?: Date;
   createdAt: Date;
   tier?: string | null;
+  termsAgreedAt?: Date;
 };
 
 type AppCustomerModel = Model<IBaseAppUser, object, IBaseAppUserMethods>;
@@ -248,7 +244,7 @@ export async function GET(request: NextRequest) {
             .skip(useGlobalSlice ? 0 : skip)
             .limit(useGlobalSlice ? 10000 : limit)
             .select(
-              'name email phone registrationIp lastLoginIp country isBanned isAdminCreated ref detectedCountry lastLoginAt createdAt tier',
+              'name email phone registrationIp lastLoginIp country isBanned isAdminCreated ref detectedCountry lastLoginAt createdAt tier termsAgreedAt',
             )
             .lean(),
           model.countDocuments(filterQuery),
@@ -288,6 +284,10 @@ export async function GET(request: NextRequest) {
                   ? customer.createdAt
                   : new Date(0),
               tier: customer.tier ? String(customer.tier) : null,
+              termsAgreedAt:
+                customer.termsAgreedAt instanceof Date
+                  ? customer.termsAgreedAt
+                  : undefined,
             }),
           ),
           totalCount,

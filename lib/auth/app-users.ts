@@ -65,6 +65,7 @@ export interface IBaseAppUser {
    *                  or created by an admin (isAdminCreated = true)
    */
   registerSource?: string | null;
+  termsAgreedAt?: Date;
 }
 
 export interface IBaseAppUserMethods {
@@ -124,6 +125,7 @@ function buildBaseAppUserModel(
       isAdminCreated: { type: Boolean, default: false },
       accountSetUp: { type: Boolean, default: false },
       registerSource: { type: String, default: null },
+      termsAgreedAt: { type: Date },
     },
     { timestamps: true, collection },
   );

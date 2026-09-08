@@ -16,6 +16,7 @@ import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { convertCurrency } from '@/lib/services/currency';
 import Booking from '@/lib/models/Booking';
 import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
+import { syncSharedFields } from '@/lib/services/sub-order-sync';
 
 /** Currencies supported by the EasyKash payment gateway. */
 const EASYKASH_SUPPORTED_CURRENCIES = new Set(['SAR', 'EGP', 'USD', 'EUR']);
@@ -199,11 +200,36 @@ export async function GET(
       },
     );
 
+    // ── Merge shared data for sub-orders ──
+    // Sub-orders share invoiceUrls and payments with their parent (live-shared).
+    if (order.isSubOrder && order.parentOrderId) {
+      const parent = await Order.findById(order.parentOrderId, { invoiceUrls: 1, payments: 1 }).lean();
+      if (parent) {
+        sanitizedOrder.invoiceUrls = parent.invoiceUrls as typeof sanitizedOrder.invoiceUrls;
+        sanitizedOrder.payments = parent.payments as typeof sanitizedOrder.payments;
+      }
+    }
+
+    // ── Include sub-order summary for parent orders ──
+    let subOrderSummary: { _id: string; orderNumber: string; totalAmount: number; status: string } | null = null;
+    if (order.hasSubOrder && order.subOrderId) {
+      const sub = await Order.findById(order.subOrderId, { orderNumber: 1, totalAmount: 1, status: 1 }).lean();
+      if (sub) {
+        subOrderSummary = {
+          _id: String(sub._id),
+          orderNumber: sub.orderNumber,
+          totalAmount: sub.totalAmount,
+          status: sub.status,
+        };
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
         ...sanitizedOrder,
         isGuest: hasIsGuest ? order.isGuest : !hasUserId,
+        ...(subOrderSummary ? { subOrder: subOrderSummary } : {}),
       },
     });
   } catch (error) {
@@ -759,7 +785,12 @@ export async function PATCH(
       const roundedTotal = Math.round(newTotal * 100) / 100;
       if (roundedTotal !== previousTotal) {
         order.totalAmount = roundedTotal;
-        order.fullAmount = roundedTotal;
+        // Only set fullAmount here for standalone orders.
+        // For parent/sub-order pairs, syncSharedFields will recompute
+        // fullAmount as the combined total of both orders' items.
+        if (!order.isSubOrder && !order.hasSubOrder) {
+          order.fullAmount = roundedTotal;
+        }
         changes.push({
           changeType: 'totalAmount',
           previousValue: String(previousTotal),
@@ -1261,6 +1292,13 @@ export async function PATCH(
     if (shouldRegenerateDesigns) {
       triggerDesignRegeneration(String(order._id), 'auto_admin').catch((err) => {
         console.error(`[PATCH /api/admin/orders/${order._id}] Design re-generation failed:`, err);
+      });
+    }
+
+    // ── Sync shared fields with linked sub-order/parent ──
+    if (order.isSubOrder || order.hasSubOrder) {
+      await syncSharedFields(String(order._id)).catch((err) => {
+        console.error(`[PATCH /api/admin/orders/${order._id}] syncSharedFields failed:`, err);
       });
     }
 

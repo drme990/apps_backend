@@ -104,6 +104,7 @@ type CheckoutAppUserDoc = mongoose.Document & {
   isBanned?: boolean;
   ref?: string;
   detectedCountry?: string | null;
+  termsAgreedAt?: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 };
 
@@ -233,7 +234,7 @@ export async function POST(request: NextRequest) {
 
     if (sessionUser) {
       const authenticatedUser = await UserModel.findById(sessionUser.userId)
-        .select('name email phone country isBanned ref detectedCountry')
+        .select('name email phone country isBanned ref detectedCountry termsAgreedAt')
         .lean(false);
 
       if (!authenticatedUser) {
@@ -245,6 +246,12 @@ export async function POST(request: NextRequest) {
           },
           { status: 401 },
         );
+      }
+
+      // Set termsAgreedAt on the existing user if not already set
+      if (!authenticatedUser.termsAgreedAt) {
+        authenticatedUser.termsAgreedAt = new Date();
+        await authenticatedUser.save();
       }
 
       if (!authenticatedUser.detectedCountry) {
@@ -417,6 +424,7 @@ export async function POST(request: NextRequest) {
           appId: string;
           detectedCountry?: string;
           registerSource?: string;
+          termsAgreedAt?: Date;
         } = {
           name: billingData.fullName.trim(),
           email: normalizedInputEmail,
@@ -425,6 +433,7 @@ export async function POST(request: NextRequest) {
           country: resolvedBillingCountry,
           appId: checkoutAppId,
           registerSource: 'checkout',
+          termsAgreedAt: new Date(),
         };
         const country = getClientCountry(request);
         if (country) {
@@ -1287,7 +1296,6 @@ export async function POST(request: NextRequest) {
       fromProductId: fromProductId || undefined,
       upgradeDiscount:
         upgradeDiscountPercent > 0 ? upgradeDiscountPercent : undefined,
-      termsAgreedAt: new Date(),
       reservationData: reservationAnswers,
       source: orderSource,
       latestClientIp: partialPaymentIdentity.normalizedIp,

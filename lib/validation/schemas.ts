@@ -815,3 +815,32 @@ export const manualOrderCreateSchema = z
       path: ['billingData', 'fullName'],
     },
   );
+
+export const subOrderCreateSchema = z
+  .object({
+    items: z
+      .array(
+        z.union([
+          z
+            .object({
+              type: z.literal('existing'),
+              productId: z.string().trim().min(1),
+              quantity: z.coerce.number().int().positive(),
+              sizeIndex: z.coerce.number().int().nonnegative().optional().default(0),
+              customPrice: z.coerce.number().min(0).optional(),
+            })
+            .strict(),
+          z
+            .object({
+              type: z.literal('custom'),
+              name: z.string().trim().min(1),
+              size: z.string().trim().optional(),
+              quantity: z.coerce.number().int().positive(),
+              price: z.coerce.number().min(0),
+            })
+            .strict(),
+        ]),
+      )
+      .min(1),
+  })
+  .strict();

@@ -303,6 +303,10 @@ export async function GET(request: NextRequest) {
           createdByAdminId: 1,
           createdByAdminEmail: 1,
           createdByAdminName: 1,
+          parentOrderId: 1,
+          isSubOrder: 1,
+          hasSubOrder: 1,
+          subOrderId: 1,
         },
       },
 
@@ -350,6 +354,30 @@ export async function GET(request: NextRequest) {
           })),
       };
     });
+
+    // ── Merge shared data for sub-orders ──
+    const subOrderParentIds = normalizedOrders
+      .filter((o: Record<string, unknown>) => o.isSubOrder && o.parentOrderId)
+      .map((o: Record<string, unknown>) => o.parentOrderId);
+    if (subOrderParentIds.length > 0) {
+      const parents = await Order.find(
+        { _id: { $in: subOrderParentIds } },
+        { invoiceUrls: 1, payments: 1 },
+      ).lean();
+      const parentMap = new Map(
+        parents.map((p) => [String(p._id), p]),
+      );
+      for (const order of normalizedOrders) {
+        const o = order as Record<string, unknown>;
+        if (o.isSubOrder && o.parentOrderId) {
+          const parent = parentMap.get(String(o.parentOrderId));
+          if (parent) {
+            o.invoiceUrls = parent.invoiceUrls;
+            o.payments = parent.payments;
+          }
+        }
+      }
+    }
 
     return NextResponse.json({
       success: true,

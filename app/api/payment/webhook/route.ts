@@ -24,6 +24,7 @@ import { evaluateAndUpdateUserTier } from '@/lib/services/user-tier-evaluator';
 import {
   evaluateAndTriggerAutoDesign,
 } from '@/lib/services/auto-design-generation';
+import { syncSharedFields } from '@/lib/services/sub-order-sync';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -533,6 +534,13 @@ export async function POST(request: NextRequest) {
     );
 
     await order.save();
+
+    // ── Sync shared fields with linked sub-order/parent ──
+    if (order.isSubOrder || order.hasSubOrder) {
+      await syncSharedFields(String(order._id)).catch((err) => {
+        console.error(`[webhook] syncSharedFields failed:`, err);
+      });
+    }
 
     const transitionedToPaid =
       order.status === 'paid' &&
