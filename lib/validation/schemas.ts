@@ -842,5 +842,14 @@ export const subOrderCreateSchema = z
         ]),
       )
       .min(1),
+    reservationData: z
+      .array(
+        z.object({
+          key: z.string().trim().min(1),
+          value: z.string(),
+        }),
+      )
+      .optional()
+      .default([]),
   })
   .strict();

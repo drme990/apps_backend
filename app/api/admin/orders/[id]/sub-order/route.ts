@@ -3,6 +3,11 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
+import Booking from '@/lib/models/Booking';
+import {
+  refreshDefaultExecutionDateCache,
+  skipBlockedDates,
+} from '@/lib/execution-date';
 import { logActivity } from '@/lib/services/logger';
 import {
   resolveUnitPrice,
@@ -31,7 +36,7 @@ export async function POST(
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
 
-    const { items } = body;
+    const { items, reservationData: reservationInput } = body;
 
     // ── Load parent order ──
     const parent = await Order.findById(parentId).lean();
@@ -218,8 +223,116 @@ export async function POST(
       });
     }
 
-    // ── Inherit shared fields from parent ──
-    const inheritedReservationData = parent.reservationData || [];
+    // ── Resolve reservation data (provided by user for this sub-order) ──
+    // Resolve execution date (same logic as create route)
+    let defaultExecutionDate = await refreshDefaultExecutionDateCache();
+    const booking = await Booking.findOne({ key: 'global' }).lean();
+    const blockedExecutionDates = new Set(
+      (booking?.blockedExecutionDates ?? []).filter((value: string) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(value),
+      ),
+    );
+
+    if (blockedExecutionDates.has(defaultExecutionDate)) {
+      defaultExecutionDate = skipBlockedDates(defaultExecutionDate, blockedExecutionDates);
+      await Booking.updateOne(
+        { key: 'global' },
+        { $set: { defaultExecutionDate } },
+      );
+    }
+
+    const userExecutionDate = (reservationInput || []).find(
+      (r): r is { key: string; value: string } =>
+        typeof r === 'object' && r !== null && r.key === 'executionDate',
+    )?.value;
+
+    let resolvedExecutionDate = defaultExecutionDate;
+
+    if (typeof userExecutionDate === 'string' && userExecutionDate.trim()) {
+      const trimmed = userExecutionDate.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return NextResponse.json(
+          { success: false, error: 'Execution date format is invalid' },
+          { status: 400 },
+        );
+      }
+
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      if (trimmed < today) {
+        return NextResponse.json(
+          { success: false, error: `Execution date must be on or after ${today}` },
+          { status: 400 },
+        );
+      }
+      if (blockedExecutionDates.has(trimmed)) {
+        return NextResponse.json(
+          { success: false, error: 'Execution date is not available' },
+          { status: 400 },
+        );
+      }
+      resolvedExecutionDate = trimmed;
+    }
+
+    // Build reservation answers array (same structure as create route)
+    const reservationAnswers: Array<{
+      key: string;
+      label: { ar: string; en: string };
+      type: string;
+      value: string;
+    }> = [];
+
+    let hasExecutionDateField = false;
+
+    const labels: Record<string, { ar: string; en: string }> = {
+      intention: { ar: 'النية', en: 'Intention' },
+      sacrificeFor: { ar: 'اسم الشخص المؤدى عنه', en: 'The person on whose behalf' },
+      gender: { ar: 'الجنس', en: 'Gender' },
+      isAlive: { ar: 'الحالة', en: 'Status' },
+      shortDuaa: { ar: 'دعاء مختصر', en: 'Short Duaa' },
+      photo: { ar: 'صورة', en: 'Photo' },
+      executionDate: { ar: 'تاريخ التنفيذ', en: 'Execution Date' },
+    };
+    const types: Record<string, string> = {
+      intention: 'select',
+      sacrificeFor: 'text',
+      gender: 'radio',
+      isAlive: 'radio',
+      shortDuaa: 'textarea',
+      photo: 'picture',
+      executionDate: 'date',
+    };
+
+    for (const entry of reservationInput || []) {
+      const key = entry.key;
+      if (key === 'executionDate') {
+        hasExecutionDateField = true;
+        reservationAnswers.push({
+          key,
+          label: labels[key] || { ar: key, en: key },
+          type: types[key] || 'date',
+          value: resolvedExecutionDate,
+        });
+      } else {
+        reservationAnswers.push({
+          key,
+          label: labels[key] || { ar: key, en: key },
+          type: types[key] || 'text',
+          value: entry.value.trim(),
+        });
+      }
+    }
+
+    // Guarantee executionDate exists on EVERY order
+    if (!hasExecutionDateField) {
+      reservationAnswers.push({
+        key: 'executionDate',
+        label: { ar: 'تاريخ التنفيذ', en: 'Execution Date' },
+        type: 'date',
+        value: resolvedExecutionDate,
+      });
+    }
 
     // ── Create sub-order (no payment collected — financials follow parent) ──
     // NOTE: parent.totalAmount may store only the paid portion for partial
@@ -239,7 +352,7 @@ export async function POST(
       currency: currencyUpper,
       status: parent.status || 'pending',
       billingData: parent.billingData,
-      reservationData: inheritedReservationData,
+      reservationData: reservationAnswers,
       source: parent.source,
       referralId: parent.referralId || undefined,
       locale: parent.locale,
@@ -265,8 +378,9 @@ export async function POST(
       await parentUpdate.save();
     }
 
-    // Sync shared fields (propagates payments/invoices to parent and recomputes both)
-    await syncSharedFields(String(subOrder._id));
+    // Sync shared fields — propagate parent's existing payments/invoices
+    // to the new sub-order (which has empty arrays at creation)
+    await syncSharedFields(String(parent._id));
 
     await logActivity({
       userId: auth.user.userId,

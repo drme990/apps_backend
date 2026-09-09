@@ -62,17 +62,16 @@ function deriveStatus(
 }
 
 /**
- * Propagate `invoiceUrls` and `payments` between a parent order and its
- * sub-order, then recompute financials on both so they stay in sync.
+ * Propagate `invoiceUrls` and `payments` from the modified order to its
+ * linked counterpart, then recompute financials on both so they stay in sync.
  *
  * Both orders share the same `payments` array and the same `fullAmount`
  * (combined total of both orders), so they end up with identical
  * `paidAmount`, `remainingAmount`, and `status`.
  *
- * The parent order is the "source of truth" for payments and invoices.
- * When a sub-order is first created it has empty arrays; the parent's
- * existing data is propagated to the sub-order (not the other way around).
- * After that, mutations on either side propagate to the other.
+ * The order passed in (`orderId`) is the one that was just modified — its
+ * data is propagated to the linked order. This ensures that when an invoice
+ * is uploaded to either order, the other one receives the update.
  *
  * Call this after any mutation to `invoiceUrls` or `payments` on either
  * the parent or the sub-order.
@@ -85,11 +84,9 @@ export async function syncSharedFields(orderId: string): Promise<void> {
         const parent = await Order.findById(order.parentOrderId);
         if (!parent) return;
 
-        // The parent is the source of truth for shared payments/invoices.
-        // Propagate parent's data to the sub-order (not the other way around,
-        // since a newly created sub-order has empty arrays).
-        order.invoiceUrls = parent.invoiceUrls;
-        order.payments = parent.payments;
+        // Propagate the modified sub-order's data to the parent
+        parent.invoiceUrls = order.invoiceUrls;
+        parent.payments = order.payments;
 
         // Set combined fullAmount on both — calculated from each order's items
         const parentItemTotal = await computeOrderItemTotal(parent);
@@ -127,7 +124,7 @@ export async function syncSharedFields(orderId: string): Promise<void> {
         const subOrder = await Order.findById(order.subOrderId);
         if (!subOrder) return;
 
-        // Propagate parent's invoice/payments to sub-order
+        // Propagate the modified parent's data to the sub-order
         subOrder.invoiceUrls = order.invoiceUrls;
         subOrder.payments = order.payments;
 
