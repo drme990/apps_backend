@@ -14,7 +14,7 @@ interface RateLimitResult {
 
 export async function checkRateLimit(
   identifier: string,
-  options: RateLimitOptions = { maxAttempts: 5, windowSeconds: 15 * 60 },
+  options: RateLimitOptions = { maxAttempts: 10, windowSeconds: 15 * 60 },
 ): Promise<RateLimitResult> {
   await connectDB();
 

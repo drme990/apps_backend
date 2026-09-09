@@ -139,10 +139,10 @@ export async function POST(request: NextRequest) {
   let partialPaymentLock: PartialPaymentCreationLock | null = null;
 
   try {
-    // Rate limit: 5 checkout attempts per IP per minute
+    // Rate limit: 10 checkout attempts per IP per minute
     const ip = getClientIp(request);
     const traceId = request.headers.get('x-request-id') ?? undefined;
-    const rl = rateLimit(`checkout:${ip}`, 5, 60_000);
+    const rl = rateLimit(`checkout:${ip}`, 10, 60_000);
     if (!rl.allowed) {
       log('warn', 'checkout.rate_limited', { ip, traceId });
       return NextResponse.json(

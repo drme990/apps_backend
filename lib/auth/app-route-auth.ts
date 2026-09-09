@@ -208,7 +208,7 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
 
     const rateLimitKey = `login:${appId}:${email.toLowerCase()}`;
     const rateLimit = await checkRateLimit(rateLimitKey, {
-      maxAttempts: 5,
+      maxAttempts: 10,
       windowSeconds: 15 * 60,
     });
 

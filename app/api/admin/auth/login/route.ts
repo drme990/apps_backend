@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
 
     const rateLimitKey = `login:${appId}:${email.toLowerCase()}`;
     const rateLimit = await checkRateLimit(rateLimitKey, {
-      maxAttempts: 5,
+      maxAttempts: 10,
       windowSeconds: 15 * 60,
     });
     if (!rateLimit.allowed) {

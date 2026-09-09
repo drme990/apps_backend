@@ -10,9 +10,9 @@ import { couponValidationSchema } from '@/lib/validation/schemas';
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit: 20 coupon attempts per IP per minute
+    // Rate limit: 30 coupon attempts per IP per minute
     const ip = getClientIp(request);
-    const rl = rateLimit(`coupon:${ip}`, 20, 60_000);
+    const rl = rateLimit(`coupon:${ip}`, 30, 60_000);
     if (!rl.allowed) {
       return NextResponse.json(
         { success: false, error: 'Too many requests. Please try again later.' },
