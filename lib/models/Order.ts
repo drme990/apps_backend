@@ -53,7 +53,7 @@ async function allocateOrderNumber(opts: {
       const counter = await OrderSequence.findOneAndUpdate(
         { _id: monthKey },
         { $inc: { seq: 1 } },
-        { new: true },
+        { returnDocument: 'after' },
       ).lean();
 
       const nextSeq = Number(counter?.seq || 0);
@@ -113,6 +113,10 @@ export interface IOrderItem {
   sizeDesignName?: string;
   isCustom?: boolean;
   customSize?: string;
+  /** True when this item is an add-on for another item in the same order. */
+  isAddOn?: boolean;
+  /** Index of the parent item in the items array (the main product this add-on belongs to). */
+  parentItemIndex?: number;
 }
 
 export interface IBillingData {
@@ -391,6 +395,8 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
     sizeDesignName: { type: String, trim: true, default: '' },
     isCustom: { type: Boolean, default: false },
     customSize: { type: String, trim: true },
+    isAddOn: { type: Boolean, default: false },
+    parentItemIndex: { type: Number, min: 0 },
   },
   { _id: false },
 );

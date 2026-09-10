@@ -46,7 +46,7 @@ export async function PUT(
     const transaction = await Transaction.findOneAndUpdate(
       { _id: payoutId, source: 'supplier', sourceId: id },
       updateData,
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     ).lean();
 
     if (!transaction) {

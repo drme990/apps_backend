@@ -57,6 +57,6 @@ export async function setDefaultPhones(phones: DefaultPhonesValue): Promise<void
   await Setting.findOneAndUpdate(
     { key: DEFAULT_PHONES_KEY },
     { key: DEFAULT_PHONES_KEY, value: phones },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
 }

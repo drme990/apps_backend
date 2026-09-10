@@ -133,6 +133,14 @@ export const checkoutSchema = z
     upgradeDiscount: z.coerce.number().min(0).max(100).optional(),
     recommendProductId: z.string().trim().optional(),
     viewerCountryCode: z.string().trim().regex(/^[A-Z]{2}$/).optional(),
+    selectedAddOns: z
+      .array(
+        z.object({
+          addOnId: z.string().trim().min(1),
+          quantity: z.coerce.number().int().positive().default(1),
+        }),
+      )
+      .optional(),
   })
   .strict();
 
@@ -742,6 +750,14 @@ export const manualOrderCreateSchema = z
               quantity: z.coerce.number().int().positive(),
               sizeIndex: z.coerce.number().int().nonnegative().optional().default(0),
               customPrice: z.coerce.number().min(0).optional(),
+              selectedAddOns: z
+                .array(
+                  z.object({
+                    addOnId: z.string().trim().min(1),
+                    quantity: z.coerce.number().int().positive().default(1),
+                  }),
+                )
+                .optional(),
             })
             .strict(),
           z

@@ -254,6 +254,8 @@ export async function POST(request: NextRequest) {
       sizeDesignName?: string;
       isCustom?: boolean;
       customSize?: string;
+      isAddOn?: boolean;
+      parentItemIndex?: number;
     }> = [];
 
     let totalAmount = 0;
@@ -411,6 +413,59 @@ export async function POST(request: NextRequest) {
         },
         sizeDesignName: selectedSize?.designName || '',
       });
+
+      // ── Resolve selected add-ons for this product ──
+      if (
+        item.selectedAddOns &&
+        item.selectedAddOns.length > 0 &&
+        product.addOns?.length
+      ) {
+        const parentItemIndex = orderItemsPayload.length - 1;
+        const effectiveSelected =
+          product.addOnSelectionMode === 'single'
+            ? item.selectedAddOns.slice(0, 1)
+            : item.selectedAddOns;
+
+        for (const sel of effectiveSelected) {
+          const addOn = product.addOns.find(
+            (a: { _id?: { toString(): string } }) =>
+              a._id?.toString() === sel.addOnId,
+          );
+          if (!addOn) continue;
+          if ((addOn as { isAvailable?: boolean }).isAvailable === false)
+            continue;
+
+          let addOnPrice: number;
+          try {
+            addOnPrice = await resolveUnitPrice(
+              { prices: (addOn as { prices?: { currencyCode: string; amount: number }[] }).prices },
+              product.baseCurrency || 'SAR',
+              currencyUpper,
+            );
+          } catch {
+            continue;
+          }
+
+          if (addOnPrice <= 0) continue;
+
+          const addOnQty = sel.quantity || 1;
+          totalAmount += addOnPrice * addOnQty;
+
+          orderItemsPayload.push({
+            productId: product._id,
+            productSlug: product.slug,
+            productName: {
+              ar: (addOn as { name: { ar: string; en: string } }).name.ar,
+              en: (addOn as { name: { ar: string; en: string } }).name.en,
+            },
+            price: addOnPrice,
+            currency: currencyUpper,
+            quantity: addOnQty,
+            isAddOn: true,
+            parentItemIndex,
+          });
+        }
+      }
     }
 
     // ── Validate required reservation fields per selected products ──

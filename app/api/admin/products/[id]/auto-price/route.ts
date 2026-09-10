@@ -98,6 +98,55 @@ export async function POST(
       }
     }
 
+    // Also auto-price add-ons (same logic as sizes)
+    if (product.addOns?.length) {
+      for (const addOn of product.addOns) {
+        if (!addOn.basePrice || addOn.basePrice <= 0) {
+          const fallback = getBasePrice(addOn, product.baseCurrency);
+          if (fallback > 0) {
+            addOn.basePrice = fallback;
+          }
+        }
+        if (!addOn.baseCurrency) {
+          addOn.baseCurrency = product.baseCurrency;
+        }
+
+        const addOnBasePrice = addOn.basePrice > 0
+          ? addOn.basePrice
+          : getBasePrice(addOn, product.baseCurrency);
+
+        if (addOnBasePrice <= 0) continue;
+
+        const addOnConverted = await convertToMultipleCurrencies(
+          addOnBasePrice,
+          product.baseCurrency,
+          targetCurrencies,
+        );
+
+        for (const [code, amount] of Object.entries(addOnConverted)) {
+          const existingIndex = addOn.prices.findIndex(
+            (p: { currencyCode: string }) => p.currencyCode === code,
+          );
+
+          if (existingIndex >= 0) {
+            if (!addOn.prices[existingIndex].isManual) {
+              addOn.prices[existingIndex].amount = roundPrice(
+                amount,
+                code,
+                roundingMap,
+              );
+            }
+          } else {
+            addOn.prices.push({
+              currencyCode: code,
+              amount: roundPrice(amount, code, roundingMap),
+              isManual: false,
+            });
+          }
+        }
+      }
+    }
+
     // Also update partial payment minimums
     if (product.partialPayment?.minimumPayments) {
       const baseCurrency = product.baseCurrency;

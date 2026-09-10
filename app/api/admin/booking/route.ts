@@ -254,7 +254,7 @@ export async function PUT(request: NextRequest) {
     await Booking.findOneAndUpdate(
       { key: 'global' },
       { $set: update },
-      { upsert: true, new: true, runValidators: true },
+      { upsert: true, returnDocument: 'after', runValidators: true },
     );
 
     const booking = await Booking.findOne({ key: 'global' }).lean();

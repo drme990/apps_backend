@@ -70,6 +70,22 @@ export interface IProductMedia {
   platform: ProductMediaPlatform;
 }
 
+export interface IProductAddOn {
+  _id?: string;
+  name: { ar: string; en: string };
+  /** Base price in the product's base currency. */
+  basePrice: number;
+  /** Currency code for basePrice (same as product.baseCurrency). */
+  baseCurrency: string;
+  /** All currency prices (including base-currency entry). Source of truth for display/checkout. */
+  prices: ICurrencyPrice[];
+  /** Whether this add-on is available to customers. */
+  isAvailable?: boolean;
+}
+
+/** How the customer selects add-ons on the product page. */
+export type AddOnSelectionMode = 'single' | 'multi';
+
 export interface IProduct {
   _id?: string;
   name: { ar: string; en: string };
@@ -99,6 +115,8 @@ export interface IProduct {
   sacrificeCount?: number;
   reservationFields?: IReservationField[];
   displayOrder?: number;
+  addOns?: IProductAddOn[];
+  addOnSelectionMode?: AddOnSelectionMode;
   isDeleted?: boolean;
   deletedAt?: Date | null;
   deletedBy?: {
@@ -134,6 +152,20 @@ const ProductSizeSchema = new mongoose.Schema({
   feedsUp: { type: Number, min: 0, default: 0 },
   isAvailable: { type: Boolean, default: true },
 });
+
+const ProductAddOnSchema = new mongoose.Schema(
+  {
+    name: {
+      ar: { type: String, required: true, trim: true },
+      en: { type: String, required: true, trim: true },
+    },
+    basePrice: { type: Number, required: true, min: 0 },
+    baseCurrency: { type: String, required: true, uppercase: true, trim: true },
+    prices: [CurrencyPriceSchema],
+    isAvailable: { type: Boolean, default: true },
+  },
+  { _id: true },
+);
 
 const ProductMediaSchema = new mongoose.Schema(
   {
@@ -313,6 +345,12 @@ const ProductSchema = new mongoose.Schema<IProduct>(
     sacrificeCount: { type: Number, default: 1, min: 1 },
     reservationFields: { type: [ReservationFieldSchema], default: [] },
     displayOrder: { type: Number, default: 0 },
+    addOns: { type: [ProductAddOnSchema], default: [] },
+    addOnSelectionMode: {
+      type: String,
+      enum: ['single', 'multi'],
+      default: 'multi',
+    },
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Category',
@@ -351,6 +389,20 @@ ProductSchema.pre('validate', function () {
     }
     if (!size.baseCurrency) {
       size.baseCurrency = baseCurrency;
+    }
+  }
+  // Same auto-migration for add-ons
+  for (const addOn of this.addOns ?? []) {
+    if (typeof addOn.basePrice !== 'number' || addOn.basePrice <= 0) {
+      const entry = addOn.prices?.find(
+        (p) => p.currencyCode?.toUpperCase() === baseCurrency,
+      );
+      if (entry && typeof entry.amount === 'number' && entry.amount > 0) {
+        addOn.basePrice = entry.amount;
+      }
+    }
+    if (!addOn.baseCurrency) {
+      addOn.baseCurrency = baseCurrency;
     }
   }
 });

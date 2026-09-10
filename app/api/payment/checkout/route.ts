@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
 import { normalizeCurrencyCode } from '@/lib/currencies';
-import Order, { type PaymentMethod } from '@/lib/models/Order';
+import Order, { type PaymentMethod, type IOrderItem } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
 import Country from '@/lib/models/Country';
@@ -179,6 +179,7 @@ export async function POST(request: NextRequest) {
       upgradeDiscount,
       recommendProductId,
       viewerCountryCode,
+      selectedAddOns,
     } = body;
 
     // Normalize currency to ISO 4217 code (handles localized symbols like "ج.م" → "EGP")
@@ -955,6 +956,50 @@ export async function POST(request: NextRequest) {
 
     let totalAmount = unitPrice * quantity + recommendedProductPrice;
 
+    // ── Resolve selected add-ons ────────────────────────────────────────
+    // Add-ons are optional extras the customer selected on the product page.
+    // Each becomes a separate order item with isAddOn: true.
+    const resolvedAddOns: Array<{
+      addOn: NonNullable<typeof product.addOns>[number];
+      quantity: number;
+      price: number;
+    }> = [];
+
+    if (selectedAddOns && selectedAddOns.length > 0 && product.addOns?.length) {
+      // Enforce single-select: only the first selected add-on is used.
+      const effectiveSelected =
+        product.addOnSelectionMode === 'single'
+          ? selectedAddOns.slice(0, 1)
+          : selectedAddOns;
+
+      for (const sel of effectiveSelected) {
+        const addOn = product.addOns.find(
+          (a) => a._id?.toString() === sel.addOnId,
+        );
+        if (!addOn) continue;
+        if (addOn.isAvailable === false) continue;
+
+        let addOnPrice: number;
+        try {
+          addOnPrice = await resolveUnitPriceWithVisibility(
+            { prices: addOn.prices },
+            product.baseCurrency || 'SAR',
+            currencyUpper,
+            resolvedDetectedCountry || '',
+            allCountries,
+          );
+        } catch {
+          continue; // skip add-ons that can't be priced in this currency
+        }
+
+        if (addOnPrice <= 0) continue;
+
+        const addOnQty = sel.quantity || 1;
+        resolvedAddOns.push({ addOn, quantity: addOnQty, price: addOnPrice });
+        totalAmount += addOnPrice * addOnQty;
+      }
+    }
+
     // Apply upgrade discount if applicable
     const upgradeDiscountPercent =
       isUpgrade && typeof upgradeDiscount === 'number' && upgradeDiscount > 0
@@ -1231,7 +1276,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const orderItemsPayload = [
+    const orderItemsPayload: IOrderItem[] = [
       {
         productId: product._id,
         productSlug: product.slug,
@@ -1266,6 +1311,20 @@ export async function POST(request: NextRequest) {
           en: recSize?.name?.en || '',
         },
         sizeDesignName: recSize?.designName || '',
+      });
+    }
+
+    // Add resolved add-ons as separate order items
+    for (const { addOn, quantity: addOnQty, price: addOnPrice } of resolvedAddOns) {
+      orderItemsPayload.push({
+        productId: product._id,
+        productSlug: product.slug,
+        productName: { ar: addOn.name.ar, en: addOn.name.en },
+        price: addOnPrice,
+        currency: currencyUpper,
+        quantity: addOnQty,
+        isAddOn: true,
+        parentItemIndex: 0,
       });
     }
 

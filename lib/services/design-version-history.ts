@@ -76,10 +76,10 @@ export async function allocateVersionNumber(
   const result = await OrderDesignVersionCounter.findOneAndUpdate(
     filter,
     { $inc: { nextVersion: 1 } },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: 'after' },
   );
   if (!result) {
-    // Should never happen with upsert + new:true, but guard anyway.
+    // Should never happen with upsert + returnDocument: 'after', but guard anyway.
     await OrderDesignVersionCounter.updateOne(
       filter,
       { $setOnInsert: { nextVersion: 1 } },
@@ -88,7 +88,7 @@ export async function allocateVersionNumber(
     const retry = await OrderDesignVersionCounter.findOneAndUpdate(
       filter,
       { $inc: { nextVersion: 1 } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     return retry?.nextVersion ?? 1;
   }

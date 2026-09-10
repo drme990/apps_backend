@@ -72,7 +72,7 @@ function normalizeCouponPayload<T extends Record<string, unknown>>(body: T): T {
   ) {
     normalized.maxDiscountAmount = Number(
       (normalized.maxDiscountPrices as Array<{ amount: number }>)[0].amount ||
-        0,
+      0,
     );
   }
 
@@ -122,7 +122,7 @@ export async function PUT(
     const payload = normalizeCouponPayload(body);
 
     const coupon = await Coupon.findByIdAndUpdate(id, payload, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
     if (!coupon) {

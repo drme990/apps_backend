@@ -33,7 +33,7 @@ export async function DELETE(
           },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
 
     if (!updated) {

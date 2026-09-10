@@ -135,6 +135,56 @@ export async function GET(request: Request) {
         }
       }
 
+      // Update add-on prices (same logic as sizes)
+      if (product.addOns?.length) {
+        for (const addOn of product.addOns) {
+          if (!addOn.basePrice || addOn.basePrice <= 0) {
+            const fallback = getBasePrice(addOn, product.baseCurrency);
+            if (fallback > 0) {
+              addOn.basePrice = fallback;
+              modified = true;
+            }
+          }
+          if (!addOn.baseCurrency) {
+            addOn.baseCurrency = product.baseCurrency;
+            modified = true;
+          }
+
+          const addOnBasePrice = addOn.basePrice > 0
+            ? addOn.basePrice
+            : getBasePrice(addOn, product.baseCurrency);
+
+          if (addOnBasePrice <= 0) continue;
+
+          const addOnConverted = await convertToMultipleCurrencies(
+            addOnBasePrice,
+            product.baseCurrency,
+            targetCurrencies,
+          );
+
+          for (const [code, amount] of Object.entries(addOnConverted)) {
+            const newAmount = roundPrice(amount, code, roundingMap);
+            const existingIndex = addOn.prices.findIndex(
+              (p: { currencyCode: string }) => p.currencyCode === code,
+            );
+
+            if (existingIndex >= 0) {
+              if (!addOn.prices[existingIndex].isManual) {
+                addOn.prices[existingIndex].amount = newAmount;
+                modified = true;
+              }
+            } else {
+              addOn.prices.push({
+                currencyCode: code,
+                amount: newAmount,
+                isManual: false,
+              });
+              modified = true;
+            }
+          }
+        }
+      }
+
       // Update partial payment minimums
       if (product.partialPayment?.minimumPayments) {
         const baseCurrency = product.baseCurrency;

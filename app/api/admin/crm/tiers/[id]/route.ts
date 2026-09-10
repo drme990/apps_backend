@@ -40,7 +40,7 @@ export async function PUT(
     }
 
     const tier = await UserTier.findByIdAndUpdate(id, parsed.data, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
 

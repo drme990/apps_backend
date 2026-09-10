@@ -25,6 +25,8 @@ const PUBLIC_PRODUCT_FIELDS = new Set([
   'supportsHalfPayment',
   'media',
   'sizes',
+  'addOns',
+  'addOnSelectionMode',
   'partialPayment',
   'upgradeTo',
   'upgradeDiscount',
@@ -42,6 +44,14 @@ const PUBLIC_SIZE_FIELDS = new Set([
   'name',
   'resolvedPrices',
   'feedsUp',
+  'isAvailable',
+]);
+
+/** Fields kept on each add-on object for public API responses. */
+const PUBLIC_ADD_ON_FIELDS = new Set([
+  '_id',
+  'name',
+  'resolvedPrices',
   'isAvailable',
 ]);
 
@@ -68,6 +78,21 @@ export function stripProductForPublic(
         for (const key of Object.keys(sizeObj)) {
           if (!PUBLIC_SIZE_FIELDS.has(key)) {
             delete sizeObj[key];
+          }
+        }
+      }
+    }
+  }
+
+  // Strip each add-on to only public fields
+  const addOns = product.addOns;
+  if (Array.isArray(addOns)) {
+    for (const addOn of addOns) {
+      if (addOn && typeof addOn === 'object') {
+        const addOnObj = addOn as Record<string, unknown>;
+        for (const key of Object.keys(addOnObj)) {
+          if (!PUBLIC_ADD_ON_FIELDS.has(key)) {
+            delete addOnObj[key];
           }
         }
       }

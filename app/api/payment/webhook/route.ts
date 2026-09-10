@@ -233,12 +233,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!timestamp || isNaN(timestamp) || now - timestamp > MAX_WEBHOOK_AGE) {
-      auditPayload.timestampWarning = 'invalid_or_expired_timestamp';
+    // Only enforce the freshness check when we have a valid timestamp.
+    // EasyKash sometimes omits the Timestamp field entirely (especially
+    // on pending/cancel callbacks), so we can't reject on its absence.
+    // When present and parseable, reject stale callbacks to prevent replays.
+    if (timestamp && !isNaN(timestamp) && now - timestamp > MAX_WEBHOOK_AGE) {
+      auditPayload.validationStage = 'expired_timestamp';
+      auditPayload.result = 'rejected';
+      auditPayload.responseStatus = 403;
       console.error(
-        `EasyKash webhook: timestamp expired or invalid (${body.Timestamp})`,
+        `EasyKash webhook rejected: timestamp expired (age=${now - timestamp}s, max=${MAX_WEBHOOK_AGE}s, value=${body.Timestamp})`,
       );
-      console.warn('Bypassing timestamp check due to format variations.');
+      return NextResponse.json(
+        { error: 'Webhook timestamp expired' },
+        { status: 403 },
+      );
+    }
+
+    if (body.Timestamp && (!timestamp || isNaN(timestamp))) {
+      // Timestamp was provided but couldn't be parsed — log as a warning
+      // (not an error) and continue, since the format varies across providers.
+      auditPayload.timestampWarning = 'unparseable_timestamp';
+      console.warn(
+        `EasyKash webhook: timestamp present but unparseable (${body.Timestamp}), skipping freshness check`,
+      );
     }
 
     const {

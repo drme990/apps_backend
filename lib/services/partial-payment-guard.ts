@@ -236,7 +236,7 @@ export async function acquirePartialPaymentCreationLock(
     return {
       acquired: true,
       retryAfterMs: 0,
-      release: async () => {},
+      release: async () => { },
     };
   }
 
@@ -262,7 +262,7 @@ export async function acquirePartialPaymentCreationLock(
           },
           $setOnInsert: { key },
         },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       );
       acquiredKeys.push(key);
     } catch (error) {
@@ -272,7 +272,7 @@ export async function acquirePartialPaymentCreationLock(
         return {
           acquired: false,
           retryAfterMs: ttlMs,
-          release: async () => {},
+          release: async () => { },
         };
       }
 

@@ -47,7 +47,7 @@ export async function PUT(
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
     const referral = await Referral.findByIdAndUpdate(id, body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
     if (!referral) {

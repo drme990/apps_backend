@@ -483,6 +483,28 @@ export async function resolveProductPrices(
       // shouldn't see based on country visibility settings.
       delete size.prices;
     }
+
+    // Resolve prices for each product's add-ons (same logic as sizes)
+    const addOns = product.addOns as Array<Record<string, unknown>> | undefined;
+    if (addOns && Array.isArray(addOns)) {
+      for (const addOn of addOns) {
+        const addOnData = {
+          prices: addOn.prices as CurrencyPriceEntry[] | undefined,
+        };
+        try {
+          addOn.resolvedPrices = await resolveSizePrices(
+            addOnData,
+            baseCurrency,
+            visibleCountries,
+            mainCurrencyCode,
+            exchangeRates,
+          );
+        } catch {
+          // If resolution fails for one add-on, leave it without resolvedPrices
+        }
+        delete addOn.prices;
+      }
+    }
   }
 
   return products;

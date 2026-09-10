@@ -47,7 +47,7 @@ export async function PUT(
     if (!parsed.success) return parsed.response;
 
     const account = await Account.findByIdAndUpdate(id, parsed.data, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
     if (!account) {

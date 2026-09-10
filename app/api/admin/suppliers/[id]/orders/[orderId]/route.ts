@@ -44,7 +44,7 @@ export async function PUT(
     const order = await SupplierOrder.findOneAndUpdate(
       { _id: orderId, supplierId: id },
       updateData,
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     ).lean();
 
     if (!order) {

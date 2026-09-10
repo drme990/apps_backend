@@ -54,7 +54,7 @@ export async function PUT(
     const body = parsed.data;
 
     const supplier = await Supplier.findByIdAndUpdate(id, body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     }).lean();
 
