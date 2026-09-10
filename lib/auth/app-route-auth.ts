@@ -572,7 +572,12 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
 
     const UserModel = getUserModelByAppId(appId) as unknown as AuthUserModel;
 
-    const userDoc = await UserModel.findById(authUser.userId);
+    // Select password explicitly — it has `select: false` in the schema
+    // so it's excluded from default queries. We need it for password
+    // verification when the user is changing their password.
+    const userDoc = await UserModel.findById(authUser.userId).select(
+      '+password',
+    );
     if (!userDoc) {
       return NextResponse.json(
         { success: false, error: 'User not found' },
@@ -630,16 +635,23 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
           { status: 400 },
         );
       }
-      const isMatch = await userDoc.comparePassword(
-        parsed.data.currentPassword,
-      );
-      if (!isMatch) {
-        return NextResponse.json(
-          { success: false, error: 'Incorrect current password' },
-          { status: 400 },
+      // If the user has no password yet (e.g. auto-created account from
+      // checkout), allow them to set one without requiring a current
+      // password — they're already authenticated.
+      if (!userDoc.password) {
+        userDoc.password = parsed.data.newPassword;
+      } else {
+        const isMatch = await userDoc.comparePassword(
+          parsed.data.currentPassword,
         );
+        if (!isMatch) {
+          return NextResponse.json(
+            { success: false, error: 'Incorrect current password' },
+            { status: 400 },
+          );
+        }
+        userDoc.password = parsed.data.newPassword;
       }
-      userDoc.password = parsed.data.newPassword;
     }
 
     if (updatePayload.name) userDoc.name = updatePayload.name;
