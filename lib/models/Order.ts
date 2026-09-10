@@ -338,6 +338,7 @@ export interface IOrder {
    */
   fbPurchaseServerSentAt?: Date;
   tiktokPurchaseServerSentAt?: Date;
+  openaiPurchaseServerSentAt?: Date;
   /** Internal notes appended by the system or admins */
   internalNotes?: IInternalNote[];
   // Free order tracking
@@ -757,6 +758,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     },
     fbPurchaseServerSentAt: { type: Date },
     tiktokPurchaseServerSentAt: { type: Date },
+    openaiPurchaseServerSentAt: { type: Date },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
     payments: { type: [PaymentSchema], default: [] },
     paymentAttempts: { type: [PaymentAttemptSchema], default: [] },

@@ -27,6 +27,8 @@ const REQUIRED_ENV_VARS: string[] = [
   'R2_PUBLIC_URL',
   'TIKTOK_PIXEL_ID',
   'TIKTOK_ACCESS_TOKEN',
+  'OPENAI_PIXEL_ID',
+  'OPENAI_ACCESS_TOKEN',
 ];
 
 export async function register(): Promise<void> {

@@ -182,6 +182,16 @@ export const fbEventSchema = z
   })
   .strict();
 
+export const openaiEventSchema = z
+  .object({
+    event_name: z.string().trim().min(1),
+    event_id: z.string().trim().optional(),
+    event_source_url: z.string().trim().optional(),
+    user_data: z.record(z.string(), z.any()).optional(),
+    custom_data: z.record(z.string(), z.any()).optional(),
+  })
+  .strict();
+
 export const refTrackerActionSchema = z.enum([
   'session_created',
   'navigate_products',
