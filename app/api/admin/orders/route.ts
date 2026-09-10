@@ -224,6 +224,8 @@ export async function GET(request: NextRequest) {
       isGuest: 1,
       'items.productName': 1,
       'items.quantity': 1,
+      'items.price': 1,
+      'items.currency': 1,
       totalAmount: 1,
       paidAmount: 1,
       currency: 1,
