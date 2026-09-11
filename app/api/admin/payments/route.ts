@@ -35,8 +35,12 @@ export async function GET(request: NextRequest) {
     const { start, end, key } = parseMonth(searchParams.get('month'));
     const skip = (page - 1) * limit;
 
+    // Exclude sub-orders from all financial aggregations — they inherit
+    // payments/amounts from their parent, so counting them separately
+    // would double-count revenue, remaining, and order totals.
     const baseQuery: Record<string, unknown> = {
       createdAt: { $gte: start, $lt: end },
+      isSubOrder: { $ne: true },
     };
     if (status && status !== 'all') baseQuery.status = status;
     if (source && source !== 'all') baseQuery.source = source;

@@ -91,8 +91,12 @@ export async function GET(request: Request) {
     const monthStart = getLastMonthsRange(months);
     const earningsStart = months >= 12 ? monthStart : dayStart;
 
-    // Build common match filter
-    const matchFilter: AnalyticsMatchFilter = {};
+    // Build common match filter — exclude sub-orders from all financial
+    // aggregations because they inherit payments/amounts from their parent,
+    // so counting them separately would double-count revenue and earnings.
+    const matchFilter: AnalyticsMatchFilter & { isSubOrder?: { $ne: true } } = {
+      isSubOrder: { $ne: true },
+    };
     if (statusParam && statusParam !== 'all') {
       matchFilter.status = statusParam;
     }

@@ -34,7 +34,10 @@ export async function GET(request: NextRequest) {
     const isoPattern = /^\d{4}-\d{2}-\d{2}$/;
 
     // Build base match like the main execution route
-    const baseMatch: Record<string, unknown> = {};
+    // Exclude sub-orders — their items are already counted via the parent.
+    const baseMatch: Record<string, unknown> = {
+      isSubOrder: { $ne: true },
+    };
     if (statusParam && statusParam !== 'all') {
       baseMatch.status = statusParam;
     } else {

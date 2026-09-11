@@ -71,6 +71,11 @@ export async function GET(request: NextRequest) {
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
+    // Which date field to filter on: 'statusUpdateTime' (default, used by
+    // orders/execution pages) or 'createdAt' (used by invoices page so
+    // date ranges match order creation, not last status update).
+    const dateFieldParam = searchParams.get('dateField');
+    const dateField = dateFieldParam === 'createdAt' ? 'createdAt' : 'statusUpdateTime';
     const timezoneOffsetMinutes = parseTimezoneOffsetMinutes(
       searchParams.get('tzOffsetMinutes'),
     );
@@ -210,7 +215,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (Object.keys(updatedAtFilter).length > 0) {
-      query.statusUpdateTime = updatedAtFilter;
+      query[dateField] = updatedAtFilter;
     }
 
     if (andConditions.length > 0) {
