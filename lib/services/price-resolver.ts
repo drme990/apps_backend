@@ -4,6 +4,7 @@ import {
   type CountryVisibilityOptions,
   type CountryVisibilityRecord,
 } from '@/lib/country-visibility';
+import { roundPriceByRule, type RoundingRule } from '@/lib/currency-rounding';
 
 interface CurrencyPriceEntry {
   currencyCode: string;
@@ -55,6 +56,220 @@ export interface ResolvedPrice {
 export const PAYMENT_GATEWAY_CURRENCIES = ['EGP', 'USD', 'SAR', 'EUR'] as const;
 
 /**
+ * Safely cast a string to a RoundingRule, defaulting to 'ceil'.
+ */
+function toRoundingRule(rule: string | null | undefined): RoundingRule {
+  const valid: RoundingRule[] = [
+    'nearest-ten',
+    'nearest-five',
+    'nearest-fifty',
+    'nearest-hundred',
+    'ceil',
+  ];
+  return rule && (valid as string[]).includes(rule) ? (rule as RoundingRule) : 'ceil';
+}
+
+/**
+ * Log a price resolution result for debugging.
+ *
+ * Only logs when `PRICE_DEBUG` env var is set to '1' or 'true' to avoid
+ * noise in production. Logs the resolution path, target currency, and
+ * final amount so discrepancies can be traced.
+ */
+function logPriceResolution(
+  targetCurrency: string,
+  path: 'exchange' | 'real-exact' | 'real-base' | 'real-convert' | 'fallback-base' | 'fallback-any' | 'none',
+  amount: number,
+  extra?: Record<string, unknown>,
+): void {
+  if (process.env.PRICE_DEBUG !== '1' && process.env.PRICE_DEBUG !== 'true') return;
+  console.log('[price-resolver]', {
+    targetCurrency,
+    path,
+    amount,
+    ...extra,
+  });
+}
+
+/**
+ * Core price resolution for a single currency.
+ *
+ * Shared by both the display path (`resolveSizePrices`) and the checkout
+ * path (`resolveUnitPriceWithVisibility`) to guarantee they always produce
+ * the same price for the same inputs.
+ *
+ * Resolution order:
+ *   1. Exchange price: convert from the viewer's home (main) currency
+ *      using exchange rates.
+ *   2. Real price: exact match in `prices[]`, or base price, or convert
+ *      from base currency.
+ *   3. Last-resort: try base price again, then any price entry in
+ *      `prices[]`, converting if needed.
+ *
+ * Rounding: exchange and fallback prices use `roundPriceByRule` with the
+ * currency's configured rounding rule (nearest-ten, nearest-five, etc.).
+ * Real prices are returned as-is (already set by the admin).
+ *
+ * @param size                The product size with `prices[]`
+ * @param baseCurrency        The product's base currency (e.g. "SAR")
+ * @param targetCurrency      The currency to resolve (e.g. "EGP")
+ * @param visibility          Country visibility settings for the target
+ * @param mainCurrencyCode    The viewer's home currency (exchange base)
+ * @param roundingRule        Rounding rule for the target currency
+ * @param mainExchangeRates   Pre-fetched rates based on main currency
+ *                            (null = fetch on demand)
+ *
+ * @returns `{ amount, type }` or `null` if no price could be resolved.
+ */
+async function resolvePriceCore(
+  size: { prices?: CurrencyPriceEntry[] },
+  baseCurrency: string,
+  targetCurrency: string,
+  visibility: CountryVisibilityOptions | undefined,
+  mainCurrencyCode: string,
+  roundingRule: RoundingRule,
+  mainExchangeRates: Record<string, number> | null,
+): Promise<{ amount: number; type: 'real' | 'exchange' } | null> {
+  const target = targetCurrency.toUpperCase();
+  const base = baseCurrency.toUpperCase();
+  const basePrice = getBasePrice(size, base);
+
+  // ── 1. Exchange price: convert from main (home) currency ──
+  if (visibility?.exchangePrice === true) {
+    const mainPriceMatch = size.prices?.find(
+      (p: CurrencyPriceEntry) =>
+        p.currencyCode.toUpperCase() === mainCurrencyCode,
+    );
+
+    if (mainPriceMatch && typeof mainPriceMatch.amount === 'number') {
+      // Target IS the main currency — no conversion needed
+      if (mainCurrencyCode === target) {
+        logPriceResolution(target, 'exchange', mainPriceMatch.amount, { note: 'target=main' });
+        return { amount: mainPriceMatch.amount, type: 'real' };
+      }
+
+      // Use pre-fetched rates if available, otherwise fetch fresh
+      let rates = mainExchangeRates;
+      if (!rates) {
+        try {
+          rates = await getExchangeRates(mainCurrencyCode);
+        } catch {
+          rates = null;
+        }
+      }
+
+      if (rates && rates[target]) {
+        const amount = mainPriceMatch.amount * rates[target];
+        const rounded = roundPriceByRule(amount, roundingRule);
+        logPriceResolution(target, 'exchange', rounded, {
+          mainPrice: mainPriceMatch.amount,
+          rate: rates[target],
+          roundingRule,
+        });
+        return { amount: rounded, type: 'exchange' };
+      }
+    }
+    // Exchange rate unavailable — fall through to real price
+  }
+
+  // ── 2. Real price: exact match, base price, or convert from base ──
+  if (visibility?.realPrice !== false) {
+    // 2a. Exact match in prices[]
+    const exactMatch = size.prices?.find(
+      (p: CurrencyPriceEntry) => p.currencyCode.toUpperCase() === target,
+    );
+    if (exactMatch && typeof exactMatch.amount === 'number') {
+      logPriceResolution(target, 'real-exact', exactMatch.amount);
+      return { amount: exactMatch.amount, type: 'real' };
+    }
+
+    // 2b. Base currency matches target — use base price
+    if (base === target) {
+      logPriceResolution(target, 'real-base', basePrice);
+      return { amount: basePrice, type: 'real' };
+    }
+
+    // 2c. Convert from base currency to target
+    if (basePrice > 0) {
+      try {
+        const baseRates = await getExchangeRates(base);
+        const rate = baseRates[target];
+        if (rate) {
+          const amount = basePrice * rate;
+          const rounded = roundPriceByRule(amount, roundingRule);
+          logPriceResolution(target, 'real-convert', rounded, {
+            basePrice,
+            rate,
+            roundingRule,
+          });
+          return { amount: rounded, type: 'exchange' };
+        }
+      } catch {
+        // fall through to last-resort
+      }
+    }
+  }
+
+  // ── 3. Last-resort: try base price, then any price entry ──
+  // This ensures checkout never fails just because one currency's
+  // exchange rate is temporarily unavailable.
+  if (basePrice > 0) {
+    if (base === target) {
+      logPriceResolution(target, 'fallback-base', basePrice);
+      return { amount: basePrice, type: 'real' };
+    }
+    try {
+      const baseRates = await getExchangeRates(base);
+      const rate = baseRates[target];
+      if (rate) {
+        const amount = basePrice * rate;
+        const rounded = roundPriceByRule(amount, roundingRule);
+        logPriceResolution(target, 'fallback-base', rounded, {
+          basePrice,
+          rate,
+          roundingRule,
+        });
+        return { amount: rounded, type: 'exchange' };
+      }
+    } catch {
+      // can't convert — try other entries
+    }
+  }
+
+  // Try any price entry in the array
+  for (const entry of size.prices || []) {
+    if (typeof entry.amount === 'number' && entry.amount > 0) {
+      if (entry.currencyCode.toUpperCase() === target) {
+        logPriceResolution(target, 'fallback-any', entry.amount, {
+          sourceCurrency: entry.currencyCode,
+        });
+        return { amount: entry.amount, type: 'real' };
+      }
+      try {
+        const rates = await getExchangeRates(entry.currencyCode.toUpperCase());
+        const rate = rates[target];
+        if (rate) {
+          const amount = entry.amount * rate;
+          const rounded = roundPriceByRule(amount, roundingRule);
+          logPriceResolution(target, 'fallback-any', rounded, {
+            sourceCurrency: entry.currencyCode,
+            sourceAmount: entry.amount,
+            rate,
+            roundingRule,
+          });
+          return { amount: rounded, type: 'exchange' };
+        }
+      } catch {
+        // skip this entry
+      }
+    }
+  }
+
+  logPriceResolution(target, 'none', 0);
+  return null;
+}
+
+/**
  * Simple price resolution WITHOUT country visibility settings.
  * Used by admin routes where the admin manually sets prices.
  *
@@ -102,19 +317,8 @@ export async function resolveUnitPrice(
  * Resolve the unit price for a product size in the requested currency,
  * respecting the country visibility settings (realPrice vs exchangePrice).
  *
- * This mirrors the frontend's `usePriceInCurrency` hook logic:
- *
- *   1. If the target country has `exchangePrice: true`:
- *      - Find the price in the viewer's home currency (mainCurrencyCode)
- *      - Convert to the target currency via exchange rates
- *
- *   2. If the target country has `realPrice: true` (or exchangePrice is false):
- *      - Use the pre-defined price for the target currency from `size.prices[]`
- *      - Fall back to the base price from `prices[]` if the target currency matches the base
- *      - Fall back to exchange rate conversion from the base currency
- *
- * NOTE: No rounding is applied here. Rounding rules are only used when
- * SETTING prices in the admin panel — never during price resolution.
+ * This is the checkout path. It uses the same `resolvePriceCore` as the
+ * display path (`resolveSizePrices`) to guarantee price consistency.
  *
  * @param size               The product size with `prices[]`
  * @param baseCurrency       The product's base currency (e.g. "SAR")
@@ -122,7 +326,7 @@ export async function resolveUnitPrice(
  * @param viewerCountryCode  The viewer's home country code (e.g. "SA")
  * @param allCountries       All country records from the DB
  *
- * @returns The resolved unit price in the target currency.
+ * @returns The resolved unit price in the target currency, or 0 if unresolvable.
  */
 export async function resolveUnitPriceWithVisibility(
   size: { prices?: CurrencyPriceEntry[] },
@@ -146,105 +350,26 @@ export async function resolveUnitPriceWithVisibility(
     viewerCountryCode,
   );
 
-  // Find the target country's visibility settings
-  // The target country is the one whose currency matches the target currency
+  // Find the target country's visibility settings and rounding rule
   const targetCountry = visibleCountries.find(
     (c) => c.currencyCode?.toUpperCase() === target,
   );
 
   const visibility: CountryVisibilityOptions | undefined =
     targetCountry?.viewerVisibility;
+  const roundingRule = toRoundingRule(targetCountry?.roundingRule);
 
-  // If exchangePrice is enabled for this country, convert from the main currency
-  if (visibility?.exchangePrice === true) {
-    // Find the price in the main currency (the viewer's home currency)
-    const mainPriceMatch = size.prices?.find(
-      (p: CurrencyPriceEntry) =>
-        p.currencyCode.toUpperCase() === mainCurrencyCode,
-    );
+  const result = await resolvePriceCore(
+    size,
+    baseCurrency,
+    target,
+    visibility,
+    mainCurrencyCode,
+    roundingRule,
+    null, // fetch rates on demand
+  );
 
-    if (mainPriceMatch && typeof mainPriceMatch.amount === 'number') {
-      // If the target IS the main currency, no conversion needed
-      if (mainCurrencyCode === target) {
-        return mainPriceMatch.amount;
-      }
-
-      // Fetch exchange rates with the main currency as base
-      try {
-        const rates = await getExchangeRates(mainCurrencyCode);
-        const rate = rates[target];
-        if (rate) {
-          return Math.ceil(mainPriceMatch.amount * rate);
-        }
-      } catch {
-        // Exchange rate fetch failed — fall through to real price
-      }
-    }
-
-    // If no main currency price or exchange rate, fall through to real price
-  }
-
-  // Use real price (pre-defined price for the target currency)
-  if (visibility?.realPrice !== false) {
-    // 1. Exact match in the prices array
-    const exactMatch = size.prices?.find(
-      (p: CurrencyPriceEntry) => p.currencyCode.toUpperCase() === target,
-    );
-    if (exactMatch && typeof exactMatch.amount === 'number') {
-      return exactMatch.amount;
-    }
-
-    // 2. Base currency matches target — use the base price from prices[]
-    const basePrice = getBasePrice(size, base);
-    if (base === target) {
-      return basePrice;
-    }
-
-    // 3. Convert from base currency to target via exchange rates
-    if (basePrice > 0) {
-      try {
-        const converted = await convertCurrency(basePrice, base, target);
-        return Math.ceil(converted);
-      } catch {
-        // Exchange rate conversion failed — fall through to any-price fallback
-      }
-    }
-  }
-
-  // ── Last-resort fallback: use ANY available price in prices[] ──
-  // This ensures checkout never fails just because one currency's
-  // exchange rate is temporarily unavailable. We try the base currency
-  // price first, then any other price, converting if possible.
-  const fallbackBasePrice = getBasePrice(size, base);
-  if (fallbackBasePrice > 0) {
-    if (base === target) return fallbackBasePrice;
-    try {
-      const converted = await convertCurrency(fallbackBasePrice, base, target);
-      if (converted > 0) return Math.ceil(converted);
-    } catch {
-      // Can't convert — return base price as-is (better than failing checkout)
-    }
-    return fallbackBasePrice;
-  }
-
-  // Try any price entry in the array
-  for (const entry of size.prices || []) {
-    if (typeof entry.amount === 'number' && entry.amount > 0) {
-      if (entry.currencyCode.toUpperCase() === target) return entry.amount;
-      try {
-        const converted = await convertCurrency(
-          entry.amount,
-          entry.currencyCode,
-          target,
-        );
-        if (converted > 0) return Math.ceil(converted);
-      } catch {
-        // skip this entry
-      }
-    }
-  }
-
-  return 0;
+  return result?.amount ?? 0;
 }
 
 /**
@@ -297,12 +422,12 @@ export async function convertToPaymentCurrency(
  * Returns an array of `ResolvedPrice` entries — one per visible currency —
  * that the frontend can look up directly without doing any conversion.
  *
- * NOTE: No rounding is applied here. Rounding rules are only used when
- * SETTING prices in the admin panel — never during price resolution.
+ * Uses the same `resolvePriceCore` as the checkout path
+ * (`resolveUnitPriceWithVisibility`) to guarantee price consistency
+ * between display and checkout.
  *
  * @param size               The product size with `prices[]`
  * @param baseCurrency       The product's base currency
- * @param viewerCountryCode  The viewer's home country code (2-letter)
  * @param visibleCountries   Pre-computed visible countries for the viewer
  * @param mainCurrencyCode   The viewer's home currency (exchange base)
  * @param exchangeRates      Pre-fetched exchange rates (based on main currency)
@@ -314,8 +439,6 @@ async function resolveSizePrices(
   mainCurrencyCode: string,
   exchangeRates: Record<string, number> | null,
 ): Promise<ResolvedPrice[]> {
-  const base = baseCurrency.toUpperCase();
-  const basePrice = getBasePrice(size, base);
   const results: ResolvedPrice[] = [];
   const seenCurrencies = new Set<string>();
 
@@ -325,63 +448,23 @@ async function resolveSizePrices(
     const visibility = country.viewerVisibility;
     if (!visibility?.realPrice && !visibility?.exchangePrice) continue;
 
-    let amount = 0;
-    let type: 'real' | 'exchange' = 'real';
+    const roundingRule = toRoundingRule(country.roundingRule);
 
-    // 1. Exchange price: convert from main currency
-    if (visibility.exchangePrice === true) {
-      const mainPriceMatch = size.prices?.find(
-        (p: CurrencyPriceEntry) =>
-          p.currencyCode.toUpperCase() === mainCurrencyCode,
-      );
+    const result = await resolvePriceCore(
+      size,
+      baseCurrency,
+      targetCurrency,
+      visibility,
+      mainCurrencyCode,
+      roundingRule,
+      exchangeRates,
+    );
 
-      if (mainPriceMatch && typeof mainPriceMatch.amount === 'number') {
-        if (mainCurrencyCode === targetCurrency) {
-          amount = mainPriceMatch.amount;
-          type = 'real';
-        } else if (exchangeRates && exchangeRates[targetCurrency]) {
-          amount = mainPriceMatch.amount * exchangeRates[targetCurrency];
-          type = 'exchange';
-        }
-      }
-    }
-
-    // 2. Real price: use pre-defined price or convert from base
-    if (amount <= 0 && visibility.realPrice !== false) {
-      const exactMatch = size.prices?.find(
-        (p: CurrencyPriceEntry) => p.currencyCode.toUpperCase() === targetCurrency,
-      );
-      if (exactMatch && typeof exactMatch.amount === 'number') {
-        amount = exactMatch.amount;
-        type = 'real';
-      } else if (base === targetCurrency) {
-        amount = basePrice;
-        type = 'real';
-      } else if (basePrice > 0) {
-        // Convert from base currency using exchange rates
-        try {
-          const baseRates = await getExchangeRates(base);
-          const rate = baseRates[targetCurrency];
-          if (rate) {
-            amount = basePrice * rate;
-            type = 'exchange';
-          }
-        } catch {
-          // Exchange rates unavailable — skip this currency
-        }
-      }
-    }
-
-    if (amount > 0) {
-      // Exchange prices are ceiled to the nearest integer so users
-      // never see fractional amounts. Real prices are returned as-is
-      // (already set by the admin). Rounding rules (nearest-ten, etc.)
-      // are only applied when SETTING prices in the admin panel.
-      const finalAmount = type === 'exchange' ? Math.ceil(amount) : amount;
+    if (result && result.amount > 0) {
       results.push({
         currencyCode: targetCurrency,
-        amount: finalAmount,
-        type,
+        amount: result.amount,
+        type: result.type,
       });
       seenCurrencies.add(targetCurrency);
     }
@@ -459,6 +542,16 @@ export async function resolveProductPrices(
   // Resolve prices for each product's sizes
   for (const product of products) {
     const baseCurrency = (product.baseCurrency as string) || 'SAR';
+    // For unknown viewers ('OT'), mainCurrencyCode is empty. The checkout
+    // path (resolveUnitPriceWithVisibility) falls back to the product's
+    // base currency in that case. Mirror that here so display and checkout
+    // use the same exchange base, guaranteeing identical prices.
+    const effectiveMainCurrencyCode = mainCurrencyCode || baseCurrency;
+    // When using a per-product fallback base, the pre-fetched rates
+    // (based on the first product's base) may be wrong for this product.
+    // Pass null so resolvePriceCore fetches on demand with the correct base.
+    const effectiveExchangeRates =
+      mainCurrencyCode ? exchangeRates : null;
     const sizes = product.sizes as Array<Record<string, unknown>> | undefined;
     if (!sizes || !Array.isArray(sizes)) continue;
 
@@ -471,8 +564,8 @@ export async function resolveProductPrices(
           sizeData,
           baseCurrency,
           visibleCountries,
-          mainCurrencyCode,
-          exchangeRates,
+          effectiveMainCurrencyCode,
+          effectiveExchangeRates,
         );
       } catch {
         // If resolution fails for one size, leave it without resolvedPrices
@@ -496,8 +589,8 @@ export async function resolveProductPrices(
             addOnData,
             baseCurrency,
             visibleCountries,
-            mainCurrencyCode,
-            exchangeRates,
+            effectiveMainCurrencyCode,
+            effectiveExchangeRates,
           );
         } catch {
           // If resolution fails for one add-on, leave it without resolvedPrices

@@ -954,6 +954,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Log the resolved unit price for debugging price discrepancies.
+    if (process.env.PRICE_DEBUG === '1' || process.env.PRICE_DEBUG === 'true') {
+      console.log('[checkout.priceResolution]', {
+        productId: product._id?.toString(),
+        sizeIndex: activeSizeIndex,
+        currency: currencyUpper,
+        backendUnitPrice: unitPrice,
+        viewerCountryCode: resolvedDetectedCountry,
+        baseCurrency: product.baseCurrency,
+      });
+    }
+
     let totalAmount = unitPrice * quantity + recommendedProductPrice;
 
     // ── Resolve selected add-ons ────────────────────────────────────────
@@ -1482,105 +1494,27 @@ export async function POST(request: NextRequest) {
         easykashAmount = Math.ceil(convertedAmount);
         paymentCurrency = 'EGP';
       } catch (conversionError) {
-        // Fallback 1: try the EGP price from the product's prices[] array
-        let egpUnitPrice: number | null = null;
-        const egpPriceEntry = selectedSize.prices?.find(
-          (p: { currencyCode: string; amount: number }) =>
-            p.currencyCode === 'EGP',
-        );
-
-        if (
-          typeof egpPriceEntry?.amount === 'number' &&
-          egpPriceEntry.amount > 0
-        ) {
-          egpUnitPrice = egpPriceEntry.amount;
-        }
-
-        // Fallback 2: try converting from the base currency to EGP
-        if (egpUnitPrice === null) {
-          const baseCur = (product.baseCurrency || 'SAR').toUpperCase();
-          const basePriceEntry = selectedSize.prices?.find(
-            (p: { currencyCode: string; amount: number }) =>
-              p.currencyCode.toUpperCase() === baseCur,
-          );
-          const basePrice = basePriceEntry?.amount ?? 0;
-          if (basePrice > 0) {
-            try {
-              const converted = await convertCurrency(basePrice, baseCur, 'EGP');
-              if (Number.isFinite(converted) && converted > 0) {
-                egpUnitPrice = converted;
-              }
-            } catch {
-              // base conversion also failed
-            }
-          }
-        }
-
-        // Fallback 3: try ANY price entry and convert to EGP
-        if (egpUnitPrice === null) {
-          for (const entry of selectedSize.prices || []) {
-            if (typeof entry.amount === 'number' && entry.amount > 0) {
-              try {
-                const converted = await convertCurrency(
-                  entry.amount,
-                  entry.currencyCode,
-                  'EGP',
-                );
-                if (Number.isFinite(converted) && converted > 0) {
-                  egpUnitPrice = converted;
-                  break;
-                }
-              } catch {
-                // try next entry
-              }
-            }
-          }
-        }
-
-        if (egpUnitPrice === null || egpUnitPrice <= 0) {
-          await Order.findByIdAndDelete(order._id);
-          const reason =
-            conversionError instanceof Error
-              ? conversionError.message
-              : 'Unknown conversion error';
-
-          captureException(conversionError, {
-            service: 'Checkout',
-            operation: 'egpConversion',
-            severity: 'critical',
-          });
-
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Unable to convert ${currencyUpper} amount to EGP and no EGP product price is configured. (${reason})`,
-            },
-            { status: 500 },
-          );
-        }
-
-        const egpTotal = egpUnitPrice * quantity;
-        const couponRatio = totalAmount > 0 ? couponDiscount / totalAmount : 0;
-        const egpAfterDiscount = egpTotal - egpTotal * couponRatio;
-        const payRatio =
-          amountAfterDiscount > 0 ? payAmount / amountAfterDiscount : 1;
-
-        easykashAmount = Math.ceil(egpAfterDiscount * payRatio);
-        paymentCurrency = 'EGP';
-
+        // Conversion failed — fail the checkout rather than charging
+        // a re-derived amount that the user never agreed to.
+        await Order.findByIdAndDelete(order._id);
         const reason =
           conversionError instanceof Error
             ? conversionError.message
             : 'Unknown conversion error';
-        log('warn', 'checkout.currency_conversion_fallback_to_db_egp', {
-          ip,
-          traceId,
-          orderNumber: order.orderNumber,
-          fromCurrency: currencyUpper,
-          toCurrency: 'EGP',
-          reason,
-          fallbackEgpAmount: easykashAmount,
+
+        captureException(conversionError, {
+          service: 'Checkout',
+          operation: 'egpConversion',
+          severity: 'critical',
         });
+
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Unable to convert ${currencyUpper} amount to EGP. Please try again or select a different currency. (${reason})`,
+          },
+          { status: 500 },
+        );
       }
     }
 

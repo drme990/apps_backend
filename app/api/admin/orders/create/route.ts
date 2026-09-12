@@ -812,46 +812,23 @@ export async function POST(request: NextRequest) {
           if (Number.isFinite(convertedAmount) && convertedAmount > 0) {
             easykashAmount = Math.ceil(convertedAmount);
             paymentCurrency = 'EGP';
-          }
-        } catch {
-          // Fallback: try to find EGP price on the first existing product
-          const firstExistingItem = items.find((it) => it.type === 'existing');
-          if (!firstExistingItem || firstExistingItem.type !== 'existing') {
-            await Order.findByIdAndDelete(order._id);
-            return NextResponse.json(
-              {
-                success: false,
-                error: `Unable to convert ${currencyUpper} amount to EGP for custom items.`,
-              },
-              { status: 500 },
-            );
-          }
-          const firstProduct = await Product.findById(firstExistingItem.productId).lean();
-          const firstSize = firstProduct?.sizes?.[firstExistingItem.sizeIndex ?? 0];
-          const egpPriceEntry = firstSize?.prices?.find(
-            (p: { currencyCode: string; amount: number }) =>
-              p.currencyCode === 'EGP',
-          );
-          if (
-            typeof egpPriceEntry?.amount === 'number' &&
-            egpPriceEntry.amount > 0
-          ) {
-            // For partial: use the EGP price * quantity, then subtract the paid portion proportionally
-            const egpFull = egpPriceEntry.amount * firstExistingItem.quantity;
-            easykashAmount = isPartialEasykash
-              ? Math.ceil(egpFull - (requestedPaid * egpFull / totalAmount))
-              : Math.ceil(egpFull);
-            paymentCurrency = 'EGP';
           } else {
-            await Order.findByIdAndDelete(order._id);
-            return NextResponse.json(
-              {
-                success: false,
-                error: `Unable to convert ${currencyUpper} amount to EGP and no EGP product price is configured.`,
-              },
-              { status: 500 },
-            );
+            throw new Error('Converted amount is invalid');
           }
+        } catch (conversionError) {
+          // Conversion failed — fail rather than charging a re-derived amount.
+          await Order.findByIdAndDelete(order._id);
+          const reason =
+            conversionError instanceof Error
+              ? conversionError.message
+              : 'Unknown conversion error';
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Unable to convert ${currencyUpper} amount to EGP. Please try again or select a different currency. (${reason})`,
+            },
+            { status: 500 },
+          );
         }
       }
 
