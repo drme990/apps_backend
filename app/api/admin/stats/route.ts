@@ -28,15 +28,14 @@ export async function GET() {
     ] = await Promise.all([
       // Match the public /api/products listing exactly: active products that are not deleted.
       Product.countDocuments({ isActive: true, isDeleted: { $ne: true } }),
-      // Exclude sub-orders — they inherit financials from their parent, so
-      // counting them separately would inflate the order total.
-      Order.countDocuments({ isSubOrder: { $ne: true } }),
+      // Sub-orders are independent orders with their own items — count them.
+      Order.countDocuments({}),
       Promise.all([
         customerModelGhadaq.countDocuments(),
         customerModelManasik.countDocuments(),
       ]).then(([ghadaqCount, manasikCount]) => ghadaqCount + manasikCount),
       Order.aggregate([
-        { $match: { status: { $in: ['paid', 'partial-paid'] }, isSubOrder: { $ne: true } } },
+        { $match: { status: { $in: ['paid', 'partial-paid'] } } },
         {
           $addFields: {
             executionDateValue: {

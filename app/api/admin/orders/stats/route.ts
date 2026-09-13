@@ -59,10 +59,7 @@ export async function GET(request: NextRequest) {
       searchParams.get('tzOffsetMinutes'),
     );
 
-    const query: Record<string, unknown> = {
-      // Exclude sub-orders — their items are already counted via the parent.
-      isSubOrder: { $ne: true },
-    };
+    const query: Record<string, unknown> = {};
     const andConditions: Record<string, unknown>[] = [];
 
     if (status && status !== 'all') query.status = status;

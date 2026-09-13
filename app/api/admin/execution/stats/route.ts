@@ -33,11 +33,10 @@ export async function GET(request: NextRequest) {
 
     const isoPattern = /^\d{4}-\d{2}-\d{2}$/;
 
-    // Build base match like the main execution route
-    // Exclude sub-orders — their items are already counted via the parent.
-    const baseMatch: Record<string, unknown> = {
-      isSubOrder: { $ne: true },
-    };
+    // Build base match like the main execution route.
+    // Sub-orders have their own independent items and should be counted
+    // as separate orders in the stats (same as the list view).
+    const baseMatch: Record<string, unknown> = {};
     if (statusParam && statusParam !== 'all') {
       baseMatch.status = statusParam;
     } else {
