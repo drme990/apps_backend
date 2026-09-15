@@ -117,6 +117,12 @@ export interface IOrderItem {
   isAddOn?: boolean;
   /** Index of the parent item in the items array (the main product this add-on belongs to). */
   parentItemIndex?: number;
+  /** True when this item is a share purchase (linked to a ShareCampaign). Backend-only. */
+  isShare?: boolean;
+  /** Ref to the ShareCampaign this share belongs to. */
+  shareCampaignId?: mongoose.Types.ObjectId | string;
+  /** How many shares this order item bought (default 1). */
+  shareQuantity?: number;
 }
 
 export interface IBillingData {
@@ -397,6 +403,12 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
     customSize: { type: String, trim: true },
     isAddOn: { type: Boolean, default: false },
     parentItemIndex: { type: Number, min: 0 },
+    isShare: { type: Boolean, default: false },
+    shareCampaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ShareCampaign',
+    },
+    shareQuantity: { type: Number, min: 1, default: 1 },
   },
   { _id: false },
 );

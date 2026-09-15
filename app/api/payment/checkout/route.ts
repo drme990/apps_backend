@@ -53,6 +53,10 @@ import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadFileToR2, compressImageBuffer } from '@/lib/services/r2';
 import { convertCurrency } from '@/lib/services/currency';
 import {
+  findActiveShareCampaign,
+  getSharesForSize,
+} from '@/lib/services/share-campaign';
+import {
   resolveUnitPriceWithVisibility,
   PAYMENT_GATEWAY_CURRENCIES,
 } from '@/lib/services/price-resolver';
@@ -1405,6 +1409,55 @@ export async function POST(request: NextRequest) {
     };
 
     const order = await createOrderWithRetries();
+
+    // ── Share campaign detection (silent) ──
+    // Check if this product has an active share campaign. If so,
+    // look up the shares-per-purchase for the selected size and mark
+    // the order item as a share purchase. The soldShares increment
+    // happens later in the webhook when payment is confirmed.
+    // The customer never sees this.
+    try {
+      const shareCampaign = await findActiveShareCampaign(product._id);
+
+      if (shareCampaign) {
+        const sharesPerPurchase = getSharesForSize(
+          shareCampaign,
+          activeSizeIndex,
+        );
+
+        if (sharesPerPurchase > 0) {
+          const campaignId = String(shareCampaign._id);
+          const totalShares = sharesPerPurchase * quantity;
+
+          // Mark the main order item as a share purchase (pending
+          // increment — the actual soldShares increment happens in
+          // the webhook when payment is confirmed).
+          await Order.updateOne(
+            {
+              _id: order._id,
+              items: {
+                $elemMatch: {
+                  productId: new mongoose.Types.ObjectId(String(product._id)),
+                  sizeIndex: Number(activeSizeIndex),
+                  isAddOn: { $ne: true },
+                },
+              },
+            },
+            {
+              $set: {
+                'items.$.isShare': true,
+                'items.$.shareCampaignId':
+                  new mongoose.Types.ObjectId(campaignId),
+                'items.$.shareQuantity': totalShares,
+              },
+            },
+          );
+        }
+      }
+    } catch (shareError) {
+      // If share detection fails, the order should still proceed.
+      console.error('[checkout] Share campaign detection failed:', shareError);
+    }
 
     await releasePartialPaymentLock(partialPaymentLock);
     partialPaymentLock = null;

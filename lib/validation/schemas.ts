@@ -879,3 +879,29 @@ export const subOrderCreateSchema = z
       .default([]),
   })
   .strict();
+
+// ── Share Campaign schemas ──
+export const shareCampaignCreateSchema = z
+  .object({
+    productId: z.string().trim().min(1),
+    campaignNumber: z.number().int().min(1),
+    totalShares: z.number().int().min(2),
+    sizes: z
+      .array(
+        z
+          .object({
+            sizeIndex: z.number().int().min(0),
+            sharesPerPurchase: z.number().int().min(1),
+          })
+          .strict(),
+      )
+      .min(1),
+  })
+  .strict();
+
+export const shareCampaignUpdateSchema = z
+  .object({
+    status: z.enum(['active', 'inactive']).optional(),
+    totalShares: z.number().int().min(2).optional(),
+  })
+  .strict();

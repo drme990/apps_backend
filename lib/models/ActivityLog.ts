@@ -31,7 +31,8 @@ export interface IActivityLog {
   | 'account'
   | 'booking'
   | 'category'
-  | 'supplier';
+  | 'supplier'
+  | 'shareCampaign';
   resourceId?: string;
   details: string;
   metadata?: mongoose.Schema.Types.Mixed;
@@ -83,6 +84,7 @@ const ActivityLogSchema = new mongoose.Schema<IActivityLog>(
         'booking',
         'category',
         'supplier',
+        'shareCampaign',
       ],
       index: true,
     },

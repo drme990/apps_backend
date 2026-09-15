@@ -26,6 +26,7 @@ import {
   evaluateAndTriggerAutoDesign,
 } from '@/lib/services/auto-design-generation';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
+import { incrementShareCampaignSold } from '@/lib/services/share-campaign';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -565,6 +566,35 @@ export async function POST(request: NextRequest) {
       order.status === 'paid' &&
       orderStatusBefore !== 'paid' &&
       orderStatusBefore !== 'completed';
+
+    const transitionedToPartialPaid =
+      order.status === 'partial-paid' &&
+      orderStatusBefore !== 'partial-paid' &&
+      orderStatusBefore !== 'paid' &&
+      orderStatusBefore !== 'completed';
+
+    // ── Share campaign increment ──
+    // When an order with share items transitions to paid or
+    // partial-paid, increment the campaign's soldShares. This
+    // happens here (not at checkout) so only confirmed payments
+    // count toward the campaign.
+    if (transitionedToPaid || transitionedToPartialPaid) {
+      for (const item of order.items || []) {
+        if (item.isShare && item.shareCampaignId && item.shareQuantity) {
+          try {
+            await incrementShareCampaignSold(
+              String(item.shareCampaignId),
+              Number(item.shareQuantity),
+            );
+          } catch (err) {
+            console.error(
+              `[webhook] Share campaign increment failed for order ${order.orderNumber}:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+      }
+    }
 
     // ── Auto design generation ──────────────────────────────────────
     // Evaluates whether design generation should be triggered and ALWAYS
