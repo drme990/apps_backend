@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { normalizePhoneDigits } from './capi-utils';
 
 /**
  * TikTok Events API (server-side) helpers.
@@ -25,6 +26,8 @@ const TIKTOK_TRACK_URL = `https://business-api.tiktok.com/open_api/${TIKTOK_API_
 export interface TiktokUserData {
   email?: string;
   phone?: string;
+  /** Billing country (ISO code or name) — used to normalize phone. */
+  country?: string;
   external_id?: string;
   ttclid?: string; // TikTok click ID (from URL/cookie)
   ttp?: string; // TikTok browser ID (from _ttp cookie)
@@ -67,23 +70,9 @@ function sha256(value: string): string {
     .digest('hex');
 }
 
-/** Normalize a phone number to E.164 before hashing. */
-function normalizePhone(phone: string): string | null {
-  if (!phone) return null;
-  const trimmed = phone.trim();
-  if (!trimmed) return null;
-
-  if (trimmed.startsWith('+')) {
-    const digits = '+' + trimmed.slice(1).replace(/[^\d]/g, '');
-    return digits.length > 2 ? digits : null;
-  }
-
-  const digitsOnly = trimmed.replace(/[^\d]/g, '');
-  if (digitsOnly.length >= 11 && digitsOnly.startsWith('00')) {
-    return '+' + digitsOnly.slice(2);
-  }
-
-  return null;
+/** Normalize a phone number to E.164 digits before hashing. */
+function normalizePhone(phone: string, country?: string): string | null {
+  return normalizePhoneDigits(phone, country);
 }
 
 /** Build the `user` block with hashed PII + transport fields as-is. */
@@ -93,9 +82,10 @@ function prepareUserData(raw: TiktokUserData): Record<string, unknown> {
   if (raw.email && raw.email.trim()) {
     out.email = sha256(raw.email);
   }
-  const phone = normalizePhone(raw.phone || '');
+  const phone = normalizePhone(raw.phone || '', raw.country);
   if (phone) {
-    out.phone_number = sha256(phone);
+    // TikTok expects the SHA-256 of the full E.164 string (`+` included)
+    out.phone_number = sha256('+' + phone);
   }
   if (raw.external_id && raw.external_id.trim()) {
     out.external_id = sha256(raw.external_id);
@@ -209,6 +199,8 @@ export interface TiktokPurchaseOpts {
   value: number;
   currency: string;
   numItems: number;
+  /** All order items — aggregated into contents[]. */
+  items?: { productId: string; productName: string; quantity: number; price?: number }[];
   /** Unique order id — used as event_id for Pixel/CAPI deduplication. */
   orderId: string;
   sourceUrl?: string;
@@ -230,6 +222,18 @@ export async function trackTiktokPurchase(
   if (!opts.orderId) return false;
   if (typeof opts.value !== 'number' || opts.value <= 0) return false;
 
+  const items =
+    opts.items && opts.items.length
+      ? opts.items
+      : [
+        {
+          productId: opts.productId,
+          productName: opts.productName,
+          quantity: opts.numItems,
+          price: opts.value,
+        },
+      ];
+
   return sendTiktokEvents([
     {
       event: 'CompletePayment',
@@ -238,15 +242,13 @@ export async function trackTiktokPurchase(
       url: opts.sourceUrl,
       currency: opts.currency,
       value: opts.value,
-      contents: [
-        {
-          content_id: opts.productId,
-          content_type: 'product',
-          content_name: opts.productName,
-          quantity: opts.numItems,
-          price: opts.value,
-        },
-      ],
+      contents: items.map((i) => ({
+        content_id: i.productId,
+        content_type: 'product',
+        content_name: i.productName,
+        quantity: i.quantity,
+        price: i.price ?? opts.value,
+      })),
       user_data: opts.userData,
     },
   ]);

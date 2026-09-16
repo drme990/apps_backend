@@ -184,6 +184,8 @@ export async function POST(request: NextRequest) {
       recommendProductId,
       viewerCountryCode,
       selectedAddOns,
+      attribution,
+      initiateCheckoutEventId,
     } = body;
 
     // Normalize currency to ISO 4217 code (handles localized symbols like "ج.م" → "EGP")
@@ -1377,6 +1379,14 @@ export async function POST(request: NextRequest) {
       deviceFingerprint: partialPaymentIdentity.normalizedFingerprint,
       location: locationCode || undefined,
       locale,
+      attribution: attribution
+        ? {
+          ...attribution,
+          clientIp: ip || undefined,
+          userAgent:
+            request.headers.get('user-agent') || undefined,
+        }
+        : undefined,
       payments: [],
       paymentAttempts: [],
     };
@@ -1484,10 +1494,16 @@ export async function POST(request: NextRequest) {
     trackInitiateCheckout({
       productId: product._id.toString(),
       productName: product.name.en || product.name.ar,
+      // Reuse the browser's event id when provided so Meta dedupes the
+      // pixel + CAPI InitiateCheckout into a single event.
+      eventId: initiateCheckoutEventId || undefined,
       value: payAmount,
       currency: currencyUpper,
       numItems: quantity,
-      sourceUrl: `${process.env.BASE_URL || 'https://www.manasik.net'}/checkout`,
+      sourceUrl: `${orderSource === 'ghadaq'
+        ? process.env.GHADAQ_URL || 'https://www.ghadaqplus.com'
+        : process.env.MANASIK_URL || 'https://www.manasik.net'
+        }/checkout`,
       userData: {
         em: resolvedBillingEmail,
         ph: resolvedBillingPhone,
@@ -1498,6 +1514,8 @@ export async function POST(request: NextRequest) {
         country: resolvedBillingCountry,
         client_ip_address: reqIp,
         client_user_agent: reqUa,
+        fbc: attribution?.fbc,
+        fbp: attribution?.fbp,
         external_id: order._id.toString(),
       },
     }).catch(() => { });

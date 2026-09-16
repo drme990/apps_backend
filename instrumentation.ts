@@ -25,10 +25,14 @@ const REQUIRED_ENV_VARS: string[] = [
   'R2_SECRET_ACCESS_KEY',
   'R2_BUCKET_NAME',
   'R2_PUBLIC_URL',
+  'FB_PIXEL_ID',
+  'API_TOKEN',
   'TIKTOK_PIXEL_ID',
   'TIKTOK_ACCESS_TOKEN',
   'OPENAI_PIXEL_ID',
   'OPENAI_ACCESS_TOKEN',
+  'SNAPCHAT_PIXEL_ID',
+  'SNAPCHAT_ACCESS_TOKEN',
 ];
 
 export async function register(): Promise<void> {

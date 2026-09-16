@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { normalizePhoneDigits, resolveCountryISO } from './capi-utils';
 
 const FB_API_VERSION = 'v21.0';
 
@@ -25,6 +26,7 @@ export interface FBCustomData {
   content_type?: string;
   content_name?: string;
   content_category?: string;
+  contents?: { id: string; quantity: number; item_price?: number }[];
   num_items?: number;
   order_id?: string;
 }
@@ -49,13 +51,17 @@ function sha256(value: string): string {
 function prepareUserData(raw: FBUserData): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (raw.em) out.em = [sha256(raw.em)];
-  if (raw.ph) out.ph = [sha256(raw.ph.replace(/[^0-9]/g, ''))];
+  const phone = normalizePhoneDigits(raw.ph, raw.country);
+  if (phone) out.ph = [sha256(phone)];
   if (raw.fn) out.fn = [sha256(raw.fn)];
   if (raw.ln) out.ln = [sha256(raw.ln)];
   if (raw.ct) out.ct = [sha256(raw.ct)];
   if (raw.st) out.st = [sha256(raw.st)];
   if (raw.zp) out.zp = [sha256(raw.zp)];
-  if (raw.country) out.country = [sha256(raw.country)];
+  // Meta expects the 2-letter ISO code hashed — billingData.country is
+  // a free-form name, so resolve it first.
+  const countryIso = resolveCountryISO(raw.country);
+  if (countryIso) out.country = [sha256(countryIso)];
   if (raw.external_id) out.external_id = [sha256(raw.external_id)];
   if (raw.client_ip_address) out.client_ip_address = raw.client_ip_address;
   if (raw.client_user_agent) out.client_user_agent = raw.client_user_agent;
@@ -65,12 +71,14 @@ function prepareUserData(raw: FBUserData): Record<string, unknown> {
 }
 
 export async function sendFBEvent(event: FBEventPayload): Promise<boolean> {
-  const FB_PIXEL_ID = process.env.FB_PIXEL_ID || '1545349236553470';
+  const FB_PIXEL_ID = process.env.FB_PIXEL_ID;
   const FB_ACCESS_TOKEN = process.env.API_TOKEN;
   const FB_TEST_EVENT_CODE = process.env.FB_TEST_EVENT_CODE;
 
-  if (!FB_ACCESS_TOKEN) {
-    console.warn('[FB CAPI] No access token configured (API_TOKEN)');
+  if (!FB_PIXEL_ID || !FB_ACCESS_TOKEN) {
+    console.warn(
+      '[FB CAPI] Missing FB_PIXEL_ID or API_TOKEN — event not sent',
+    );
     return false;
   }
 
@@ -149,24 +157,42 @@ export async function trackPurchase(opts: {
   value: number;
   currency: string;
   numItems: number;
+  /** All order items — aggregated into content_ids/contents/num_items. */
+  items?: { productId: string; productName: string; quantity: number; price?: number }[];
   orderId?: string;
   sourceUrl?: string;
   userData: FBUserData;
   eventId?: string;
 }) {
+  const items =
+    opts.items && opts.items.length
+      ? opts.items
+      : [
+        {
+          productId: opts.productId,
+          productName: opts.productName,
+          quantity: opts.numItems,
+        },
+      ];
+
   return sendFBEvent({
     event_name: 'Purchase',
-    event_id: opts.eventId,
+    event_id: opts.eventId ?? opts.orderId,
     event_source_url: opts.sourceUrl,
     action_source: 'website',
     user_data: opts.userData,
     custom_data: {
-      content_ids: [opts.productId],
+      content_ids: items.map((i) => i.productId).filter(Boolean),
       content_type: 'product',
-      content_name: opts.productName,
+      content_name: items.map((i) => i.productName).filter(Boolean).join(', '),
+      contents: items.map((i) => ({
+        id: i.productId,
+        quantity: i.quantity,
+        item_price: i.price,
+      })),
       value: opts.value,
       currency: opts.currency,
-      num_items: opts.numItems,
+      num_items: items.reduce((sum, i) => sum + (i.quantity || 1), 0),
       order_id: opts.orderId,
     },
   });

@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  sendOpenAIEvent,
-  type OpenAIDataPayload,
-} from '@/lib/services/openai-capi';
+import { sendSnapEvent } from '@/lib/services/snapchat-capi';
 import { captureException } from '@/lib/services/error-monitor';
 import { parseJsonBody } from '@/lib/validation/http';
-import { openaiEventSchema } from '@/lib/validation/schemas';
+import { snapEventSchema } from '@/lib/validation/schemas';
 
 export async function POST(request: NextRequest) {
   try {
-    const parsed = await parseJsonBody(request, openaiEventSchema);
+    const parsed = await parseJsonBody(request, snapEventSchema);
     if (!parsed.success) return parsed.response;
     const { event_name, event_id, event_source_url, user_data, custom_data } =
       parsed.data;
@@ -20,11 +17,11 @@ export async function POST(request: NextRequest) {
       '';
     const userAgent = request.headers.get('user-agent') || '';
 
-    sendOpenAIEvent({
+    sendSnapEvent({
       event_name,
       event_id,
-      source_url: event_source_url,
-      action_source: 'web',
+      event_source_url,
+      action_source: 'website',
       user_data: {
         ...(user_data || {}),
         // Prefer values forwarded in the body — the bridge request's
@@ -33,14 +30,20 @@ export async function POST(request: NextRequest) {
         client_ip_address: user_data?.client_ip_address || ip,
         client_user_agent: user_data?.client_user_agent || userAgent,
       },
-      data: {
-        type: 'contents',
-        ...(custom_data || {}),
-      } as OpenAIDataPayload,
-    }).catch((oaiError) => {
-      captureException(oaiError, {
-        service: 'OpenAICAPI',
-        operation: 'sendOpenAIEvent',
+      custom_data:
+        custom_data || event_id
+          ? {
+            ...(custom_data || {}),
+            // Snap's template keeps event_id inside custom_data too —
+            // ensure it's present even when the client only sent the
+            // top-level field.
+            ...(event_id ? { event_id } : {}),
+          }
+          : undefined,
+    }).catch((snapError) => {
+      captureException(snapError, {
+        service: 'SnapchatCAPI',
+        operation: 'sendSnapEvent',
         severity: 'low',
         metadata: { event_name, event_id },
       });
@@ -49,7 +52,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     captureException(error, {
-      service: 'OpenAICAPI_Route',
+      service: 'SnapchatCAPI_Route',
       operation: 'POST',
       severity: 'medium',
     });

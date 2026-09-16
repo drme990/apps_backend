@@ -141,6 +141,24 @@ export const checkoutSchema = z
         }),
       )
       .optional(),
+    // Event id the browser used for its InitiateCheckout — the server
+    // reuses it for the CAPI InitiateCheckout so Meta dedupes the two.
+    initiateCheckoutEventId: z.string().trim().max(128).optional(),
+    // Ad-platform click/cookie identifiers captured client-side so the
+    // server-side CAPI Purchase can send them for attribution matching.
+    attribution: z
+      .object({
+        fbc: z.string().trim().optional(),
+        fbp: z.string().trim().optional(),
+        ttclid: z.string().trim().optional(),
+        ttp: z.string().trim().optional(),
+        scClickId: z.string().trim().optional(),
+        scCookie1: z.string().trim().optional(),
+        oppref: z.string().trim().optional(),
+        obref: z.string().trim().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -191,6 +209,16 @@ export const fbEventSchema = z
   .strict();
 
 export const openaiEventSchema = z
+  .object({
+    event_name: z.string().trim().min(1),
+    event_id: z.string().trim().optional(),
+    event_source_url: z.string().trim().optional(),
+    user_data: z.record(z.string(), z.any()).optional(),
+    custom_data: z.record(z.string(), z.any()).optional(),
+  })
+  .strict();
+
+export const snapEventSchema = z
   .object({
     event_name: z.string().trim().min(1),
     event_id: z.string().trim().optional(),

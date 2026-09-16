@@ -99,6 +99,29 @@ export type PaymentMethod =
 
 export type PaymentType = 'full' | 'half' | 'partial';
 
+export interface IOrderAttribution {
+  /** Meta `_fbc` click id (fbclid cookie). */
+  fbc?: string;
+  /** Meta `_fbp` browser id cookie. */
+  fbp?: string;
+  /** TikTok `ttclid` click id (URL param). */
+  ttclid?: string;
+  /** TikTok `_ttp` cookie. */
+  ttp?: string;
+  /** Snapchat `ScClickID` URL param. */
+  scClickId?: string;
+  /** Snapchat `sc_cookie1`. */
+  scCookie1?: string;
+  /** OpenAI `oppref` click attribution id. */
+  oppref?: string;
+  /** OpenAI `__obref` first-party cookie. */
+  obref?: string;
+  /** Client IP captured at checkout. */
+  clientIp?: string;
+  /** Client user-agent captured at checkout. */
+  userAgent?: string;
+}
+
 export interface IOrderItem {
   productId?: mongoose.Types.ObjectId | string;
   productSlug?: string;
@@ -349,6 +372,13 @@ export interface IOrder {
   fbPurchaseServerSentAt?: Date;
   tiktokPurchaseServerSentAt?: Date;
   openaiPurchaseServerSentAt?: Date;
+  snapPurchaseServerSentAt?: Date;
+  /**
+   * Ad-platform click/cookie identifiers captured at checkout and
+   * forwarded to the server-side CAPI Purchase calls so the platforms
+   * can match the conversion back to the ad click.
+   */
+  attribution?: IOrderAttribution;
   /** Internal notes appended by the system or admins */
   internalNotes?: IInternalNote[];
   // Free order tracking
@@ -777,6 +807,24 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     fbPurchaseServerSentAt: { type: Date },
     tiktokPurchaseServerSentAt: { type: Date },
     openaiPurchaseServerSentAt: { type: Date },
+    snapPurchaseServerSentAt: { type: Date },
+    attribution: {
+      type: new mongoose.Schema(
+        {
+          fbc: { type: String },
+          fbp: { type: String },
+          ttclid: { type: String },
+          ttp: { type: String },
+          scClickId: { type: String },
+          scCookie1: { type: String },
+          oppref: { type: String },
+          obref: { type: String },
+          clientIp: { type: String },
+          userAgent: { type: String },
+        },
+        { _id: false },
+      ),
+    },
     reservationData: { type: [ReservationAnswerSchema], default: [] },
     payments: { type: [PaymentSchema], default: [] },
     paymentAttempts: { type: [PaymentAttemptSchema], default: [] },

@@ -24,8 +24,12 @@ export async function POST(request: NextRequest) {
       action_source: 'website',
       user_data: {
         ...(user_data || {}),
-        client_ip_address: ip,
-        client_user_agent: userAgent,
+        // Prefer values forwarded in the body — server-side callers
+        // (product page's trackViewContent) extract the real visitor
+        // ip/ua from the original request; this bridge request only
+        // carries the storefront server's own headers.
+        client_ip_address: user_data?.client_ip_address || ip,
+        client_user_agent: user_data?.client_user_agent || userAgent,
       },
       custom_data,
     }).catch((fbError) => {

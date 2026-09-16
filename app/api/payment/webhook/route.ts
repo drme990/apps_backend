@@ -17,6 +17,7 @@ import { resolveWhatsappButtonState } from '@/lib/services/whatsapp-button-state
 import { trackPurchase } from '@/lib/services/fb-capi';
 import { trackTiktokPurchase } from '@/lib/services/tiktok-capi';
 import { trackOpenAIPurchase } from '@/lib/services/openai-capi';
+import { trackSnapPurchase } from '@/lib/services/snapchat-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import WebhookEvent from '@/lib/models/WebhookEvent';
 import TerminalLog from '@/lib/models/TerminalLog';
@@ -657,109 +658,156 @@ export async function POST(request: NextRequest) {
         const baseUrl =
           sourceBaseUrls[order.source || 'manasik'] || sourceBaseUrls.manasik;
 
-        // ── Facebook Conversions API (idempotent) ────────────────────────────
-        // The order number is used as the event_id on both browser and
-        // server, so Meta would dedupe a repeat send anyway — but we
-        // also gate the call on `fbPurchaseServerSentAt` to avoid the
-        // extra API request when the webhook retries.
-        if (!order.fbPurchaseServerSentAt) {
-          trackPurchase({
-            productId: item.productId?.toString() || '',
-            productName: item.productName?.en || item.productName?.ar || '',
-            value: order.totalAmount ?? 0,
-            currency: order.currency || 'SAR',
-            numItems: item.quantity || 1,
-            orderId: order.orderNumber,
-            sourceUrl: `${baseUrl}/payment/status`,
-            userData: {
-              em: order.billingData?.email,
-              ph: order.billingData?.phone,
-              fn: order.billingData?.fullName?.split(' ')[0],
-              ln:
-                order.billingData?.fullName?.split(' ').slice(1).join(' ') ||
-                order.billingData?.fullName?.split(' ')[0],
-              country: order.billingData?.country || order.location,
-              external_id: order._id.toString(),
-            },
-          })
-            .then(async (ok) => {
-              if (ok) {
-                try {
-                  order.fbPurchaseServerSentAt = new Date();
-                  await order.save();
-                } catch {
-                  // best-effort — dedup still works via event_id
-                }
-              }
-            })
-            .catch(() => { });
-        }
+        // All order items for the platform contents arrays.
+        const orderItems = (order.items || []).map((i) => ({
+          productId: i.productId?.toString() || '',
+          productName: i.productName?.en || i.productName?.ar || '',
+          quantity: i.quantity || 1,
+          price: i.price,
+        }));
 
-        // ── TikTok Events API (idempotent) ───────────────────────────────────
-        // Same orderId as event_id so TikTok deduplicates against the
-        // browser Pixel Purchase event. Gated on
-        // `tiktokPurchaseServerSentAt` so webhook retries don't fire a
-        // second API call.
-        if (!order.tiktokPurchaseServerSentAt) {
-          trackTiktokPurchase({
-            productId: item.productId?.toString() || '',
-            productName: item.productName?.en || item.productName?.ar || '',
-            value: order.totalAmount ?? 0,
-            currency: order.currency || 'SAR',
-            numItems: item.quantity || 1,
-            orderId: order.orderNumber,
-            sourceUrl: `${baseUrl}/payment/status`,
-            userData: {
-              email: order.billingData?.email,
-              phone: order.billingData?.phone,
-              external_id: order._id.toString(),
-            },
-          })
-            .then(async (ok) => {
-              if (ok) {
-                try {
-                  order.tiktokPurchaseServerSentAt = new Date();
-                  await order.save();
-                } catch {
-                  // best-effort — dedup still works via event_id
-                }
-              }
-            })
-            .catch(() => { });
-        }
+        const attr = order.attribution;
+        const billingCountry =
+          order.billingData?.country || order.location || undefined;
 
-        // ── OpenAI Events API (idempotent) ───────────────────────────────────
-        // Same orderId as event_id so OpenAI deduplicates against the
-        // browser Pixel order_created event. Gated on
-        // `openaiPurchaseServerSentAt` so webhook retries don't fire a
-        // second API call.
-        if (!order.openaiPurchaseServerSentAt) {
-          trackOpenAIPurchase({
-            productId: item.productId?.toString() || '',
-            productName: item.productName?.en || item.productName?.ar || '',
-            value: order.totalAmount ?? 0,
-            currency: order.currency || 'SAR',
-            numItems: item.quantity || 1,
-            orderId: order.orderNumber,
-            sourceUrl: `${baseUrl}/payment/status`,
-            userData: {
-              email: order.billingData?.email,
-              phone: order.billingData?.phone,
-              external_id: order._id.toString(),
-            },
-          })
-            .then(async (ok) => {
-              if (ok) {
-                try {
-                  order.openaiPurchaseServerSentAt = new Date();
-                  await order.save();
-                } catch {
-                  // best-effort — dedup still works via event_id
-                }
-              }
-            })
-            .catch(() => { });
-        }
+        /**
+         * Atomically claim the send so concurrent webhook retries can't
+         * both pass the check, then await the send. If the send fails,
+         * clear the flag so the next retry can try again. The order
+         * number is still the event_id on both sides, so the ad platform
+         * deduplicates even if a duplicate slipped through.
+         */
+        const claimAndSend = async (
+          field:
+            | 'fbPurchaseServerSentAt'
+            | 'tiktokPurchaseServerSentAt'
+            | 'openaiPurchaseServerSentAt'
+            | 'snapPurchaseServerSentAt',
+          send: () => Promise<boolean>,
+        ) => {
+          try {
+            const claimed = await Order.findOneAndUpdate(
+              { _id: order._id, [field]: { $exists: false } },
+              { $set: { [field]: new Date() } },
+            );
+            if (!claimed) return;
+
+            const ok = await send();
+            if (!ok) {
+              await Order.updateOne(
+                { _id: order._id },
+                { $unset: { [field]: 1 } },
+              );
+            }
+          } catch {
+            // best-effort — dedup still works via event_id
+          }
+        };
+
+        await Promise.allSettled([
+          // ── Facebook Conversions API ─────────────────────────────────────
+          claimAndSend('fbPurchaseServerSentAt', () =>
+            trackPurchase({
+              productId: item.productId?.toString() || '',
+              productName: item.productName?.en || item.productName?.ar || '',
+              value: order.totalAmount ?? 0,
+              currency: order.currency || 'SAR',
+              numItems: item.quantity || 1,
+              items: orderItems,
+              orderId: order.orderNumber,
+              sourceUrl: `${baseUrl}/payment/status`,
+              userData: {
+                em: order.billingData?.email,
+                ph: order.billingData?.phone,
+                fn: order.billingData?.fullName?.split(' ')[0],
+                ln:
+                  order.billingData?.fullName?.split(' ').slice(1).join(' ') ||
+                  order.billingData?.fullName?.split(' ')[0],
+                country: billingCountry,
+                external_id: order._id.toString(),
+                client_ip_address: attr?.clientIp,
+                client_user_agent: attr?.userAgent,
+                fbc: attr?.fbc,
+                fbp: attr?.fbp,
+              },
+            }),
+          ),
+
+          // ── TikTok Events API ────────────────────────────────────────────
+          claimAndSend('tiktokPurchaseServerSentAt', () =>
+            trackTiktokPurchase({
+              productId: item.productId?.toString() || '',
+              productName: item.productName?.en || item.productName?.ar || '',
+              value: order.totalAmount ?? 0,
+              currency: order.currency || 'SAR',
+              numItems: item.quantity || 1,
+              items: orderItems,
+              orderId: order.orderNumber,
+              sourceUrl: `${baseUrl}/payment/status`,
+              userData: {
+                email: order.billingData?.email,
+                phone: order.billingData?.phone,
+                country: billingCountry,
+                external_id: order._id.toString(),
+                ttclid: attr?.ttclid,
+                ttp: attr?.ttp,
+                ip: attr?.clientIp,
+                user_agent: attr?.userAgent,
+              },
+            }),
+          ),
+
+          // ── OpenAI Events API ────────────────────────────────────────────
+          claimAndSend('openaiPurchaseServerSentAt', () =>
+            trackOpenAIPurchase({
+              productId: item.productId?.toString() || '',
+              productName: item.productName?.en || item.productName?.ar || '',
+              value: order.totalAmount ?? 0,
+              currency: order.currency || 'SAR',
+              numItems: item.quantity || 1,
+              items: orderItems,
+              orderId: order.orderNumber,
+              sourceUrl: `${baseUrl}/payment/status`,
+              oppref: attr?.oppref,
+              userData: {
+                email: order.billingData?.email,
+                phone: order.billingData?.phone,
+                country: billingCountry,
+                first_name: order.billingData?.fullName?.split(' ')[0],
+                last_name:
+                  order.billingData?.fullName?.split(' ').slice(1).join(' ') ||
+                  order.billingData?.fullName?.split(' ')[0],
+                external_id: order._id.toString(),
+                obref: attr?.obref,
+                client_ip_address: attr?.clientIp,
+                client_user_agent: attr?.userAgent,
+              },
+            }),
+          ),
+
+          // ── Snapchat Conversions API ─────────────────────────────────────
+          claimAndSend('snapPurchaseServerSentAt', () =>
+            trackSnapPurchase({
+              productId: item.productId?.toString() || '',
+              productName: item.productName?.en || item.productName?.ar || '',
+              value: order.totalAmount ?? 0,
+              currency: order.currency || 'SAR',
+              numItems: item.quantity || 1,
+              items: orderItems,
+              orderId: order.orderNumber,
+              sourceUrl: `${baseUrl}/payment/status`,
+              userData: {
+                em: order.billingData?.email,
+                ph: order.billingData?.phone,
+                country: billingCountry,
+                client_ip_address: attr?.clientIp,
+                client_user_agent: attr?.userAgent,
+                sc_click_id: attr?.scClickId,
+                sc_cookie1: attr?.scCookie1,
+              },
+            }),
+          ),
+        ]);
       }
 
       sendOrderConfirmationEmail(order.toObject() as IOrder).catch(() => { });
