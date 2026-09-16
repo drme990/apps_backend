@@ -123,6 +123,7 @@ export async function GET(
             campaignNumber: number;
             progressPercent: number;
             minDisplayPercent: number;
+            fillsCampaign: boolean;
           }
         > = {};
 
@@ -132,13 +133,18 @@ export async function GET(
               ?.sharesPerPurchase ?? 0;
           if (shares <= 0) continue;
 
+          // A purchase of this size completes a whole campaign on its
+          // own (e.g. 10/10) — a new campaign is always created.
+          const fillsCampaign =
+            shares >= flaggedCampaigns[0].totalShares;
+
           // Campaign that can fit this size's shares — closest to
           // completion first (same as findActiveShareCampaign).
           const fit = flaggedCampaigns
             .filter((c) => c.soldShares + shares <= c.totalShares)
             .sort((a, b) => b.soldShares - a.soldShares)[0];
 
-          if (fit) {
+          if (fit && !fillsCampaign) {
             bySize[sizeIndex] = {
               campaignNumber: fit.campaignNumber,
               progressPercent:
@@ -149,6 +155,7 @@ export async function GET(
                   )
                   : 0,
               minDisplayPercent: fit.minDisplayPercent ?? 0,
+              fillsCampaign: false,
             };
           } else {
             // Full order or overflow — a new campaign is always
@@ -157,6 +164,7 @@ export async function GET(
               campaignNumber: nextCampaignNumber,
               progressPercent: 0,
               minDisplayPercent: flaggedCampaigns[0].minDisplayPercent ?? 0,
+              fillsCampaign,
             };
           }
         }

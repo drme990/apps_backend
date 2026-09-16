@@ -938,5 +938,6 @@ export const shareCampaignUpdateSchema = z
     campaignNumber: z.number().int().min(1).optional(),
     displayOnProductPage: z.boolean().optional(),
     minDisplayPercent: z.number().int().min(0).max(100).optional(),
+    addSoldShares: z.number().int().min(1).optional(),
   })
   .strict();

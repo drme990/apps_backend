@@ -6,6 +6,7 @@ import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { shareCampaignUpdateSchema } from '@/lib/validation/schemas';
+import { incrementShareCampaignSold } from '@/lib/services/share-campaign';
 
 export async function GET(
   request: NextRequest,
@@ -75,6 +76,7 @@ export async function PATCH(
       campaignNumber,
       displayOnProductPage,
       minDisplayPercent,
+      addSoldShares,
     } = parsed.data;
 
     const campaign = await ShareCampaign.findById(id);
@@ -140,6 +142,14 @@ export async function PATCH(
 
     await campaign.save();
 
+    // Manually reserved shares go through the same increment logic as
+    // orders — so overflow creates a new campaign and a full count
+    // completes this one. Runs after save() so the stale in-memory
+    // soldShares can't clobber the increment.
+    if (addSoldShares !== undefined && addSoldShares > 0) {
+      await incrementShareCampaignSold(campaign._id, addSoldShares);
+    }
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
@@ -150,7 +160,10 @@ export async function PATCH(
       details: `Updated share campaign #${campaign.campaignNumber}`,
     });
 
-    return NextResponse.json({ success: true, data: campaign });
+    // Re-fetch so the response reflects the increment (status may have
+    // changed to 'completed', or soldShares may live on a new campaign).
+    const updated = await ShareCampaign.findById(campaign._id).lean();
+    return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error('Error updating share campaign:', error);
     return NextResponse.json(
