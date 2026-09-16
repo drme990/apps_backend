@@ -85,7 +85,14 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJsonBody(request, shareCampaignCreateSchema);
     if (!parsed.success) return parsed.response;
-    const { productId, campaignNumber, totalShares, sizes } = parsed.data;
+    const {
+      productId,
+      campaignNumber,
+      totalShares,
+      sizes,
+      displayOnProductPage,
+      minDisplayPercent,
+    } = parsed.data;
 
     // Validate product exists
     const product = await Product.findById(productId).lean();
@@ -125,12 +132,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Reject a campaign code that already exists on this product
+    const codeTaken = await ShareCampaign.findOne({
+      productId,
+      campaignNumber,
+    }).lean();
+    if (codeTaken) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'A campaign with this code already exists for this product',
+        },
+        { status: 400 },
+      );
+    }
+
     const campaign = await ShareCampaign.create({
       productId,
       totalShares,
       soldShares: 0,
       status: 'active',
       campaignNumber,
+      displayOnProductPage: displayOnProductPage ?? false,
+      minDisplayPercent: minDisplayPercent ?? 0,
       sizes,
       completedAt: null,
     });

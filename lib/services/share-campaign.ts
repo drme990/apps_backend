@@ -169,6 +169,8 @@ async function createCompletedCampaignForFullOrder(
       soldShares: templateCampaign.totalShares,
       status: 'completed',
       campaignNumber: nextNumber,
+      displayOnProductPage: templateCampaign.displayOnProductPage ?? false,
+      minDisplayPercent: templateCampaign.minDisplayPercent ?? 0,
       sizes: templateCampaign.sizes,
       completedAt: new Date(),
     });
@@ -204,6 +206,8 @@ async function createActiveCampaignForOverflow(
       soldShares: sharesToAdd,
       status: 'active',
       campaignNumber: nextNumber,
+      displayOnProductPage: templateCampaign.displayOnProductPage ?? false,
+      minDisplayPercent: templateCampaign.minDisplayPercent ?? 0,
       sizes: templateCampaign.sizes,
       completedAt: null,
     });
@@ -266,6 +270,8 @@ async function createNextCampaign(
       soldShares: 0,
       status: 'active',
       campaignNumber: nextNumber,
+      displayOnProductPage: completedCampaign.displayOnProductPage ?? false,
+      minDisplayPercent: completedCampaign.minDisplayPercent ?? 0,
       sizes: completedCampaign.sizes,
       completedAt: null,
     });

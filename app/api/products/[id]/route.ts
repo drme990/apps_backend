@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
 import Country from '@/lib/models/Country';
+import ShareCampaign from '@/lib/models/ShareCampaign';
 import {
   filterProductMediaForPlatform,
   normalizeProductMedia,
@@ -82,6 +83,88 @@ export async function GET(
       );
       // Strip admin-only fields not needed by the frontend
       stripProductForPublic(productData);
+
+      // Attach share-campaign progress when campaigns are flagged for
+      // display on the product page. The shown campaign is per size —
+      // it mirrors incrementShareCampaignSold so the displayed campaign
+      // is the one a purchase of that size would actually join:
+      //   - shares fit an active campaign → that campaign's progress
+      //   - shares overflow it (or the size completes a whole campaign
+      //     on its own, e.g. 10/10) → a new campaign is always created,
+      //     so show the next campaign number.
+      const flaggedCampaigns = await ShareCampaign.find({
+        productId: product._id,
+        status: 'active',
+        displayOnProductPage: true,
+      })
+        .sort({ campaignNumber: 1 })
+        .lean();
+
+      if (flaggedCampaigns.length > 0) {
+        const highest = await ShareCampaign.findOne(
+          { productId: product._id },
+          { campaignNumber: 1 },
+        )
+          .sort({ campaignNumber: -1 })
+          .lean();
+        const nextCampaignNumber = (highest?.campaignNumber ?? 0) + 1;
+
+        const sizeIndexes = [
+          ...new Set(
+            flaggedCampaigns.flatMap((c) =>
+              c.sizes.map((s) => s.sizeIndex),
+            ),
+          ),
+        ];
+
+        const bySize: Record<
+          number,
+          {
+            campaignNumber: number;
+            progressPercent: number;
+            minDisplayPercent: number;
+          }
+        > = {};
+
+        for (const sizeIndex of sizeIndexes) {
+          const shares =
+            flaggedCampaigns[0].sizes.find((s) => s.sizeIndex === sizeIndex)
+              ?.sharesPerPurchase ?? 0;
+          if (shares <= 0) continue;
+
+          // Campaign that can fit this size's shares — closest to
+          // completion first (same as findActiveShareCampaign).
+          const fit = flaggedCampaigns
+            .filter((c) => c.soldShares + shares <= c.totalShares)
+            .sort((a, b) => b.soldShares - a.soldShares)[0];
+
+          if (fit) {
+            bySize[sizeIndex] = {
+              campaignNumber: fit.campaignNumber,
+              progressPercent:
+                fit.totalShares > 0
+                  ? Math.min(
+                    100,
+                    Math.round((fit.soldShares / fit.totalShares) * 100),
+                  )
+                  : 0,
+              minDisplayPercent: fit.minDisplayPercent ?? 0,
+            };
+          } else {
+            // Full order or overflow — a new campaign is always
+            // created, so show the next campaign code at 0%.
+            bySize[sizeIndex] = {
+              campaignNumber: nextCampaignNumber,
+              progressPercent: 0,
+              minDisplayPercent: flaggedCampaigns[0].minDisplayPercent ?? 0,
+            };
+          }
+        }
+
+        if (Object.keys(bySize).length > 0) {
+          productData.shareCampaign = { sizes: bySize };
+        }
+      }
     }
 
     return NextResponse.json({

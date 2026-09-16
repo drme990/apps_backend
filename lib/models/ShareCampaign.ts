@@ -14,6 +14,10 @@ export interface IShareCampaign {
   soldShares: number;
   status: ShareCampaignStatus;
   campaignNumber: number;
+  /** Show this campaign's progress on the public product page. */
+  displayOnProductPage?: boolean;
+  /** Minimum percent shown on the product page (floor, e.g. never show 0%). */
+  minDisplayPercent?: number;
   sizes: IShareCampaignSize[];
   createdAt?: Date;
   updatedAt?: Date;
@@ -45,6 +49,8 @@ const ShareCampaignSchema = new mongoose.Schema<IShareCampaign>(
       default: 'active',
     },
     campaignNumber: { type: Number, required: true, min: 1, default: 1 },
+    displayOnProductPage: { type: Boolean, default: false },
+    minDisplayPercent: { type: Number, min: 0, max: 100, default: 0 },
     sizes: {
       type: [ShareCampaignSizeSchema],
       required: true,

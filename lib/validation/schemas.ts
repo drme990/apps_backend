@@ -926,6 +926,8 @@ export const shareCampaignCreateSchema = z
           .strict(),
       )
       .min(1),
+    displayOnProductPage: z.boolean().optional(),
+    minDisplayPercent: z.number().int().min(0).max(100).optional(),
   })
   .strict();
 
@@ -933,5 +935,8 @@ export const shareCampaignUpdateSchema = z
   .object({
     status: z.enum(['active', 'inactive']).optional(),
     totalShares: z.number().int().min(2).optional(),
+    campaignNumber: z.number().int().min(1).optional(),
+    displayOnProductPage: z.boolean().optional(),
+    minDisplayPercent: z.number().int().min(0).max(100).optional(),
   })
   .strict();

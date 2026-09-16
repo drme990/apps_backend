@@ -69,7 +69,13 @@ export async function PATCH(
     const { id } = await params;
     const parsed = await parseJsonBody(request, shareCampaignUpdateSchema);
     if (!parsed.success) return parsed.response;
-    const { status, totalShares } = parsed.data;
+    const {
+      status,
+      totalShares,
+      campaignNumber,
+      displayOnProductPage,
+      minDisplayPercent,
+    } = parsed.data;
 
     const campaign = await ShareCampaign.findById(id);
     if (!campaign) {
@@ -101,8 +107,36 @@ export async function PATCH(
       );
     }
 
+    // Reject a campaign code that already exists on this product
+    if (
+      campaignNumber !== undefined &&
+      campaignNumber !== campaign.campaignNumber
+    ) {
+      const conflict = await ShareCampaign.findOne({
+        productId: campaign.productId,
+        campaignNumber,
+        _id: { $ne: campaign._id },
+      }).lean();
+      if (conflict) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'A campaign with this code already exists for this product',
+          },
+          { status: 400 },
+        );
+      }
+      campaign.campaignNumber = campaignNumber;
+    }
+
     if (status !== undefined) campaign.status = status;
     if (totalShares !== undefined) campaign.totalShares = totalShares;
+    if (displayOnProductPage !== undefined) {
+      campaign.displayOnProductPage = displayOnProductPage;
+    }
+    if (minDisplayPercent !== undefined) {
+      campaign.minDisplayPercent = minDisplayPercent;
+    }
 
     await campaign.save();
 
