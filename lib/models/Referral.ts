@@ -8,6 +8,7 @@ export interface IReferral {
   referralId: string;
   phone: string;
   appId: ReferralAppId;
+  filterOrder?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -29,6 +30,7 @@ const ReferralSchema = new mongoose.Schema<IReferral>(
       enum: ['manasik', 'ghadaq'],
       index: true,
     },
+    filterOrder: { type: Number, default: 0, index: true },
   },
   { timestamps: true },
 );

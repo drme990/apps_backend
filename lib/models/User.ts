@@ -79,7 +79,8 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'orderDesigns',
         'orderStatsComponent',
         'export',
-        'freeOrders'
+        'freeOrders',
+        'shares'
       ],
       default: [],
     },

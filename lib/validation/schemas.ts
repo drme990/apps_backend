@@ -496,6 +496,7 @@ export const referralCreateSchema = z
         },
       ),
     appId: z.enum(['manasik', 'ghadaq']),
+    filterOrder: z.number().int().default(0),
   })
   .strict();
 
@@ -520,6 +521,7 @@ export const referralUpdateSchema = z
       ),
     appId: z.enum(['manasik', 'ghadaq']).optional(),
     isActive: z.boolean().optional(),
+    filterOrder: z.number().int().optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

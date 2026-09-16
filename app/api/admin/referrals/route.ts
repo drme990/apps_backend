@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [referrals, total] = await Promise.all([
-      Referral.find(filter).sort({ createdAt: -1 }).skip(skip).limit(maxLimit).lean(),
+      Referral.find(filter).sort({ filterOrder: 1, createdAt: -1 }).skip(skip).limit(maxLimit).lean(),
       Referral.countDocuments(filter),
     ]);
 
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJsonBody(request, referralCreateSchema);
     if (!parsed.success) return parsed.response;
-    const { name, referralId, phone, appId } = parsed.data;
+    const { name, referralId, phone, appId, filterOrder } = parsed.data;
 
     const existing = await Referral.findOne({ referralId });
     if (existing) {
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const referral = await Referral.create({ name, referralId, phone, appId });
+    const referral = await Referral.create({ name, referralId, phone, appId, filterOrder });
 
     await logActivity({
       userId: auth.user.userId,
