@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import mongoose from 'mongoose';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
@@ -578,14 +579,47 @@ export async function POST(request: NextRequest) {
     // partial-paid, increment the campaign's soldShares. This
     // happens here (not at checkout) so only confirmed payments
     // count toward the campaign.
+    //
+    // If a single order's shares >= totalShares (full-order case),
+    // a NEW completed campaign is created and the order item is
+    // re-linked to it. The current active campaign is left unchanged.
     if (transitionedToPaid || transitionedToPartialPaid) {
       for (const item of order.items || []) {
         if (item.isShare && item.shareCampaignId && item.shareQuantity) {
           try {
-            await incrementShareCampaignSold(
+            const result = await incrementShareCampaignSold(
               String(item.shareCampaignId),
               Number(item.shareQuantity),
             );
+
+            // If a new campaign was created (full-order case),
+            // re-link the order item to the new completed campaign.
+            if (
+              result &&
+              String(result._id) !== String(item.shareCampaignId)
+            ) {
+              await Order.updateOne(
+                {
+                  _id: order._id,
+                  items: {
+                    $elemMatch: {
+                      productId: new mongoose.Types.ObjectId(
+                        String(item.productId),
+                      ),
+                      sizeIndex: Number(item.sizeIndex),
+                      shareCampaignId: new mongoose.Types.ObjectId(
+                        String(item.shareCampaignId),
+                      ),
+                    },
+                  },
+                },
+                {
+                  $set: {
+                    'items.$.shareCampaignId': result._id,
+                  },
+                },
+              );
+            }
           } catch (err) {
             console.error(
               `[webhook] Share campaign increment failed for order ${order.orderNumber}:`,

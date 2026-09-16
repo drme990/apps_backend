@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     const productIds = [...new Set(campaigns.map((c) => String(c.productId)))];
     const products = await Product.find(
       { _id: { $in: productIds } },
-      { name: 1, slug: 1, sizes: 1, baseCurrency: 1 },
+      { name: 1, slug: 1, sizes: 1, baseCurrency: 1, media: 1 },
     ).lean();
     const productMap = new Map(products.map((p) => [String(p._id), p]));
 
@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
         productId: String(c.productId),
         productName: product?.name || null,
         productSlug: product?.slug || null,
+        productMedia: product?.media || [],
         productSizes: product?.sizes?.map((s, i) => ({
           sizeIndex: i,
           name: s.name,

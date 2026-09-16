@@ -39,12 +39,19 @@ export function getSharesForSize(
  * would exceed totalShares, the update matches 0 documents and
  * returns null.
  *
+ * **Full-order shortcut:** If a single order's sharesToAdd is >=
+ * totalShares (one order can complete a full campaign on its own),
+ * a NEW campaign is created as completed (soldShares = totalShares)
+ * and the current active campaign is left unchanged. The returned
+ * campaign will have a different _id than the one passed in, so the
+ * caller (webhook) can update the order item's shareCampaignId.
+ *
  * If the increment causes soldShares to reach totalShares, the
  * campaign is marked as completed and a new campaign is always
  * auto-created.
  *
- * @returns The updated campaign, or null if the shares were already
- *          sold out.
+ * @returns The updated (or newly created) campaign, or null if the
+ *          shares were already sold out.
  */
 export async function incrementShareCampaignSold(
   campaignId: string | mongoose.Types.ObjectId,
@@ -52,6 +59,21 @@ export async function incrementShareCampaignSold(
 ): Promise<IShareCampaign | null> {
   const campaign = await ShareCampaign.findById(campaignId).lean();
   if (!campaign) return null;
+
+  // ── Full-order shortcut ──
+  // If this single order can complete a full campaign on its own,
+  // create a new completed campaign instead of adding to the current
+  // one. This keeps the current active campaign running.
+  //
+  // Example:
+  //   Campaign #5: 2/10 (active)
+  //   Order: 10 shares (= totalShares)
+  //   → Create Campaign #6: 10/10 (completed)
+  //   → Keep Campaign #5: 2/10 (active)
+  //   → When #5 completes, next is #7 (not #6, which is already done)
+  if (sharesToAdd >= campaign.totalShares) {
+    return await createCompletedCampaignForFullOrder(campaign);
+  }
 
   if (campaign.soldShares + sharesToAdd > campaign.totalShares) {
     return null;
@@ -86,21 +108,83 @@ export async function incrementShareCampaignSold(
 }
 
 /**
+ * Create a new completed campaign for a single order that can
+ * complete a full campaign on its own.
+ *
+ * The new campaign is marked as completed immediately with
+ * soldShares = totalShares. The current active campaign is
+ * left unchanged.
+ *
+ * The campaign number is the highest existing number + 1 for this
+ * product, so it never conflicts with already-completed campaigns
+ * created by previous full orders.
+ */
+async function createCompletedCampaignForFullOrder(
+  templateCampaign: IShareCampaign,
+): Promise<IShareCampaign | null> {
+  try {
+    const nextNumber = await getNextCampaignNumber(templateCampaign.productId);
+
+    const created = await ShareCampaign.create({
+      productId: templateCampaign.productId,
+      totalShares: templateCampaign.totalShares,
+      soldShares: templateCampaign.totalShares,
+      status: 'completed',
+      campaignNumber: nextNumber,
+      sizes: templateCampaign.sizes,
+      completedAt: new Date(),
+    });
+
+    return created.toObject();
+  } catch (error) {
+    console.error(
+      '[shares] Failed to create completed campaign for full order:',
+      error,
+    );
+    return null;
+  }
+}
+
+/**
+ * Find the next available campaign number for a product.
+ *
+ * Returns the highest existing campaignNumber + 1 (or 1 if none exist).
+ * This ensures new campaigns never conflict with already-completed
+ * campaigns created by full orders.
+ */
+async function getNextCampaignNumber(
+  productId: mongoose.Types.ObjectId | string,
+): Promise<number> {
+  const highest = await ShareCampaign.findOne(
+    { productId: new mongoose.Types.ObjectId(String(productId)) },
+    {},
+    { sort: { campaignNumber: -1 } },
+  ).lean();
+
+  return highest ? highest.campaignNumber + 1 : 1;
+}
+
+/**
  * Auto-create the next campaign in the chain after one completes.
  *
- * Increments campaignNumber and resets soldShares to 0.
- * Inherits the same sizes configuration.
+ * Uses the highest existing campaign number + 1 (not just the
+ * completed campaign's number + 1) so it never conflicts with
+ * already-completed campaigns created by full orders.
+ *
+ * Resets soldShares to 0 and inherits the same sizes configuration.
  */
 async function createNextCampaign(
   completedCampaign: IShareCampaign,
 ): Promise<void> {
   try {
+    const nextNumber = await getNextCampaignNumber(completedCampaign.productId);
+
     await ShareCampaign.create({
       productId: completedCampaign.productId,
       totalShares: completedCampaign.totalShares,
       soldShares: 0,
       status: 'active',
-      campaignNumber: completedCampaign.campaignNumber + 1,
+      campaignNumber: nextNumber,
       sizes: completedCampaign.sizes,
       completedAt: null,
     });
