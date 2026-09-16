@@ -1416,18 +1416,29 @@ export async function POST(request: NextRequest) {
     // the order item as a share purchase. The soldShares increment
     // happens later in the webhook when payment is confirmed.
     // The customer never sees this.
+    //
+    // If multiple active campaigns exist (from overflow orders),
+    // find the one that can best fit this order's shares, preferring
+    // the one closest to completion.
     try {
-      const shareCampaign = await findActiveShareCampaign(product._id);
+      const anyCampaign = await findActiveShareCampaign(product._id);
 
-      if (shareCampaign) {
+      if (anyCampaign) {
         const sharesPerPurchase = getSharesForSize(
-          shareCampaign,
+          anyCampaign,
           activeSizeIndex,
         );
 
         if (sharesPerPurchase > 0) {
-          const campaignId = String(shareCampaign._id);
           const totalShares = sharesPerPurchase * quantity;
+
+          // Find the best-fit campaign for this order's shares
+          const bestFitCampaign = await findActiveShareCampaign(
+            product._id,
+            totalShares,
+          );
+          const campaignToUse = bestFitCampaign || anyCampaign;
+          const campaignId = String(campaignToUse._id);
 
           // Mark the main order item as a share purchase (pending
           // increment — the actual soldShares increment happens in

@@ -5,18 +5,49 @@ import ShareCampaign, {
 import Order from '@/lib/models/Order';
 
 /**
- * Find the active share campaign for a product.
+ * Find the best active share campaign for a product.
  *
- * Returns null if no active campaign exists. This is called by the
- * checkout route to silently detect whether a purchase is a share.
+ * If `sharesToFit` is provided, finds the active campaign that can
+ * accommodate the order's shares (soldShares + sharesToFit <= totalShares),
+ * preferring the one closest to completion (highest soldShares).
+ *
+ * If no campaign can fit, returns the oldest active campaign (lowest
+ * campaignNumber) — the webhook will create a new campaign for this order.
+ *
+ * If `sharesToFit` is not provided, returns the oldest active campaign.
+ *
+ * Returns null if no active campaign exists.
  */
 export async function findActiveShareCampaign(
   productId: string | mongoose.Types.ObjectId,
+  sharesToFit?: number,
 ): Promise<IShareCampaign | null> {
+  const pid = new mongoose.Types.ObjectId(String(productId));
+
+  if (sharesToFit && sharesToFit > 0) {
+    // Find the campaign that can fit the order, closest to completion first
+    const fit = await ShareCampaign.findOne({
+      productId: pid,
+      status: 'active',
+      $expr: {
+        $lte: [{ $add: ['$soldShares', sharesToFit] }, '$totalShares'],
+      },
+    })
+      .sort({ soldShares: -1 })
+      .lean();
+
+    if (fit) return fit;
+
+    // None can fit — return the oldest active campaign.
+    // The webhook will create a new campaign for this order.
+  }
+
   return ShareCampaign.findOne({
-    productId: new mongoose.Types.ObjectId(String(productId)),
+    productId: pid,
     status: 'active',
-  }).lean();
+  })
+    .sort({ campaignNumber: 1 })
+    .lean();
 }
 
 /**
@@ -33,25 +64,27 @@ export function getSharesForSize(
 }
 
 /**
- * Atomically increment soldShares on a share campaign.
+ * Increment soldShares on a share campaign.
  *
- * Uses a conditional filter to prevent overselling — if soldShares
- * would exceed totalShares, the update matches 0 documents and
- * returns null.
+ * Three cases:
  *
- * **Full-order shortcut:** If a single order's sharesToAdd is >=
- * totalShares (one order can complete a full campaign on its own),
- * a NEW campaign is created as completed (soldShares = totalShares)
- * and the current active campaign is left unchanged. The returned
- * campaign will have a different _id than the one passed in, so the
- * caller (webhook) can update the order item's shareCampaignId.
+ * 1. **Full order** (sharesToAdd >= totalShares):
+ *    Create a new completed campaign (soldShares = totalShares).
+ *    The current active campaign is left unchanged.
  *
- * If the increment causes soldShares to reach totalShares, the
- * campaign is marked as completed and a new campaign is always
- * auto-created.
+ * 2. **Fits in current campaign** (soldShares + sharesToAdd <= totalShares):
+ *    Atomically increment soldShares. If it reaches totalShares, mark
+ *    as completed and auto-create the next campaign (only if no other
+ *    active campaigns exist for this product).
  *
- * @returns The updated (or newly created) campaign, or null if the
- *          shares were already sold out.
+ * 3. **Overflow** (sharesToAdd < totalShares but doesn't fit):
+ *    Create a new active campaign with soldShares = sharesToAdd.
+ *    The current active campaign is left unchanged.
+ *
+ * @returns The updated (or newly created) campaign, or null on failure.
+ *          The returned campaign may have a different _id than the one
+ *          passed in (cases 1 and 3), so the caller should re-link
+ *          the order item's shareCampaignId.
  */
 export async function incrementShareCampaignSold(
   campaignId: string | mongoose.Types.ObjectId,
@@ -60,64 +93,69 @@ export async function incrementShareCampaignSold(
   const campaign = await ShareCampaign.findById(campaignId).lean();
   if (!campaign) return null;
 
-  // ── Full-order shortcut ──
-  // If this single order can complete a full campaign on its own,
-  // create a new completed campaign instead of adding to the current
-  // one. This keeps the current active campaign running.
+  // ── Case 1: Full order ──
+  // One order can complete a full campaign on its own.
+  // Create a new completed campaign, leave the current one unchanged.
   //
   // Example:
   //   Campaign #5: 2/10 (active)
   //   Order: 10 shares (= totalShares)
   //   → Create Campaign #6: 10/10 (completed)
   //   → Keep Campaign #5: 2/10 (active)
-  //   → When #5 completes, next is #7 (not #6, which is already done)
   if (sharesToAdd >= campaign.totalShares) {
     return await createCompletedCampaignForFullOrder(campaign);
   }
 
-  if (campaign.soldShares + sharesToAdd > campaign.totalShares) {
-    return null;
+  // ── Case 2: Fits in current campaign ──
+  if (campaign.soldShares + sharesToAdd <= campaign.totalShares) {
+    const updated = await ShareCampaign.findOneAndUpdate(
+      {
+        _id: campaign._id,
+        status: 'active',
+        soldShares: { $lte: campaign.totalShares - sharesToAdd },
+      },
+      {
+        $inc: { soldShares: sharesToAdd },
+      },
+      { new: true },
+    ).lean();
+
+    if (!updated) return null;
+
+    if (updated.soldShares >= updated.totalShares) {
+      await ShareCampaign.updateOne(
+        { _id: updated._id },
+        { status: 'completed', completedAt: new Date() },
+      );
+
+      await createNextCampaign(updated);
+
+      return await ShareCampaign.findById(updated._id).lean();
+    }
+
+    return updated;
   }
 
-  const updated = await ShareCampaign.findOneAndUpdate(
-    {
-      _id: campaign._id,
-      status: 'active',
-      soldShares: { $lte: campaign.totalShares - sharesToAdd },
-    },
-    {
-      $inc: { soldShares: sharesToAdd },
-    },
-    { new: true },
-  ).lean();
-
-  if (!updated) return null;
-
-  if (updated.soldShares >= updated.totalShares) {
-    await ShareCampaign.updateOne(
-      { _id: updated._id },
-      { status: 'completed', completedAt: new Date() },
-    );
-
-    await createNextCampaign(updated);
-
-    return await ShareCampaign.findById(updated._id).lean();
-  }
-
-  return updated;
+  // ── Case 3: Overflow ──
+  // The order's shares don't fit in the current campaign, but are
+  // less than totalShares. Create a new active campaign with the
+  // order's shares as soldShares.
+  //
+  // Example:
+  //   Campaign #5: 9/10 (active, remaining = 1)
+  //   Order: 2 shares
+  //   → Create Campaign #6: 2/10 (active)
+  //   → Keep Campaign #5: 9/10 (active)
+  //   → A 1-share order will complete #5 to 10/10
+  //   → A 2-share order will increment #6 to 4/10
+  return await createActiveCampaignForOverflow(campaign, sharesToAdd);
 }
 
 /**
- * Create a new completed campaign for a single order that can
- * complete a full campaign on its own.
+ * Create a new completed campaign for a full order.
  *
- * The new campaign is marked as completed immediately with
- * soldShares = totalShares. The current active campaign is
- * left unchanged.
- *
- * The campaign number is the highest existing number + 1 for this
- * product, so it never conflicts with already-completed campaigns
- * created by previous full orders.
+ * soldShares = totalShares, status = 'completed'.
+ * The current active campaign is left unchanged.
  */
 async function createCompletedCampaignForFullOrder(
   templateCampaign: IShareCampaign,
@@ -146,11 +184,44 @@ async function createCompletedCampaignForFullOrder(
 }
 
 /**
+ * Create a new active campaign for an overflow order.
+ *
+ * soldShares = sharesToAdd, status = 'active'.
+ * The current active campaign is left unchanged.
+ *
+ * Multiple active campaigns can coexist for the same product.
+ */
+async function createActiveCampaignForOverflow(
+  templateCampaign: IShareCampaign,
+  sharesToAdd: number,
+): Promise<IShareCampaign | null> {
+  try {
+    const nextNumber = await getNextCampaignNumber(templateCampaign.productId);
+
+    const created = await ShareCampaign.create({
+      productId: templateCampaign.productId,
+      totalShares: templateCampaign.totalShares,
+      soldShares: sharesToAdd,
+      status: 'active',
+      campaignNumber: nextNumber,
+      sizes: templateCampaign.sizes,
+      completedAt: null,
+    });
+
+    return created.toObject();
+  } catch (error) {
+    console.error(
+      '[shares] Failed to create overflow campaign:',
+      error,
+    );
+    return null;
+  }
+}
+
+/**
  * Find the next available campaign number for a product.
  *
  * Returns the highest existing campaignNumber + 1 (or 1 if none exist).
- * This ensures new campaigns never conflict with already-completed
- * campaigns created by full orders.
  */
 async function getNextCampaignNumber(
   productId: mongoose.Types.ObjectId | string,
@@ -165,18 +236,28 @@ async function getNextCampaignNumber(
 }
 
 /**
- * Auto-create the next campaign in the chain after one completes.
+ * Auto-create the next campaign after one completes.
  *
- * Uses the highest existing campaign number + 1 (not just the
- * completed campaign's number + 1) so it never conflicts with
- * already-completed campaigns created by full orders.
+ * Only creates a new active campaign if no other active campaigns
+ * exist for this product (there can be multiple active campaigns
+ * when orders overflow the current one).
  *
- * Resets soldShares to 0 and inherits the same sizes configuration.
+ * Uses the highest existing campaign number + 1 so it never
+ * conflicts with already-completed campaigns.
  */
 async function createNextCampaign(
   completedCampaign: IShareCampaign,
 ): Promise<void> {
   try {
+    // Check if other active campaigns exist for this product
+    const activeCount = await ShareCampaign.countDocuments({
+      productId: completedCampaign.productId,
+      status: 'active',
+    });
+
+    // Other active campaigns exist — don't create a new one
+    if (activeCount > 0) return;
+
     const nextNumber = await getNextCampaignNumber(completedCampaign.productId);
 
     await ShareCampaign.create({
@@ -197,7 +278,7 @@ async function createNextCampaign(
  * Decrement soldShares on a share campaign (used on refund).
  *
  * The completed campaign stays completed with a decremented count.
- * The new campaign continues normally.
+ * Active campaigns continue normally.
  */
 export async function decrementShareCampaignSold(
   campaignId: string | mongoose.Types.ObjectId,

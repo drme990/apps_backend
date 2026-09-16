@@ -43,7 +43,6 @@ const ShareCampaignSchema = new mongoose.Schema<IShareCampaign>(
       required: true,
       enum: ['active', 'inactive', 'completed'],
       default: 'active',
-      index: true,
     },
     campaignNumber: { type: Number, required: true, min: 1, default: 1 },
     sizes: {
@@ -59,13 +58,10 @@ const ShareCampaignSchema = new mongoose.Schema<IShareCampaign>(
   { timestamps: true },
 );
 
-// Only one active campaign per product.
-ShareCampaignSchema.index(
-  { productId: 1, status: 1 },
-  { unique: true, partialFilterExpression: { status: 'active' } },
-);
-
-ShareCampaignSchema.index({ status: 1 });
+// Compound indexes for efficient queries.
+// Multiple active campaigns per product are allowed — an order that
+// overflows the current active campaign creates a new active one.
+ShareCampaignSchema.index({ productId: 1, status: 1 });
 
 // Force re-registration on hot reloads so stale schemas don't persist.
 if (mongoose.models.ShareCampaign) {
