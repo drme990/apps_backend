@@ -62,102 +62,74 @@ function deriveStatus(
 }
 
 /**
- * Propagate `invoiceUrls` and `payments` from the modified order to its
- * linked counterpart, then recompute financials on both so they stay in sync.
+ * Propagate `invoiceUrls` and `payments` from the modified order to every
+ * linked order (its parent and all sibling sub-orders), then recompute
+ * financials on the whole group so they stay in sync.
  *
- * Both orders share the same `payments` array and the same `fullAmount`
- * (combined total of both orders), so they end up with identical
- * `paidAmount`, `remainingAmount`, and `status`.
+ * All linked orders share the same `payments` array and the same
+ * `fullAmount` (combined total of every order's items), so they end up
+ * with identical `paidAmount`, `remainingAmount`, and `status`.
  *
  * The order passed in (`orderId`) is the one that was just modified — its
- * data is propagated to the linked order. This ensures that when an invoice
- * is uploaded to either order, the other one receives the update.
+ * data is propagated to the linked orders. This ensures that when an
+ * invoice is uploaded to the parent, every sub-order receives the update.
  *
  * Call this after any mutation to `invoiceUrls` or `payments` on either
- * the parent or the sub-order.
+ * the parent or any sub-order.
  */
 export async function syncSharedFields(orderId: string): Promise<void> {
     const order = await Order.findById(orderId);
     if (!order) return;
 
-    if (order.isSubOrder && order.parentOrderId) {
-        const parent = await Order.findById(order.parentOrderId);
-        if (!parent) return;
+    // Resolve the parent for this order's group: the parentOrderId target
+    // for sub-orders, or the order itself for a main order.
+    const parent = order.isSubOrder && order.parentOrderId
+        ? await Order.findById(order.parentOrderId)
+        : (!order.isSubOrder ? order : null);
+    if (!parent) return;
 
-        // Propagate the modified sub-order's data to the parent
-        parent.invoiceUrls = order.invoiceUrls;
-        parent.payments = order.payments;
+    // All sub-orders link to the parent via parentOrderId
+    const subOrders = await Order.find({
+        parentOrderId: parent._id,
+        isSubOrder: true,
+    });
+    if (subOrders.length === 0 && !order.isSubOrder) return;
 
-        // Set combined fullAmount on both — calculated from each order's items
-        const parentItemTotal = await computeOrderItemTotal(parent);
-        const subItemTotal = await computeOrderItemTotal(order);
-        const combinedTotal = parentItemTotal + subItemTotal;
-        parent.fullAmount = combinedTotal;
-        order.fullAmount = combinedTotal;
+    const linkedOrders = [parent, ...subOrders];
 
-        // Save parent first (pre-save hook recalculates paidAmount/remainingAmount)
-        await parent.save();
-        // Then save sub-order (its pre-save hook recalculates too)
-        await order.save();
-
-        // Now sync status on both — the pre-save hook sets amounts but not status
-        const parentStatus = deriveStatus(
-            parent.fullAmount || 0,
-            parent.paidAmount || 0,
-            parent.remainingAmount || 0,
-            parent.status,
-        );
-        const subStatus = deriveStatus(
-            order.fullAmount || 0,
-            order.paidAmount || 0,
-            order.remainingAmount || 0,
-            order.status,
-        );
-
-        if (parent.status !== parentStatus || order.status !== subStatus) {
-            parent.status = parentStatus;
-            order.status = subStatus;
-            await parent.save();
-            await order.save();
+    // Propagate the modified order's shared fields to every other order
+    for (const linked of linkedOrders) {
+        if (String(linked._id) !== String(order._id)) {
+            linked.invoiceUrls = order.invoiceUrls;
+            linked.payments = order.payments;
         }
-    } else if (order.hasSubOrder && order.subOrderId) {
-        const subOrder = await Order.findById(order.subOrderId);
-        if (!subOrder) return;
+    }
 
-        // Propagate the modified parent's data to the sub-order
-        subOrder.invoiceUrls = order.invoiceUrls;
-        subOrder.payments = order.payments;
+    // Combined fullAmount = sum of every linked order's item total
+    let combinedTotal = 0;
+    for (const linked of linkedOrders) {
+        combinedTotal += await computeOrderItemTotal(linked);
+    }
+    for (const linked of linkedOrders) {
+        linked.fullAmount = combinedTotal;
+    }
 
-        // Set combined fullAmount on both — calculated from each order's items
-        const parentItemTotal = await computeOrderItemTotal(order);
-        const subItemTotal = await computeOrderItemTotal(subOrder);
-        const combinedTotal = parentItemTotal + subItemTotal;
-        order.fullAmount = combinedTotal;
-        subOrder.fullAmount = combinedTotal;
+    // Save all (each pre-save hook recalculates paidAmount/remainingAmount)
+    for (const linked of linkedOrders) {
+        await linked.save();
+    }
 
-        // Save sub-order first, then parent
-        await subOrder.save();
-        await order.save();
-
-        // Sync status on both
-        const parentStatus = deriveStatus(
-            order.fullAmount || 0,
-            order.paidAmount || 0,
-            order.remainingAmount || 0,
-            order.status,
+    // Sync status across all — pre-save hooks set amounts but not status
+    for (const linked of linkedOrders) {
+        const derived = deriveStatus(
+            linked.fullAmount || 0,
+            linked.paidAmount || 0,
+            linked.remainingAmount || 0,
+            linked.status,
         );
-        const subStatus = deriveStatus(
-            subOrder.fullAmount || 0,
-            subOrder.paidAmount || 0,
-            subOrder.remainingAmount || 0,
-            subOrder.status,
-        );
-
-        if (order.status !== parentStatus || subOrder.status !== subStatus) {
-            order.status = parentStatus;
-            subOrder.status = subStatus;
-            await order.save();
-            await subOrder.save();
+        if (linked.status !== derived) {
+            linked.status = derived;
+            await linked.save();
         }
     }
 }

@@ -63,14 +63,6 @@ export async function POST(
       );
     }
 
-    // Only 1 sub-order per parent
-    if (parent.hasSubOrder) {
-      return NextResponse.json(
-        { success: false, error: 'This order already has a sub-order' },
-        { status: 400 },
-      );
-    }
-
     const currencyUpper = (parent.currency || 'SAR').toUpperCase();
 
     // ── Resolve each item (same logic as create route) ──

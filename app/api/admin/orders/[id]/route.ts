@@ -820,6 +820,15 @@ export async function PATCH(
       }
     }
 
+    // Invoices are managed on the main order only — sub-orders share
+    // the parent's invoiceUrls via syncSharedFields.
+    if (order.isSubOrder && typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'Invoices can only be uploaded to the main order' },
+        { status: 400 },
+      );
+    }
+
     if (typeof body.invoiceUrl === 'string' && body.invoiceUrl.trim()) {
       const trimmedInvoiceUrl = body.invoiceUrl.trim();
       const value = typeof body.invoiceValue === 'number' ? body.invoiceValue : 0;
