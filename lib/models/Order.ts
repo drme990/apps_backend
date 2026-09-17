@@ -146,6 +146,8 @@ export interface IOrderItem {
   shareCampaignId?: mongoose.Types.ObjectId | string;
   /** How many shares this order item bought (default 1). */
   shareQuantity?: number;
+  /** True once soldShares was already incremented for this item. */
+  sharesApplied?: boolean;
 }
 
 export interface IBillingData {
@@ -439,6 +441,7 @@ const OrderItemSchema = new mongoose.Schema<IOrderItem>(
       ref: 'ShareCampaign',
     },
     shareQuantity: { type: Number, min: 1, default: 1 },
+    sharesApplied: { type: Boolean, default: false },
   },
   { _id: false },
 );

@@ -87,17 +87,6 @@ export async function PATCH(
       );
     }
 
-    // Cannot change totalShares after shares have been sold
-    if (totalShares !== undefined && campaign.soldShares > 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Cannot change total shares after shares have been sold',
-        },
-        { status: 400 },
-      );
-    }
-
     // Cannot change status of a completed campaign
     if (status !== undefined && campaign.status === 'completed') {
       return NextResponse.json(
@@ -132,7 +121,6 @@ export async function PATCH(
     }
 
     if (status !== undefined) campaign.status = status;
-    if (totalShares !== undefined) campaign.totalShares = totalShares;
     if (displayOnProductPage !== undefined) {
       campaign.displayOnProductPage = displayOnProductPage;
     }
@@ -141,6 +129,58 @@ export async function PATCH(
     }
 
     await campaign.save();
+
+    // totalShares applies to EVERY active campaign for this product —
+    // it affects the current campaigns now, and the next campaigns
+    // inherit it automatically (auto-created campaigns copy
+    // totalShares from the campaign they were created from).
+    if (totalShares !== undefined) {
+      await ShareCampaign.updateMany(
+        { productId: campaign.productId, status: 'active' },
+        { totalShares },
+      );
+
+      // Any active campaign now at/over its total completes.
+      const overflowed = await ShareCampaign.find({
+        productId: campaign.productId,
+        status: 'active',
+        $expr: { $gte: ['$soldShares', '$totalShares'] },
+      }).lean();
+
+      if (overflowed.length > 0) {
+        await ShareCampaign.updateMany(
+          { _id: { $in: overflowed.map((c) => c._id) } },
+          { status: 'completed', completedAt: new Date() },
+        );
+
+        // If nothing is left active, spin up the next campaign so the
+        // product always has a live one.
+        const remaining = await ShareCampaign.countDocuments({
+          productId: campaign.productId,
+          status: 'active',
+        });
+        if (remaining === 0) {
+          const template = overflowed[0];
+          const highest = await ShareCampaign.findOne(
+            { productId: campaign.productId },
+            { campaignNumber: 1 },
+          )
+            .sort({ campaignNumber: -1 })
+            .lean();
+          await ShareCampaign.create({
+            productId: campaign.productId,
+            totalShares,
+            soldShares: 0,
+            status: 'active',
+            campaignNumber: (highest?.campaignNumber ?? 0) + 1,
+            displayOnProductPage: template.displayOnProductPage ?? false,
+            minDisplayPercent: template.minDisplayPercent ?? 0,
+            sizes: template.sizes,
+            completedAt: null,
+          });
+        }
+      }
+    }
 
     // Manually reserved shares go through the same increment logic as
     // orders — so overflow creates a new campaign and a full count
@@ -191,11 +231,13 @@ export async function DELETE(
       );
     }
 
-    if (campaign.soldShares > 0) {
+    // Fully completed campaigns are permanent records — they can't
+    // be deleted.
+    if (campaign.status === 'completed') {
       return NextResponse.json(
         {
           success: false,
-          error: 'Cannot delete a campaign with sold shares',
+          error: 'Cannot delete a completed campaign',
         },
         { status: 400 },
       );

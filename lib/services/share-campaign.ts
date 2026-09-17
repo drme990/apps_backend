@@ -281,6 +281,81 @@ async function createNextCampaign(
 }
 
 /**
+ * Apply share increments for every share-flagged item on an order.
+ *
+ * Used by the payment webhook (on transition to paid/partial-paid)
+ * and by manual order creation (when the order is created already
+ * paid). Idempotent — items are marked `sharesApplied` after a
+ * successful increment so a later webhook transition can't count
+ * the same item twice.
+ *
+ * If a single order's shares >= totalShares (full-order case),
+ * incrementShareCampaignSold creates a NEW completed campaign and
+ * the order item is re-linked to it.
+ */
+export async function applyShareIncrementsForOrder(order: {
+  _id: mongoose.Types.ObjectId | string;
+  orderNumber?: string;
+  items?: Array<{
+    productId?: mongoose.Types.ObjectId | string;
+    sizeIndex?: number;
+    isShare?: boolean;
+    shareCampaignId?: mongoose.Types.ObjectId | string;
+    shareQuantity?: number;
+    sharesApplied?: boolean;
+  }>;
+}): Promise<void> {
+  for (const item of order.items || []) {
+    if (
+      !item.isShare ||
+      !item.shareCampaignId ||
+      !item.shareQuantity ||
+      item.sharesApplied
+    ) {
+      continue;
+    }
+
+    try {
+      const result = await incrementShareCampaignSold(
+        String(item.shareCampaignId),
+        Number(item.shareQuantity),
+      );
+      if (!result) continue;
+
+      // Mark the item as applied — and re-link it if the increment
+      // created a new campaign (full-order/overflow cases).
+      await Order.updateOne(
+        {
+          _id: String(order._id),
+          items: {
+            $elemMatch: {
+              productId: new mongoose.Types.ObjectId(
+                String(item.productId),
+              ),
+              sizeIndex: Number(item.sizeIndex),
+              shareCampaignId: new mongoose.Types.ObjectId(
+                String(item.shareCampaignId),
+              ),
+            },
+          },
+        },
+        {
+          $set: {
+            'items.$.sharesApplied': true,
+            'items.$.shareCampaignId': result._id,
+          },
+        },
+      );
+    } catch (err) {
+      console.error(
+        `[shares] Share campaign increment failed for order ${order.orderNumber ?? order._id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+/**
  * Decrement soldShares on a share campaign (used on refund).
  *
  * The completed campaign stays completed with a decremented count.

@@ -1,5 +1,4 @@
 import { randomBytes } from 'crypto';
-import mongoose from 'mongoose';
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
@@ -28,7 +27,7 @@ import {
   evaluateAndTriggerAutoDesign,
 } from '@/lib/services/auto-design-generation';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
-import { incrementShareCampaignSold } from '@/lib/services/share-campaign';
+import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -585,50 +584,7 @@ export async function POST(request: NextRequest) {
     // a NEW completed campaign is created and the order item is
     // re-linked to it. The current active campaign is left unchanged.
     if (transitionedToPaid || transitionedToPartialPaid) {
-      for (const item of order.items || []) {
-        if (item.isShare && item.shareCampaignId && item.shareQuantity) {
-          try {
-            const result = await incrementShareCampaignSold(
-              String(item.shareCampaignId),
-              Number(item.shareQuantity),
-            );
-
-            // If a new campaign was created (full-order case),
-            // re-link the order item to the new completed campaign.
-            if (
-              result &&
-              String(result._id) !== String(item.shareCampaignId)
-            ) {
-              await Order.updateOne(
-                {
-                  _id: order._id,
-                  items: {
-                    $elemMatch: {
-                      productId: new mongoose.Types.ObjectId(
-                        String(item.productId),
-                      ),
-                      sizeIndex: Number(item.sizeIndex),
-                      shareCampaignId: new mongoose.Types.ObjectId(
-                        String(item.shareCampaignId),
-                      ),
-                    },
-                  },
-                },
-                {
-                  $set: {
-                    'items.$.shareCampaignId': result._id,
-                  },
-                },
-              );
-            }
-          } catch (err) {
-            console.error(
-              `[webhook] Share campaign increment failed for order ${order.orderNumber}:`,
-              err instanceof Error ? err.message : err,
-            );
-          }
-        }
-      }
+      await applyShareIncrementsForOrder(order);
     }
 
     // ── Auto design generation ──────────────────────────────────────

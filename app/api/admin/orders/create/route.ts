@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type PaymentMethod } from '@/lib/models/Order';
@@ -16,6 +17,11 @@ import {
   resolveUnitPrice,
   PAYMENT_GATEWAY_CURRENCIES,
 } from '@/lib/services/price-resolver';
+import {
+  findActiveShareCampaign,
+  getSharesForSize,
+  applyShareIncrementsForOrder,
+} from '@/lib/services/share-campaign';
 
 import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
@@ -256,6 +262,9 @@ export async function POST(request: NextRequest) {
       customSize?: string;
       isAddOn?: boolean;
       parentItemIndex?: number;
+      isShare?: boolean;
+      shareCampaignId?: mongoose.Types.ObjectId | string;
+      shareQuantity?: number;
     }> = [];
 
     let totalAmount = 0;
@@ -465,6 +474,48 @@ export async function POST(request: NextRequest) {
             parentItemIndex,
           });
         }
+      }
+    }
+
+    // ── Share campaign detection (silent) ──
+    // Same logic as checkout: if an item's product has an active
+    // share campaign covering its size, flag the item. The actual
+    // soldShares increment happens below when the order is created
+    // already paid — or later in the webhook for pending EasyKash
+    // orders once payment is confirmed.
+    for (const payloadItem of orderItemsPayload) {
+      if (payloadItem.isAddOn || payloadItem.isCustom) continue;
+      if (payloadItem.sizeIndex === undefined || !payloadItem.productId)
+        continue;
+
+      try {
+        const anyCampaign = await findActiveShareCampaign(
+          payloadItem.productId,
+        );
+        if (!anyCampaign) continue;
+
+        const sharesPerPurchase = getSharesForSize(
+          anyCampaign,
+          payloadItem.sizeIndex,
+        );
+        if (sharesPerPurchase <= 0) continue;
+
+        const totalShares = sharesPerPurchase * payloadItem.quantity;
+        const bestFit = await findActiveShareCampaign(
+          payloadItem.productId,
+          totalShares,
+        );
+        const campaignToUse = bestFit || anyCampaign;
+
+        payloadItem.isShare = true;
+        payloadItem.shareCampaignId = campaignToUse._id;
+        payloadItem.shareQuantity = totalShares;
+      } catch (shareError) {
+        // Share detection must never block order creation.
+        console.error(
+          '[Create Manual Order] Share campaign detection failed:',
+          shareError,
+        );
       }
     }
 
@@ -783,6 +834,16 @@ export async function POST(request: NextRequest) {
     order.orderNumber = `W${order.orderNumber}`;
     await order.save();
     console.log('[Create Manual Order] Order created:', order.orderNumber);
+
+    // ── Share campaign increment ──
+    // Manual orders created already paid (or partially paid) count
+    // their shares immediately — the webhook never sees them.
+    // Pending EasyKash orders skip this; the webhook applies the
+    // increment when payment is confirmed. Idempotent via
+    // sharesApplied so a later webhook can't double-count.
+    if (orderStatus === 'paid' || orderStatus === 'partial-paid') {
+      await applyShareIncrementsForOrder(order);
+    }
 
     let checkoutUrl: string | null = null;
 

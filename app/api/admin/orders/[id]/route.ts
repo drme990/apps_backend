@@ -17,6 +17,7 @@ import { convertCurrency } from '@/lib/services/currency';
 import Booking from '@/lib/models/Booking';
 import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
+import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
 
 /** Currencies supported by the EasyKash payment gateway. */
 const EASYKASH_SUPPORTED_CURRENCIES = new Set(['SAR', 'EGP', 'USD', 'EUR']);
@@ -320,6 +321,18 @@ export async function PUT(
     }
 
     await order.save();
+
+    // Share campaign increment — an order manually marked paid (or
+    // partial-paid) counts its shares here, same as the webhook.
+    // Idempotent via sharesApplied so it can't double-count.
+    if (
+      nextStatus !== previousStatus &&
+      (nextStatus === 'paid' || nextStatus === 'partial-paid') &&
+      previousStatus !== 'paid' &&
+      previousStatus !== 'completed'
+    ) {
+      await applyShareIncrementsForOrder(order.toObject());
+    }
 
     if (nextStatus !== previousStatus) {
       await OrderChangeHistory.create({
@@ -1250,6 +1263,20 @@ export async function PATCH(
 
     order.reservationData = reservationData;
     await order.save();
+
+    // Share campaign increment — when an order transitions to paid or
+    // partial-paid via this admin edit (e.g. invoice confirmation),
+    // count its shares here, same as the webhook. Idempotent via
+    // sharesApplied so it can't double-count.
+    if (
+      changes.some(
+        (c) =>
+          c.changeType === 'status' &&
+          (c.newValue === 'paid' || c.newValue === 'partial-paid'),
+      )
+    ) {
+      await applyShareIncrementsForOrder(order.toObject());
+    }
 
     // Record change history entries. Wrap in try-catch so a history
     // failure (e.g. stale Mongoose model with old enum) doesn't roll

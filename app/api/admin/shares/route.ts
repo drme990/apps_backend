@@ -116,22 +116,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check for existing active campaign
-    const existing = await ShareCampaign.findOne({
-      productId,
-      status: 'active',
-    }).lean();
-
-    if (existing) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'An active campaign already exists for this product',
-        },
-        { status: 400 },
-      );
-    }
-
     // Reject a campaign code that already exists on this product
     const codeTaken = await ShareCampaign.findOne({
       productId,
