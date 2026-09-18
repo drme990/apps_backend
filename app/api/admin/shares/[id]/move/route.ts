@@ -15,6 +15,7 @@ const moveSharesSchema = z
   .object({
     targetCampaignId: z.string().trim().min(1),
     amount: z.number().int().min(1).optional(),
+    orderId: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -46,7 +47,8 @@ export async function POST(
     const { id } = await params;
     const parsed = await parseJsonBody(request, moveSharesSchema);
     if (!parsed.success) return parsed.response;
-    const { targetCampaignId, amount: requestedAmount } = parsed.data;
+    const { targetCampaignId, amount: requestedAmount, orderId } =
+      parsed.data;
 
     const source = await ShareCampaign.findById(id);
     if (!source) {
@@ -65,7 +67,7 @@ export async function POST(
         { status: 400 },
       );
     }
-    if (source.soldShares <= 0) {
+    if (source.soldShares <= 0 && !orderId) {
       return NextResponse.json(
         { success: false, error: 'This campaign has no shares to move' },
         { status: 400 },
@@ -97,6 +99,136 @@ export async function POST(
         },
         { status: 400 },
       );
+    }
+
+    // ── Per-order swap ──
+    // Move a single order's share items off this campaign onto the
+    // target. Shares already counted (sharesApplied) move soldShares;
+    // shares not yet counted (unpaid order) are just re-linked so the
+    // increment lands on the target when the order is paid.
+    // manualShares is untouched — it doesn't belong to any order.
+    if (orderId) {
+      if (!mongoose.Types.ObjectId.isValid(orderId)) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid order id' },
+          { status: 400 },
+        );
+      }
+
+      const order = await Order.findById(orderId, {
+        items: 1,
+        orderNumber: 1,
+      });
+      if (!order) {
+        return NextResponse.json(
+          { success: false, error: 'Order not found' },
+          { status: 404 },
+        );
+      }
+
+      const items = (order.items || []) as Array<{
+        isShare?: boolean;
+        shareCampaignId?: mongoose.Types.ObjectId | string;
+        shareQuantity?: number;
+        sharesApplied?: boolean;
+      }>;
+
+      const linkedIdx: number[] = [];
+      const appliedIdx: number[] = [];
+      let linkedQty = 0;
+      let appliedQty = 0;
+      items.forEach((item, i) => {
+        if (
+          !item.isShare ||
+          String(item.shareCampaignId || '') !== String(source._id)
+        ) {
+          return;
+        }
+        linkedIdx.push(i);
+        linkedQty += item.shareQuantity || 0;
+        if (item.sharesApplied && (item.shareQuantity || 0) > 0) {
+          appliedIdx.push(i);
+          appliedQty += item.shareQuantity || 0;
+        }
+      });
+
+      if (linkedIdx.length === 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'This order has no shares on this campaign',
+          },
+          { status: 400 },
+        );
+      }
+
+      let landing: { _id?: unknown; campaignNumber: number } = target;
+      if (appliedQty > 0) {
+        const result = await incrementShareCampaignSold(
+          target._id,
+          appliedQty,
+        );
+        if (!result) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Failed to move shares to target campaign',
+            },
+            { status: 500 },
+          );
+        }
+        landing = result;
+
+        source.soldShares = Math.max(0, source.soldShares - appliedQty);
+        await source.save();
+
+        for (const i of appliedIdx) {
+          await Order.updateOne(
+            { _id: order._id },
+            {
+              $set: {
+                [`items.${i}.shareCampaignId`]:
+                  new mongoose.Types.ObjectId(String(landing._id)),
+              },
+            },
+          );
+        }
+      }
+
+      // Unapplied items re-link to the chosen target — their increment
+      // runs on it when the order is paid.
+      for (const i of linkedIdx.filter((i) => !appliedIdx.includes(i))) {
+        await Order.updateOne(
+          { _id: order._id },
+          {
+            $set: {
+              [`items.${i}.shareCampaignId`]: new mongoose.Types.ObjectId(
+                String(target._id),
+              ),
+            },
+          },
+        );
+      }
+
+      await logActivity({
+        userId: auth.user.userId,
+        userName: auth.user.name,
+        userEmail: auth.user.email,
+        action: 'update',
+        resource: 'shareCampaign',
+        resourceId: String(source._id),
+        details: `Moved order ${order.orderNumber ?? order._id} (${linkedQty} share(s)) from campaign #${source.campaignNumber} to campaign #${landing.campaignNumber}`,
+      });
+
+      const [updatedSource, updatedTarget] = await Promise.all([
+        ShareCampaign.findById(source._id).lean(),
+        ShareCampaign.findById(landing._id).lean(),
+      ]);
+
+      return NextResponse.json({
+        success: true,
+        data: { source: updatedSource, target: updatedTarget },
+      });
     }
 
     const amount = Math.min(
