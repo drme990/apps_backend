@@ -1500,6 +1500,7 @@ export async function POST(request: NextRequest) {
       value: payAmount,
       currency: currencyUpper,
       numItems: quantity,
+      source: orderSource,
       sourceUrl: `${orderSource === 'ghadaq'
         ? process.env.GHADAQ_URL || 'https://www.ghadaqplus.com'
         : process.env.MANASIK_URL || 'https://www.manasik.net'

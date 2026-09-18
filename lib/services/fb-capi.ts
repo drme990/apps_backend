@@ -70,14 +70,44 @@ function prepareUserData(raw: FBUserData): Record<string, unknown> {
   return out;
 }
 
-export async function sendFBEvent(event: FBEventPayload): Promise<boolean> {
-  const FB_PIXEL_ID = process.env.FB_PIXEL_ID;
-  const FB_ACCESS_TOKEN = process.env.API_TOKEN;
+export type FBSource = 'manasik' | 'ghadaq';
+
+/**
+ * Each storefront has its own Meta dataset. Events MUST be routed by the
+ * order's `source` — a single shared FB_PIXEL_ID sends every storefront's
+ * events into one dataset (this is how manasik events once leaked into
+ * the Ghadaq dataset).
+ *
+ * FB_PIXEL_ID_<SRC> wins; FB_PIXEL_ID is the legacy fallback.
+ * Same for the access token — API_TOKEN_<SRC> overrides API_TOKEN for
+ * cases where the two datasets live under different Business Managers.
+ */
+function resolveCredentials(source?: string): {
+  pixelId?: string;
+  token?: string;
+} {
+  const key = source === 'ghadaq' ? 'GHADAQ' : source === 'manasik' ? 'MANASIK' : '';
+  return {
+    pixelId:
+      (key ? process.env[`FB_PIXEL_ID_${key}`] : undefined) ||
+      process.env.FB_PIXEL_ID,
+    token:
+      (key ? process.env[`API_TOKEN_${key}`] : undefined) ||
+      process.env.API_TOKEN,
+  };
+}
+
+export async function sendFBEvent(
+  event: FBEventPayload,
+  source?: FBSource | string,
+): Promise<boolean> {
+  const { pixelId: FB_PIXEL_ID, token: FB_ACCESS_TOKEN } =
+    resolveCredentials(source);
   const FB_TEST_EVENT_CODE = process.env.FB_TEST_EVENT_CODE;
 
   if (!FB_PIXEL_ID || !FB_ACCESS_TOKEN) {
     console.warn(
-      '[FB CAPI] Missing FB_PIXEL_ID or API_TOKEN — event not sent',
+      `[FB CAPI] Missing pixel/token for source "${source || 'default'}" — event not sent`,
     );
     return false;
   }
@@ -133,22 +163,26 @@ export async function trackInitiateCheckout(opts: {
   sourceUrl?: string;
   userData: FBUserData;
   eventId?: string;
+  source?: FBSource | string;
 }) {
-  return sendFBEvent({
-    event_name: 'InitiateCheckout',
-    event_id: opts.eventId,
-    event_source_url: opts.sourceUrl,
-    action_source: 'website',
-    user_data: opts.userData,
-    custom_data: {
-      content_ids: [opts.productId],
-      content_type: 'product',
-      content_name: opts.productName,
-      value: opts.value,
-      currency: opts.currency,
-      num_items: opts.numItems,
+  return sendFBEvent(
+    {
+      event_name: 'InitiateCheckout',
+      event_id: opts.eventId,
+      event_source_url: opts.sourceUrl,
+      action_source: 'website',
+      user_data: opts.userData,
+      custom_data: {
+        content_ids: [opts.productId],
+        content_type: 'product',
+        content_name: opts.productName,
+        value: opts.value,
+        currency: opts.currency,
+        num_items: opts.numItems,
+      },
     },
-  });
+    opts.source,
+  );
 }
 
 export async function trackPurchase(opts: {
@@ -163,6 +197,7 @@ export async function trackPurchase(opts: {
   sourceUrl?: string;
   userData: FBUserData;
   eventId?: string;
+  source?: FBSource | string;
 }) {
   const items =
     opts.items && opts.items.length
@@ -175,25 +210,28 @@ export async function trackPurchase(opts: {
         },
       ];
 
-  return sendFBEvent({
-    event_name: 'Purchase',
-    event_id: opts.eventId ?? opts.orderId,
-    event_source_url: opts.sourceUrl,
-    action_source: 'website',
-    user_data: opts.userData,
-    custom_data: {
-      content_ids: items.map((i) => i.productId).filter(Boolean),
-      content_type: 'product',
-      content_name: items.map((i) => i.productName).filter(Boolean).join(', '),
-      contents: items.map((i) => ({
-        id: i.productId,
-        quantity: i.quantity,
-        item_price: i.price,
-      })),
-      value: opts.value,
-      currency: opts.currency,
-      num_items: items.reduce((sum, i) => sum + (i.quantity || 1), 0),
-      order_id: opts.orderId,
+  return sendFBEvent(
+    {
+      event_name: 'Purchase',
+      event_id: opts.eventId ?? opts.orderId,
+      event_source_url: opts.sourceUrl,
+      action_source: 'website',
+      user_data: opts.userData,
+      custom_data: {
+        content_ids: items.map((i) => i.productId).filter(Boolean),
+        content_type: 'product',
+        content_name: items.map((i) => i.productName).filter(Boolean).join(', '),
+        contents: items.map((i) => ({
+          id: i.productId,
+          quantity: i.quantity,
+          item_price: i.price,
+        })),
+        value: opts.value,
+        currency: opts.currency,
+        num_items: items.reduce((sum, i) => sum + (i.quantity || 1), 0),
+        order_id: opts.orderId,
+      },
     },
-  });
+    opts.source,
+  );
 }

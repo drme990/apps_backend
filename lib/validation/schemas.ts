@@ -203,6 +203,7 @@ export const fbEventSchema = z
     event_name: z.string().trim().min(1),
     event_id: z.string().trim().optional(),
     event_source_url: z.string().trim().optional(),
+    source: z.enum(['manasik', 'ghadaq']).optional(),
     user_data: z.record(z.string(), z.any()).optional(),
     custom_data: z.record(z.string(), z.any()).optional(),
   })

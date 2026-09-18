@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   try {
     const parsed = await parseJsonBody(request, fbEventSchema);
     if (!parsed.success) return parsed.response;
-    const { event_name, event_id, event_source_url, user_data, custom_data } =
+    const { event_name, event_id, event_source_url, source, user_data, custom_data } =
       parsed.data;
 
     const ip =
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
         client_user_agent: user_data?.client_user_agent || userAgent,
       },
       custom_data,
-    }).catch((fbError) => {
+    }, source).catch((fbError) => {
       captureException(fbError, {
         service: 'FacebookCAPI',
         operation: 'sendFBEvent',

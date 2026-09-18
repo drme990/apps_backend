@@ -671,6 +671,7 @@ export async function POST(request: NextRequest) {
               numItems: item.quantity || 1,
               items: orderItems,
               orderId: order.orderNumber,
+              source: order.source,
               sourceUrl: `${baseUrl}/payment/status`,
               userData: {
                 em: order.billingData?.email,
