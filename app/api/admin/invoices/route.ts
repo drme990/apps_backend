@@ -78,7 +78,12 @@ export async function GET(request: NextRequest) {
     const orderQuery = await buildAdminOrdersQuery(searchParams, {
       extraSearchOr,
     });
-    orderQuery.isSubOrder = { $ne: true };
+    // Sub-orders share the parent's synced invoiceUrls — normally excluded
+    // to avoid duplicate rows, but when the admin explicitly filters for
+    // sub-orders we keep them so the shared invoices are visible.
+    if (searchParams.get('orderType') !== 'subOrder') {
+      orderQuery.isSubOrder = { $ne: true };
+    }
     orderQuery['invoiceUrls.0'] = { $exists: true };
 
     const reviewMatch: PipelineStage.FacetPipelineStage[] =
@@ -167,7 +172,7 @@ export async function GET(request: NextRequest) {
               },
               orderId: { $toString: '$_id' },
               orderNumber: 1,
-              isSubOrder: { $literal: false },
+              isSubOrder: { $ifNull: ['$isSubOrder', false] },
               hasSubOrder: { $ifNull: ['$hasSubOrder', false] },
               invoiceIndex: 1,
               url: '$invoiceUrls.url',

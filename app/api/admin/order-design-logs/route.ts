@@ -46,7 +46,8 @@ export async function GET(request: NextRequest) {
 
     const search = searchParams.get('search');
     if (search && search.trim()) {
-      filter.orderNumber = { $regex: search.trim(), $options: 'i' };
+      const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.orderNumber = { $regex: escaped, $options: 'i' };
     }
 
     const [logs, total] = await Promise.all([

@@ -8,6 +8,7 @@ import {
   type IBaseAppUser,
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
+import Order from '@/lib/models/Order';
 
 function parseIsoDateParts(
   value: string | null,
@@ -45,6 +46,7 @@ const querySchema = z.object({
   isBanned: z.enum(['true', 'false']).optional(),
   ref: z.string().trim().optional(),
   tier: z.string().trim().optional(),
+  hasOrders: z.enum(['ordered', 'never']).optional(),
   country: z.string().trim().optional(),
   detectedCountry: z.string().trim().optional(),
   page: z
@@ -101,6 +103,7 @@ export async function GET(request: NextRequest) {
       isBanned: request.nextUrl.searchParams.get('isBanned') || undefined,
       ref: request.nextUrl.searchParams.get('ref') || undefined,
       tier: request.nextUrl.searchParams.get('tier') || undefined,
+      hasOrders: request.nextUrl.searchParams.get('hasOrders') || undefined,
       country: request.nextUrl.searchParams.get('country') || undefined,
       detectedCountry:
         request.nextUrl.searchParams.get('detectedCountry') || undefined,
@@ -120,7 +123,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const normalizedSearch = parsed.data.search?.toLowerCase();
+    // Escape regex metacharacters — searches like "+201018326789" must match
+    // the literal + instead of crashing with "quantifier does not follow a
+    // repeatable item".
+    const normalizedSearch = parsed.data.search
+      ?.toLowerCase()
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const isBannedFilter =
       parsed.data.isBanned === undefined
         ? undefined
@@ -140,6 +148,29 @@ export async function GET(request: NextRequest) {
     const appIds: Array<'ghadaq' | 'manasik'> = parsed.data.appId
       ? [parsed.data.appId]
       : (['ghadaq', 'manasik'] as const);
+
+    // "Ordered before" filter — customers are linked to orders via
+    // order.userId (a string of the user's _id). Uses the same order
+    // statuses as the customer's orders modal so the two stay
+    // consistent.
+    const hasOrdersFilter = parsed.data.hasOrders;
+    let orderedUserObjectIds: mongoose.Types.ObjectId[] | undefined;
+    if (hasOrdersFilter) {
+      const orderedUserIds = await Order.distinct('userId', {
+        status: {
+          $in: ['paid', 'partial-paid', 'completed', 'refunded', 'cancelled'],
+        },
+      });
+      orderedUserObjectIds = orderedUserIds
+        .map((id) => {
+          if (id instanceof mongoose.Types.ObjectId) return id;
+          if (typeof id === 'string' && mongoose.isValidObjectId(id)) {
+            return new mongoose.Types.ObjectId(id);
+          }
+          return null;
+        })
+        .filter((id): id is mongoose.Types.ObjectId => id !== null);
+    }
 
     const results = await Promise.all(
       appIds.map(async (appId) => {
@@ -231,6 +262,13 @@ export async function GET(request: NextRequest) {
               filterQuery.tier = tierFilter;
             }
           }
+        }
+
+        if (hasOrdersFilter && orderedUserObjectIds) {
+          filterQuery._id =
+            hasOrdersFilter === 'ordered'
+              ? { $in: orderedUserObjectIds }
+              : { $nin: orderedUserObjectIds };
         }
 
         if (andConditions.length > 0) {

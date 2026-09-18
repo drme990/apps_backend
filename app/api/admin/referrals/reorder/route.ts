@@ -3,8 +3,15 @@ import { z } from 'zod';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Referral from '@/lib/models/Referral';
+import Setting from '@/lib/models/Setting';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
+import {
+  DEFAULT_REF_ORDER_KEY,
+  getDefaultRefPositions,
+} from '../default-order/route';
+
+const DEFAULT_REF_IDS = new Set(['MNK-D', 'GHD-D']);
 
 const reorderSchema = z
   .object({
@@ -36,14 +43,37 @@ export async function PUT(request: NextRequest) {
     if (!parsed.success) return parsed.response;
     const { orders } = parsed.data;
 
-    const bulkOps = orders.map((entry) => ({
-      updateOne: {
-        filter: { _id: entry.id },
-        update: { $set: { filterOrder: entry.filterOrder } },
-      },
-    }));
+    // Default ref codes (MNK-D / GHD-D) are virtual — they aren't stored
+    // as Referral documents, so their positions live in the Setting
+    // collection instead.
+    const defaultEntries = orders.filter((entry) =>
+      DEFAULT_REF_IDS.has(entry.id),
+    );
+    const realEntries = orders.filter((entry) => !DEFAULT_REF_IDS.has(entry.id));
 
-    const result = await Referral.bulkWrite(bulkOps);
+    if (defaultEntries.length > 0) {
+      const positions = await getDefaultRefPositions();
+      for (const entry of defaultEntries) {
+        positions[entry.id as keyof typeof positions] = entry.filterOrder;
+      }
+      await Setting.findOneAndUpdate(
+        { key: DEFAULT_REF_ORDER_KEY },
+        { key: DEFAULT_REF_ORDER_KEY, value: positions },
+        { upsert: true },
+      );
+    }
+
+    let modifiedCount = 0;
+    if (realEntries.length > 0) {
+      const bulkOps = realEntries.map((entry) => ({
+        updateOne: {
+          filter: { _id: entry.id },
+          update: { $set: { filterOrder: entry.filterOrder } },
+        },
+      }));
+      const result = await Referral.bulkWrite(bulkOps);
+      modifiedCount = result.modifiedCount;
+    }
 
     await logActivity({
       userId: auth.user.userId,
@@ -57,7 +87,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { modifiedCount: result.modifiedCount },
+      data: { modifiedCount },
     });
   } catch (error) {
     console.error('Error reordering referrals:', error);

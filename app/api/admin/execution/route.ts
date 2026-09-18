@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
     const categoryId = searchParams.get('category');
     const referralId = searchParams.get('referralId');
     const statusParam = searchParams.get('status');
+    const orderType = searchParams.get('orderType');
     const intention = searchParams.get('intention');
     const country = searchParams.get('country');
     const pageParam = searchParams.get('page');
@@ -86,6 +87,22 @@ export async function GET(request: NextRequest) {
     }
     if (referralId) {
       baseMatch.referralId = referralId;
+    }
+
+    // Order type filter: subOrder (isSubOrder), manual (createdByAdminId
+    // set, excluding sub-orders), website (storefront — no admin creator).
+    if (orderType === 'subOrder') {
+      baseMatch.isSubOrder = true;
+    } else if (orderType === 'manual') {
+      baseMatch.isSubOrder = { $ne: true };
+      baseMatch.createdByAdminId = { $exists: true, $nin: [null, ''] };
+    } else if (orderType === 'website') {
+      baseMatch.isSubOrder = { $ne: true };
+      baseMatch.$or = [
+        { createdByAdminId: { $exists: false } },
+        { createdByAdminId: null },
+        { createdByAdminId: '' },
+      ];
     }
     if (country && country !== 'all') {
       baseMatch['billingData.country'] = {

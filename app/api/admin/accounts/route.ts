@@ -23,7 +23,10 @@ export async function GET(request: NextRequest) {
     const filter: Record<string, unknown> = {};
     if (type && type !== 'all') filter.type = type;
     if (isActiveParam !== null) filter.isActive = isActiveParam !== 'false';
-    if (search) filter.name = { $regex: search, $options: 'i' };
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.name = { $regex: escaped, $options: 'i' };
+    }
 
     const [accounts, total] = await Promise.all([
       Account.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),

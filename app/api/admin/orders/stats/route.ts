@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
+    const orderType = searchParams.get('orderType');
     const whatsappState = searchParams.get('whatsappState');
     const specificDate = searchParams.get('date');
     const fromDate = searchParams.get('fromDate');
@@ -100,6 +101,23 @@ export async function GET(request: NextRequest) {
       }
     }
     if (source && source !== 'all') query.source = source;
+    if (orderType === 'subOrder') {
+      query.isSubOrder = true;
+    } else if (orderType === 'manual') {
+      query.isSubOrder = { $ne: true };
+      andConditions.push({
+        createdByAdminId: { $exists: true, $nin: [null, ''] },
+      });
+    } else if (orderType === 'website') {
+      query.isSubOrder = { $ne: true };
+      andConditions.push({
+        $or: [
+          { createdByAdminId: { $exists: false } },
+          { createdByAdminId: null },
+          { createdByAdminId: '' },
+        ],
+      });
+    }
     if (whatsappState && whatsappState !== 'all') {
       query.isWhatsappButtonClicked = whatsappState;
     }

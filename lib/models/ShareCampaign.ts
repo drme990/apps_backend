@@ -12,6 +12,8 @@ export interface IShareCampaign {
   productId: mongoose.Types.ObjectId;
   totalShares: number;
   soldShares: number;
+  /** Portion of soldShares added manually by an admin (display only). */
+  manualShares?: number;
   status: ShareCampaignStatus;
   campaignNumber: number;
   /** Show this campaign's progress on the public product page. */
@@ -42,6 +44,7 @@ const ShareCampaignSchema = new mongoose.Schema<IShareCampaign>(
     },
     totalShares: { type: Number, required: true, min: 2 },
     soldShares: { type: Number, required: true, min: 0, default: 0 },
+    manualShares: { type: Number, min: 0, default: 0 },
     status: {
       type: String,
       required: true,

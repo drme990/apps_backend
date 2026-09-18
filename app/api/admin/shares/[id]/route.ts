@@ -185,9 +185,20 @@ export async function PATCH(
     // Manually reserved shares go through the same increment logic as
     // orders — so overflow creates a new campaign and a full count
     // completes this one. Runs after save() so the stale in-memory
-    // soldShares can't clobber the increment.
+    // soldShares can't clobber the increment. manualShares tracks how
+    // much of a campaign's soldShares came from manual additions so the
+    // admin UI can show the "orders vs manual" breakdown.
     if (addSoldShares !== undefined && addSoldShares > 0) {
-      await incrementShareCampaignSold(campaign._id, addSoldShares);
+      const result = await incrementShareCampaignSold(
+        campaign._id,
+        addSoldShares,
+      );
+      if (result) {
+        await ShareCampaign.updateOne(
+          { _id: result._id },
+          { $inc: { manualShares: addSoldShares } },
+        );
+      }
     }
 
     await logActivity({
@@ -238,6 +249,19 @@ export async function DELETE(
         {
           success: false,
           error: 'Cannot delete a completed campaign',
+        },
+        { status: 400 },
+      );
+    }
+
+    // Campaigns with sold shares can't be deleted — the shares must be
+    // moved to another campaign first so no sale is lost.
+    if (campaign.soldShares > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Cannot delete a campaign that has shares — move its shares to another campaign first',
         },
         { status: 400 },
       );

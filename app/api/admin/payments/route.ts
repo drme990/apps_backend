@@ -50,11 +50,12 @@ export async function GET(request: NextRequest) {
       remainingAmount: { $gt: 0 },
     };
     if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { orderNumber: { $regex: search, $options: 'i' } },
-        { 'billingData.fullName': { $regex: search, $options: 'i' } },
-        { 'billingData.email': { $regex: search, $options: 'i' } },
-        { 'billingData.phone': { $regex: search, $options: 'i' } },
+        { orderNumber: { $regex: escaped, $options: 'i' } },
+        { 'billingData.fullName': { $regex: escaped, $options: 'i' } },
+        { 'billingData.email': { $regex: escaped, $options: 'i' } },
+        { 'billingData.phone': { $regex: escaped, $options: 'i' } },
       ];
     }
 

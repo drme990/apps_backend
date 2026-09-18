@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search')?.trim();
     const categoryId = searchParams.get('category');
     const referralId = searchParams.get('referralId');
+    const orderType = searchParams.get('orderType');
     const intention = searchParams.get('intention');
     const country = searchParams.get('country');
     const fromDate = searchParams.get('fromDate');
@@ -48,6 +49,19 @@ export async function GET(request: NextRequest) {
     }
     if (referralId) {
       baseMatch.referralId = referralId;
+    }
+    if (orderType === 'subOrder') {
+      baseMatch.isSubOrder = true;
+    } else if (orderType === 'manual') {
+      baseMatch.isSubOrder = { $ne: true };
+      baseMatch.createdByAdminId = { $exists: true, $nin: [null, ''] };
+    } else if (orderType === 'website') {
+      baseMatch.isSubOrder = { $ne: true };
+      baseMatch.$or = [
+        { createdByAdminId: { $exists: false } },
+        { createdByAdminId: null },
+        { createdByAdminId: '' },
+      ];
     }
 
     // Category filter: look up category products then match order items.

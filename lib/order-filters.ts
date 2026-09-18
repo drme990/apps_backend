@@ -61,6 +61,7 @@ export async function buildAdminOrdersQuery(
     const referralId = searchParams.get('referralId');
     const search = searchParams.get('search');
     const source = searchParams.get('source');
+    const orderType = searchParams.get('orderType');
     const whatsappState = searchParams.get('whatsappState');
     const categoryId = searchParams.get('category');
     const intention = searchParams.get('intention');
@@ -129,6 +130,30 @@ export async function buildAdminOrdersQuery(
         }
     }
     if (source && source !== 'all') query.source = source;
+
+    // Order type filter:
+    // - subOrder: orders created via the sub-order flow (isSubOrder)
+    // - manual:   admin-created orders (createdByAdminId set), excluding
+    //             sub-orders which also carry createdByAdminId
+    // - website:  storefront orders — no admin creator, not a sub-order
+    if (orderType === 'subOrder') {
+        query.isSubOrder = true;
+    } else if (orderType === 'manual') {
+        query.isSubOrder = { $ne: true };
+        andConditions.push({
+            createdByAdminId: { $exists: true, $nin: [null, ''] },
+        });
+    } else if (orderType === 'website') {
+        query.isSubOrder = { $ne: true };
+        andConditions.push({
+            $or: [
+                { createdByAdminId: { $exists: false } },
+                { createdByAdminId: null },
+                { createdByAdminId: '' },
+            ],
+        });
+    }
+
     if (whatsappState && whatsappState !== 'all') {
         query.isWhatsappButtonClicked = whatsappState;
     }
