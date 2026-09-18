@@ -18,6 +18,11 @@ import { parseJsonBody } from '@/lib/validation/http';
 import { subOrderCreateSchema } from '@/lib/validation/schemas';
 import { MANUAL_ORDER_PRODUCT_ID } from '@/lib/constants/manual-order';
 import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generation';
+import {
+  matchReservationOption,
+  normalizeReservationFields,
+  type ReservationFieldDefinition,
+} from '@/lib/reservation-fields';
 
 export const maxDuration = 120;
 
@@ -83,6 +88,16 @@ export async function POST(
 
     let totalAmount = 0;
 
+    // Merged reservation field definitions across the selected products —
+    // the same union the sub-order modal renders. The first product
+    // contributing a key wins for label/type; `required` is the OR;
+    // select/radio options are the union across products; the tightest
+    // maxLength wins.
+    const mergedReservationFieldDefs = new Map<
+      string,
+      ReservationFieldDefinition
+    >();
+
     for (const item of items) {
       if (item.type === 'custom') {
         if (item.price <= 0) {
@@ -129,6 +144,36 @@ export async function POST(
           { success: false, error: `Product unavailable: ${product.name.en || product.name.ar}` },
           { status: 400 },
         );
+      }
+
+      // Merge this product's reservation field definitions for the
+      // config-driven validation below.
+      for (const field of normalizeReservationFields(product.reservationFields)) {
+        const existing = mergedReservationFieldDefs.get(field.key);
+        if (!existing) {
+          mergedReservationFieldDefs.set(field.key, {
+            ...field,
+            options: [...(field.options ?? [])],
+          });
+          continue;
+        }
+        if (field.required) existing.required = true;
+        if (field.options?.length) {
+          const seen = new Set(existing.options?.map((o) => o.ar) ?? []);
+          for (const opt of field.options) {
+            if (!seen.has(opt.ar)) {
+              existing.options = [...(existing.options ?? []), opt];
+              seen.add(opt.ar);
+            }
+          }
+        }
+        if (
+          typeof field.maxLength === 'number' &&
+          field.maxLength > 0 &&
+          (!existing.maxLength || field.maxLength < existing.maxLength)
+        ) {
+          existing.maxLength = field.maxLength;
+        }
       }
 
       const activeSizeIndex =
@@ -267,7 +312,12 @@ export async function POST(
       resolvedExecutionDate = trimmed;
     }
 
-    // Build reservation answers array (same structure as create route)
+    // Build reservation answers from the merged product field config —
+    // same semantics as checkout and the create route: only fields the
+    // selected products accept are stored, select/radio values must
+    // match a configured option (normalized to the canonical Arabic
+    // value), text/textarea respect maxLength, pictures are stored as a
+    // JSON URL array.
     const reservationAnswers: Array<{
       key: string;
       label: { ar: string; en: string };
@@ -275,45 +325,108 @@ export async function POST(
       value: string;
     }> = [];
 
+    const reservationInputValueFor = (key: string): string => {
+      const entry = (reservationInput || []).find(
+        (r): r is { key: string; value: string } =>
+          typeof r === 'object' &&
+          r !== null &&
+          r.key === key &&
+          typeof r.value === 'string',
+      );
+      return entry?.value?.trim() ?? '';
+    };
+
     let hasExecutionDateField = false;
 
-    const labels: Record<string, { ar: string; en: string }> = {
-      intention: { ar: 'النية', en: 'Intention' },
-      sacrificeFor: { ar: 'اسم الشخص المؤدى عنه', en: 'The person on whose behalf' },
-      gender: { ar: 'الجنس', en: 'Gender' },
-      isAlive: { ar: 'الحالة', en: 'Status' },
-      shortDuaa: { ar: 'دعاء مختصر', en: 'Short Duaa' },
-      photo: { ar: 'صورة', en: 'Photo' },
-      executionDate: { ar: 'تاريخ التنفيذ', en: 'Execution Date' },
-    };
-    const types: Record<string, string> = {
-      intention: 'select',
-      sacrificeFor: 'text',
-      gender: 'radio',
-      isAlive: 'radio',
-      shortDuaa: 'textarea',
-      photo: 'picture',
-      executionDate: 'date',
-    };
+    for (const field of mergedReservationFieldDefs.values()) {
+      let finalValue = reservationInputValueFor(field.key);
 
-    for (const entry of reservationInput || []) {
-      const key = entry.key;
-      if (key === 'executionDate') {
+      if (field.key === 'executionDate') {
         hasExecutionDateField = true;
         reservationAnswers.push({
-          key,
-          label: labels[key] || { ar: key, en: key },
-          type: types[key] || 'date',
+          key: field.key,
+          label: field.label,
+          type: field.type,
           value: resolvedExecutionDate,
         });
-      } else {
-        reservationAnswers.push({
-          key,
-          label: labels[key] || { ar: key, en: key },
-          type: types[key] || 'text',
-          value: entry.value.trim(),
-        });
+        continue;
       }
+
+      if (field.required && !finalValue) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Missing required reservation field(s): ${field.key}`,
+          },
+          { status: 400 },
+        );
+      }
+
+      if (!finalValue) continue;
+
+      if (
+        (field.type === 'text' || field.type === 'textarea') &&
+        field.maxLength &&
+        finalValue.length > field.maxLength
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Reservation value exceeds max length (${field.maxLength})`,
+          },
+          { status: 400 },
+        );
+      }
+
+      if (
+        (field.type === 'select' || field.type === 'radio') &&
+        field.options &&
+        field.options.length > 0
+      ) {
+        const matchedOption = matchReservationOption(field, finalValue);
+        if (!matchedOption) {
+          return NextResponse.json(
+            { success: false, error: 'Invalid reservation option' },
+            { status: 400 },
+          );
+        }
+        finalValue = matchedOption.ar;
+      }
+
+      if (field.type === 'picture') {
+        // Normalize to the checkout storage format: a JSON array of
+        // http(s) image URLs (legacy single-URL values are wrapped).
+        let imageValues: string[] = [];
+        try {
+          const parsed = JSON.parse(finalValue);
+          if (Array.isArray(parsed)) {
+            imageValues = parsed.filter(
+              (v): v is string => typeof v === 'string' && v.length > 0,
+            );
+          }
+        } catch {
+          // Not JSON — treat as a single URL (legacy)
+        }
+        if (imageValues.length === 0 && finalValue.length > 0) {
+          imageValues = [finalValue];
+        }
+
+        imageValues = imageValues.slice(0, 4);
+        if (imageValues.some((v) => !/^https?:\/\//i.test(v))) {
+          return NextResponse.json(
+            { success: false, error: 'Invalid reservation picture format' },
+            { status: 400 },
+          );
+        }
+        finalValue = JSON.stringify(imageValues);
+      }
+
+      reservationAnswers.push({
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        value: finalValue,
+      });
     }
 
     // Guarantee executionDate exists on EVERY order
