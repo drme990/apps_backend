@@ -196,7 +196,18 @@ export async function PATCH(
       if (result) {
         await ShareCampaign.updateOne(
           { _id: result._id },
-          { $inc: { manualShares: addSoldShares } },
+          {
+            $inc: { manualShares: addSoldShares },
+            $push: {
+              manualShareEntries: {
+                count: addSoldShares,
+                addedAt: new Date(),
+                addedById: auth.user.userId,
+                addedByName: auth.user.name,
+                addedByEmail: auth.user.email,
+              },
+            },
+          },
         );
       }
     }

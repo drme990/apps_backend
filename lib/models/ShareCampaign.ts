@@ -14,6 +14,14 @@ export interface IShareCampaign {
   soldShares: number;
   /** Portion of soldShares added manually by an admin (display only). */
   manualShares?: number;
+  /** Log of manual additions — count, date, and the admin who added them. */
+  manualShareEntries?: Array<{
+    count: number;
+    addedAt: Date;
+    addedById?: string;
+    addedByName?: string;
+    addedByEmail?: string;
+  }>;
   status: ShareCampaignStatus;
   campaignNumber: number;
   /** Show this campaign's progress on the public product page. */
@@ -45,6 +53,18 @@ const ShareCampaignSchema = new mongoose.Schema<IShareCampaign>(
     totalShares: { type: Number, required: true, min: 2 },
     soldShares: { type: Number, required: true, min: 0, default: 0 },
     manualShares: { type: Number, min: 0, default: 0 },
+    manualShareEntries: {
+      type: [
+        {
+          count: { type: Number, required: true, min: 1 },
+          addedAt: { type: Date, required: true },
+          addedById: { type: String, default: '' },
+          addedByName: { type: String, default: '' },
+          addedByEmail: { type: String, default: '' },
+        },
+      ],
+      default: [],
+    },
     status: {
       type: String,
       required: true,

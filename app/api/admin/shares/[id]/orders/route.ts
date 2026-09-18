@@ -44,7 +44,11 @@ export async function GET(
     const totalPages = Math.ceil(total / maxLimit);
     return NextResponse.json({
       success: true,
-      data: { orders, pagination: { totalPages, total } },
+      data: {
+        orders,
+        manualEntries: campaign.manualShareEntries || [],
+        pagination: { totalPages, total },
+      },
     });
   } catch (error) {
     console.error('Error fetching campaign orders:', error);

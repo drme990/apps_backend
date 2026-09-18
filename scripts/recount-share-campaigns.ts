@@ -283,6 +283,7 @@ async function recount() {
             $set: {
               soldShares: newSold,
               manualShares: 0,
+              manualShareEntries: [],
               ...(completes
                 ? { status: 'completed', completedAt: new Date() }
                 : {}),

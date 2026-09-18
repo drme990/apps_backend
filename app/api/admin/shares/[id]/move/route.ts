@@ -125,13 +125,44 @@ export async function POST(
     const manualMoved = Math.min(sourceManual, amount);
     source.soldShares = Math.max(0, source.soldShares - amount);
     source.manualShares = Math.max(0, sourceManual - manualMoved);
+
+    // Move manual entries (most recent first, split if partial) so the
+    // destination keeps the original add date + admin for each entry.
+    const movedEntries: Array<{
+      count: number;
+      addedAt: Date;
+      addedById?: string;
+      addedByName?: string;
+      addedByEmail?: string;
+    }> = [];
+    if (manualMoved > 0) {
+      const entries = [...(source.manualShareEntries || [])];
+      let remaining = manualMoved;
+      while (remaining > 0 && entries.length > 0) {
+        const last = entries[entries.length - 1];
+        if (last.count <= remaining) {
+          movedEntries.unshift(entries.pop()!);
+          remaining -= last.count;
+        } else {
+          movedEntries.unshift({ ...last, count: remaining });
+          last.count -= remaining;
+          remaining = 0;
+        }
+      }
+      source.manualShareEntries = entries;
+    }
     await source.save();
 
     // Credit manual shares on whichever campaign received them
     if (manualMoved > 0) {
       await ShareCampaign.updateOne(
         { _id: result._id },
-        { $inc: { manualShares: manualMoved } },
+        {
+          $inc: { manualShares: manualMoved },
+          ...(movedEntries.length > 0
+            ? { $push: { manualShareEntries: { $each: movedEntries } } }
+            : {}),
+        },
       );
     }
 
