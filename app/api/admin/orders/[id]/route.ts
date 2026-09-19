@@ -18,6 +18,7 @@ import Booking from '@/lib/models/Booking';
 import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
+import { getUserModelByAppId } from '@/lib/auth/app-users';
 
 /** Currencies supported by the EasyKash payment gateway. */
 const EASYKASH_SUPPORTED_CURRENCIES = new Set(['SAR', 'EGP', 'USD', 'EUR']);
@@ -225,11 +226,34 @@ export async function GET(
       }
     }
 
+    // ── User's detected country (IP-based, stored on the user doc) ──
+    // Order.userId is a polymorphic ref — order.source picks the
+    // right user collection. Non-fatal: null when guest/missing.
+    let detectedCountry: string | null = null;
+    if (order.userId && order.source) {
+      try {
+        const UserModel = getUserModelByAppId(order.source) as unknown as {
+          findById(id: unknown): {
+            select(fields: string): {
+              lean(): Promise<{ detectedCountry?: string } | null>;
+            };
+          };
+        };
+        const user = await UserModel.findById(order.userId)
+          .select('detectedCountry')
+          .lean();
+        detectedCountry = user?.detectedCountry || null;
+      } catch {
+        detectedCountry = null;
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
         ...sanitizedOrder,
         isGuest: hasIsGuest ? order.isGuest : !hasUserId,
+        detectedCountry,
         ...(subOrderSummary ? { subOrder: subOrderSummary } : {}),
       },
     });

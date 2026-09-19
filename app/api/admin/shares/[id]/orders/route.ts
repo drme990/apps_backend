@@ -3,6 +3,7 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import ShareCampaign from '@/lib/models/ShareCampaign';
 import Order from '@/lib/models/Order';
+import { getUserModelByAppId, type AppId } from '@/lib/auth/app-users';
 
 export async function GET(
   request: NextRequest,
@@ -41,11 +42,60 @@ export async function GET(
       Order.countDocuments(filter),
     ]);
 
+    // Attach each user's detectedCountry — Order.userId is a
+    // polymorphic ref, so group userIds by order.source and query
+    // each user collection once.
+    const userIdsBySource = new Map<string, Set<string>>();
+    for (const order of orders) {
+      if (order.userId && order.source) {
+        const set = userIdsBySource.get(order.source) || new Set<string>();
+        set.add(String(order.userId));
+        userIdsBySource.set(order.source, set);
+      }
+    }
+
+    const detectedByUser = new Map<string, string>();
+    await Promise.all(
+      [...userIdsBySource].map(async ([source, ids]) => {
+        try {
+          const UserModel = getUserModelByAppId(
+            source as AppId,
+          ) as unknown as {
+            find(filter: unknown): {
+              select(fields: string): {
+                lean(): Promise<
+                  Array<{ _id: unknown; detectedCountry?: string }>
+                >;
+              };
+            };
+          };
+          const users = await UserModel.find({
+            _id: { $in: [...ids] },
+          })
+            .select('detectedCountry')
+            .lean();
+          for (const u of users) {
+            if (u.detectedCountry) {
+              detectedByUser.set(String(u._id), u.detectedCountry);
+            }
+          }
+        } catch {
+          // non-fatal — orders just show no detected country
+        }
+      }),
+    );
+
+    const enrichedOrders = orders.map((order) => ({
+      ...order,
+      detectedCountry:
+        (order.userId && detectedByUser.get(String(order.userId))) || null,
+    }));
+
     const totalPages = Math.ceil(total / maxLimit);
     return NextResponse.json({
       success: true,
       data: {
-        orders,
+        orders: enrichedOrders,
         manualEntries: campaign.manualShareEntries || [],
         pagination: { totalPages, total },
       },
