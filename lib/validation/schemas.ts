@@ -1,5 +1,17 @@
 import { z } from 'zod';
 import { validatePhoneNumber } from './phone-validation';
+import { isValidCustomerName } from '@/lib/utils/name';
+
+// EasyKash rejects names containing special characters
+// (onlyNumbersAndCharacters). Reject them at the API boundary so stored
+// names are always gateway-safe.
+const customerNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(isValidCustomerName, {
+    message: 'Name can only contain letters and numbers',
+  });
 
 // ISO 8601 datetime with optional timezone offset (e.g. 2026-06-24T02:00:00+02:00 or 2026-06-24T02:00:00Z)
 const isoDateTimeRegex =
@@ -37,7 +49,7 @@ export const loginSchema = z
 
 export const registerSchema = z
   .object({
-    name: z.string().trim().min(1),
+    name: customerNameSchema,
     email: z.string().email(),
     password: z.string().min(6),
     phone: z
@@ -96,7 +108,7 @@ export const checkoutSchema = z
     currency: z.string().trim().min(1),
     billingData: z
       .object({
-        fullName: z.string().trim().min(1),
+        fullName: customerNameSchema,
         email: z.string().email(),
         phone: z
           .string()
@@ -807,7 +819,16 @@ export const manualOrderCreateSchema = z
     referralId: z.string().trim().optional(),
     billingData: z
       .object({
-        fullName: z.string().trim().optional().default(''),
+        // Optional (sacrificeFor fallback exists) — validate only when
+        // a non-empty name is provided.
+        fullName: z
+          .string()
+          .trim()
+          .optional()
+          .default('')
+          .refine((name) => !name || isValidCustomerName(name), {
+            message: 'Name can only contain letters and numbers',
+          }),
         email: z.string().email(),
         phone: z.string().trim().min(1),
         country: z.string().trim().min(1),

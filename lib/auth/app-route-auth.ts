@@ -27,6 +27,7 @@ import {
 } from '@/lib/services/partial-payment-guard';
 import { validateReferralCode } from '@/lib/services/referral-validation';
 import { getClientIp, getClientCountry, isValidIp } from '@/lib/utils/ip';
+import { isValidCustomerName } from '@/lib/utils/name';
 import { isIpBanned } from '@/lib/models/BannedIP';
 
 type RouteApp = 'admin_panel' | 'ghadaq' | 'manasik';
@@ -56,7 +57,14 @@ type AuthUserModel = mongoose.Model<AuthUserDoc>;
 
 const updateProfileSchema = z
   .object({
-    name: z.string().trim().min(1).optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .refine(isValidCustomerName, {
+        message: 'Name can only contain letters and numbers',
+      })
+      .optional(),
     email: z.string().email().optional(),
     phone: z.string().trim().optional(),
     country: z.string().trim().optional(),
@@ -80,7 +88,13 @@ const updateProfileSchema = z
   );
 
 const setupAccountSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required'),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Name is required')
+    .refine(isValidCustomerName, {
+      message: 'Name can only contain letters and numbers',
+    }),
   email: z.string().email('Invalid email'),
   country: z.string().trim().min(1, 'Country is required'),
   password: z.string().min(6, 'Password must be at least 6 characters'),

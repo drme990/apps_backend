@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { sanitizeCustomerNameForGateway } from '@/lib/utils/name';
 
 const EASYKASH_BASE_URL = 'https://back.easykash.net/api';
 const DEFAULT_CASH_EXPIRY_HOURS = 3;
@@ -115,7 +116,11 @@ export async function createPayment(
     currency: params.currency.toUpperCase(),
     paymentOptions: params.paymentOptions ?? [1, 2, 4, 5, 6, 31],
     cashExpiry: params.cashExpiry ?? getEasykashCashExpiryHours(),
-    name: params.name,
+    // EasyKash rejects names containing special characters
+    // (onlyNumbersAndCharacters). Sanitize here so orders created before
+    // input validation existed — or with names like "محمّد" (tashkeel),
+    // "O'Brien", "John_Doe" — still pay successfully.
+    name: sanitizeCustomerNameForGateway(params.name),
     email: params.email,
     mobile: params.mobile,
     redirectUrl: params.redirectUrl,
