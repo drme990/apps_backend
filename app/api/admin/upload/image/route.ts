@@ -6,6 +6,7 @@ import {
   deleteFileFromR2,
   isR2Url,
   extractR2Key,
+  isDesignOwnedKey,
 } from '@/lib/services/r2';
 import { captureException } from '@/lib/services/error-monitor';
 import { validateInput } from '@/lib/validation/http';
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
     // Optionally delete the old image after the new upload succeeds.
     if (oldUrl && isR2Url(oldUrl)) {
       const key = extractR2Key(oldUrl);
-      if (key && key !== result.key) {
+      if (key && key !== result.key && !isDesignOwnedKey(key)) {
         await deleteFileFromR2(key);
       }
     }
@@ -132,6 +133,13 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'Could not extract object key from URL' },
         { status: 400 },
+      );
+    }
+
+    if (isDesignOwnedKey(key)) {
+      return NextResponse.json(
+        { success: false, error: 'Design assets are managed by the design system and cannot be deleted here' },
+        { status: 403 },
       );
     }
 

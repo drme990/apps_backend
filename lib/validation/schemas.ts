@@ -819,14 +819,11 @@ export const manualOrderCreateSchema = z
     referralId: z.string().trim().optional(),
     billingData: z
       .object({
-        // Optional (sacrificeFor fallback exists) — validate only when
-        // a non-empty name is provided.
         fullName: z
           .string()
           .trim()
-          .optional()
-          .default('')
-          .refine((name) => !name || isValidCustomerName(name), {
+          .min(1)
+          .refine(isValidCustomerName, {
             message: 'Name can only contain letters and numbers',
           }),
         email: z.string().email(),

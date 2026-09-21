@@ -312,6 +312,41 @@ export async function generateDesignsForOrder(
 }
 
 /**
+ * Short-TTL cache for the referral list. Referrals are admin-managed
+ * and change rarely, but `buildOrderDataPayload` runs once per product
+ * per order — scanning the whole collection every time adds a pointless
+ * round trip to every design generation. 60s is fresh enough for the
+ * `ref.phoneNumbers` field (a newly-added referral's number appears on
+ * designs within a minute at worst).
+ */
+const REFERRALS_CACHE_TTL_MS = 60_000;
+let referralsCache: {
+  at: number;
+  data: Array<{ referralId: string; phone: string; name: string }>;
+} | null = null;
+
+async function loadReferrals(): Promise<
+  Array<{ referralId: string; phone: string; name: string }>
+> {
+  if (referralsCache && Date.now() - referralsCache.at < REFERRALS_CACHE_TTL_MS) {
+    return referralsCache.data;
+  }
+  try {
+    const allReferrals = await Referral.find().lean();
+    const data = allReferrals.map((r) => ({
+      referralId: r.referralId,
+      phone: r.phone,
+      name: r.name,
+    }));
+    referralsCache = { at: Date.now(), data };
+    return data;
+  } catch {
+    // Referral collection not available — skip (don't cache failures)
+    return [];
+  }
+}
+
+/**
  * Build the order data payload sent to the design app.
  *
  * The design app's dynamic field resolver uses paths like
@@ -329,18 +364,7 @@ export async function buildOrderDataPayload(
     }
   }
 
-  let referrals: Array<{ referralId: string; phone: string; name: string }> =
-    [];
-  try {
-    const allReferrals = await Referral.find().lean();
-    referrals = allReferrals.map((r) => ({
-      referralId: r.referralId,
-      phone: r.phone,
-      name: r.name,
-    }));
-  } catch {
-    // Referral collection not available — skip
-  }
+  const referrals = await loadReferrals();
 
   const referralId =
     order.referralId ||

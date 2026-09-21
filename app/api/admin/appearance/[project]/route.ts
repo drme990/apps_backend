@@ -6,6 +6,26 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { appearanceUpdateSchema } from '@/lib/validation/schemas';
 import { AudioReviewInput, validateAudioMains } from '@/lib/audio-main-logic';
+import { cleanupRemovedAppearanceMedia } from '@/lib/services/media-cleanup';
+
+/** Every field on an appearance doc that can hold an R2 URL. */
+function collectAppearanceUrls(doc: {
+  worksImages?: { row1?: string[]; row2?: string[] };
+  productsBanners?: Array<{ imageUrl?: string }>;
+  audioReviews?: Array<{ url?: string; userImage?: string }>;
+}): string[] {
+  const urls: string[] = [];
+  urls.push(...(doc.worksImages?.row1 ?? []));
+  urls.push(...(doc.worksImages?.row2 ?? []));
+  for (const b of doc.productsBanners ?? []) {
+    if (b.imageUrl) urls.push(b.imageUrl);
+  }
+  for (const a of doc.audioReviews ?? []) {
+    if (a.url) urls.push(a.url);
+    if (a.userImage) urls.push(a.userImage);
+  }
+  return urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
+}
 
 const VALID_PROJECTS = ['ghadaq', 'manasik', 'shared'];
 
@@ -77,6 +97,13 @@ export async function PUT(
       body.audioReviews = validateAudioMains(body.audioReviews);
     }
 
+    // Snapshot the previous doc's URLs so removed files can be cleaned
+    // from R2 after a successful save — never before (a cancelled or
+    // failed save must not leave broken references on the live site).
+    const previousUrls = collectAppearanceUrls(
+      (await Appearance.findOne({ project }).lean()) ?? {},
+    );
+
     const appearance = await Appearance.findOneAndUpdate(
       { project },
       { ...body, project },
@@ -86,6 +113,16 @@ export async function PUT(
         runValidators: true,
       },
     );
+
+    if (previousUrls.length > 0) {
+      const keptUrls = new Set(collectAppearanceUrls(appearance.toObject()));
+      const removedUrls = previousUrls.filter((u) => !keptUrls.has(u));
+      if (removedUrls.length > 0) {
+        await cleanupRemovedAppearanceMedia(removedUrls, project).catch((err) =>
+          console.error('[PUT /api/admin/appearance] media cleanup failed:', err),
+        );
+      }
+    }
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,

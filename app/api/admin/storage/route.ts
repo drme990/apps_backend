@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminPageAccess } from '@/lib/auth';
 import { listR2Objects, deleteR2Folder, deleteMultipleR2Objects, type R2FolderStructure } from '@/lib/services/r2';
 
 // Public CDN URL for R2 objects (e.g. https://storage.manasik.net)
@@ -45,6 +46,9 @@ function clearCache(prefix?: string): void {
 // GET /api/storage - List objects in R2
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAdminPageAccess('storage-manager');
+    if ('error' in auth) return auth.error;
+
     const { searchParams } = new URL(request.url);
     const prefix = searchParams.get('prefix') || '';
 
@@ -81,6 +85,13 @@ const PROTECTED_FOLDER_PREFIXES = [
   // the template's bg URL by reference). Bulk
   // deletion would break all templates and
   // their generated order designs.
+  'design/projects-images/',   // layer images referenced by URL inside
+  // project `layers` data — the key has no projectId segment so the same
+  // image is commonly shared between a template, its duplicates, and the
+  // order designs inflated from it. Deleting here breaks live designs.
+  'design/orders-design/versions/',  // immutable version archives — every
+  // `design_order_versions` doc points at one; deleting breaks "restore
+  // version" in the admin panel.
 ];
 
 function isProtectedKey(key: string): boolean {
@@ -89,12 +100,23 @@ function isProtectedKey(key: string): boolean {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const auth = await requireAdminPageAccess('storage-manager');
+    if ('error' in auth) return auth.error;
+
     const body = await request.json();
     const { keys, folder } = body;
 
     if (folder) {
-      // Block deletion of protected shared folders
-      if (PROTECTED_FOLDER_PREFIXES.some((prefix) => folder === prefix || folder.startsWith(prefix))) {
+      // Block deletion of protected shared folders — in BOTH directions:
+      // the folder itself / anything inside it (`folder.startsWith(prefix)`)
+      // AND any parent of a protected folder (`prefix.startsWith(folder)`),
+      // so deleting "design/" can't wipe the protected subtrees.
+      const normalizedFolder = folder.endsWith('/') ? folder : `${folder}/`;
+      if (PROTECTED_FOLDER_PREFIXES.some((prefix) =>
+        normalizedFolder === prefix ||
+        normalizedFolder.startsWith(prefix) ||
+        prefix.startsWith(normalizedFolder),
+      )) {
         return NextResponse.json(
           {
             success: false,

@@ -168,16 +168,7 @@ export async function POST(request: NextRequest) {
 
     // ── Resolve the effective customer name ──
     const reservationInput = Array.isArray(reservationData) ? reservationData : [];
-    const firstSacrificeName = reservationInput
-      .find((r): r is { key: string; value: string } => r.key === 'sacrificeFor')
-      ?.value?.split('\n')
-      .map((n) => n.trim())
-      .filter(Boolean)[0];
-    const effectiveFullName = billingData.fullName.trim()
-      ? billingData.fullName.trim()
-      : firstSacrificeName
-        ? `User_${firstSacrificeName}`
-        : '';
+    const effectiveFullName = billingData.fullName.trim();
 
     // ── Resolve or create the customer user ──
     let resolvedUserId = userId;

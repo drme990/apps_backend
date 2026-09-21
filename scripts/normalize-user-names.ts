@@ -79,7 +79,7 @@ function getMongoUri(): string {
     return cliUriArg.slice('--uri='.length);
   }
 
-  return process.env.DATA_BASE_URL || 'mongodb+srv://manasik-new:50TqqpcXYArAI7nO@manasik.aclzyuu.mongodb.net/manasik';
+  return process.env.DATA_BASE_URL || 'mongodb://localhost:27017/manasik';
 }
 
 type UserDoc = Document & {

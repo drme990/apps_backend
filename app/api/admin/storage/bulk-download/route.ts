@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { requireAdminPageAccess } from '@/lib/auth';
 import { s3Client } from '@/lib/services/r2';
 import JSZip from 'jszip';
 
@@ -13,6 +14,9 @@ async function streamToBuffer(stream: AsyncIterable<Uint8Array>): Promise<Buffer
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAdminPageAccess('storage-manager');
+    if ('error' in auth) return auth.error;
+
     const body = await request.json();
     const { keys, folderName } = body;
 

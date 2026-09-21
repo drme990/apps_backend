@@ -7,6 +7,7 @@ import Transaction from '@/lib/models/Transaction';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { transactionUpdateSchema } from '@/lib/validation/schemas';
+import { cleanupRemovedTransactionAttachment } from '@/lib/services/media-cleanup';
 
 export async function PUT(
   request: NextRequest,
@@ -63,6 +64,18 @@ export async function PUT(
       });
     }
 
+    // Clean up the replaced attachment AFTER the save — never before.
+    // If another transaction references the same URL it's kept.
+    if (
+      oldTransaction?.attachment &&
+      oldTransaction.attachment !== transaction.attachment
+    ) {
+      await cleanupRemovedTransactionAttachment(
+        oldTransaction.attachment,
+        payoutId,
+      );
+    }
+
     await logActivity({
       userId: auth.user.userId,
       userName: auth.user.name,
@@ -112,6 +125,15 @@ export async function DELETE(
     await Supplier.findByIdAndUpdate(id, {
       $inc: { balance: -(transaction.amount || 0), totalPayouts: -(transaction.amount || 0) },
     });
+
+    // Clean up the attachment file now that its transaction is gone —
+    // kept only if another transaction still references the same URL.
+    if (transaction.attachment) {
+      await cleanupRemovedTransactionAttachment(
+        transaction.attachment,
+        payoutId,
+      );
+    }
 
     await logActivity({
       userId: auth.user.userId,

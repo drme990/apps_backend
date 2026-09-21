@@ -8,6 +8,17 @@ interface ZipItemInput {
 }
 
 /**
+ * Per-image fetch timeout. Without it a hung CDN connection stalls the
+ * whole ZIP until the platform kills the request. 30s is generous for
+ * a single JPG; failures are skipped (allSettled) so one bad image
+ * doesn't fail the whole download.
+ */
+const FETCH_TIMEOUT_MS = 30_000;
+
+/** Max items per ZIP — bounds memory (each JPG is buffered in RAM). */
+const MAX_ITEMS = 200;
+
+/**
  * POST /api/admin/order-designs/download-zip
  *
  * Bundles a set of admin-selected order designs into a single ZIP file
@@ -30,18 +41,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (items.length > MAX_ITEMS) {
+      return NextResponse.json(
+        { success: false, error: `Too many designs selected (max ${MAX_ITEMS})` },
+        { status: 400 },
+      );
+    }
+
     const zip = new JSZip();
     const usedNames = new Set<string>();
 
     const results = await Promise.allSettled(
       items.map(async (item) => {
         if (!item?.url) throw new Error('Missing url');
-        const response = await fetch(item.url);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch ${item.url}: ${response.status}`);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        try {
+          const response = await fetch(item.url, { signal: controller.signal });
+          if (!response.ok) {
+            throw new Error(`Failed to fetch ${item.url}: ${response.status}`);
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          return { buffer: Buffer.from(arrayBuffer), filename: item.filename || item.url.split('/').pop() || 'design.jpg' };
+        } finally {
+          clearTimeout(timer);
         }
-        const arrayBuffer = await response.arrayBuffer();
-        return { buffer: Buffer.from(arrayBuffer), filename: item.filename || item.url.split('/').pop() || 'design.jpg' };
       }),
     );
 

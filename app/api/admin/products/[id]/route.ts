@@ -7,6 +7,7 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { productUpdateSchema } from '@/lib/validation/schemas';
 import { normalizeProductMedia } from '@/lib/product-media';
+import { cleanupRemovedProductMedia } from '@/lib/services/media-cleanup';
 
 export async function GET(
   _request: NextRequest,
@@ -30,10 +31,10 @@ export async function GET(
     }
 
     const normalizedMedia = normalizeProductMedia(product.media);
-    const productWithLegacy = product as typeof product & {
-      images?: unknown;
+    const safeProduct = {
+      ...(product as typeof product & { images?: unknown }),
     };
-    const { images: _legacyImages, ...safeProduct } = productWithLegacy;
+    delete safeProduct.images;
 
     return NextResponse.json({
       success: true,
@@ -99,11 +100,10 @@ export async function PUT(
     const product = await doc.save();
 
     const productObject = product.toObject();
-    const createdWithLegacy = productObject as typeof productObject & {
-      images?: unknown;
+    const safeCreatedProduct = {
+      ...(productObject as typeof productObject & { images?: unknown }),
     };
-    const { images: _legacyCreateImages, ...safeCreatedProduct } =
-      createdWithLegacy;
+    delete safeCreatedProduct.images;
     const responseMedia = normalizeProductMedia(productObject.media);
 
     await logActivity({
@@ -191,15 +191,35 @@ export async function PATCH(
       delete updatePayload.reservationFields;
     }
 
+    const previousMediaUrls = hasMedia
+      ? (doc.media || [])
+        .map((m: { url?: string }) => m.url)
+        .filter((u): u is string => typeof u === 'string' && u.length > 0)
+      : [];
+
     doc.set(updatePayload);
     const product = await doc.save();
 
+    // Delete R2 files for media removed by this update — AFTER the save,
+    // and only when no other product (duplicates share media URLs) or
+    // appearance banner still references the same URL.
+    if (hasMedia && previousMediaUrls.length > 0) {
+      const keptUrls = new Set(
+        normalizeProductMedia(body.media).map((m) => m.url),
+      );
+      const removedUrls = previousMediaUrls.filter((u) => !keptUrls.has(u));
+      if (removedUrls.length > 0) {
+        await cleanupRemovedProductMedia(removedUrls, id).catch((err) =>
+          console.error('[PUT /api/admin/products/[id]] media cleanup failed:', err),
+        );
+      }
+    }
+
     const productObject = product.toObject();
-    const createdWithLegacy = productObject as typeof productObject & {
-      images?: unknown;
+    const safeCreatedProduct = {
+      ...(productObject as typeof productObject & { images?: unknown }),
     };
-    const { images: _legacyCreateImages, ...safeCreatedProduct } =
-      createdWithLegacy;
+    delete safeCreatedProduct.images;
     const responseMedia = normalizeProductMedia(productObject.media);
 
     await logActivity({

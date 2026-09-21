@@ -6,6 +6,7 @@ import {
   deleteVideoFromR2,
   isR2Url,
   extractR2Key,
+  isDesignOwnedKey,
 } from '@/lib/services/r2';
 import { validateInput } from '@/lib/validation/http';
 import { z } from 'zod';
@@ -95,9 +96,9 @@ export async function POST(request: NextRequest) {
       uploadedFile.type === resolvedType
         ? uploadedFile
         : new File([uploadedFile], uploadedFile.name, {
-            type: resolvedType,
-            lastModified: Date.now(),
-          });
+          type: resolvedType,
+          lastModified: Date.now(),
+        });
 
     const result = await uploadVideoToR2(uploadFile, 'audio');
 
@@ -144,6 +145,12 @@ export async function DELETE(request: NextRequest) {
 
     if (isR2Url(url)) {
       const key = extractR2Key(url);
+      if (key && isDesignOwnedKey(key)) {
+        return NextResponse.json(
+          { success: false, error: 'Design assets are managed by the design system and cannot be deleted here' },
+          { status: 403 },
+        );
+      }
       if (key) {
         await deleteVideoFromR2(key);
         return NextResponse.json({ success: true });

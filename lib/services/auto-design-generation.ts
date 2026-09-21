@@ -47,11 +47,11 @@ export const PAID_LIKE_STATUSES = new Set(['paid', 'partial-paid', 'completed'])
 
 // ── Backend-side auto-generation queue ──────────────────────────────
 // Limits how many orders are sent to the design app simultaneously.
-// The design app has its own render limiter (10 concurrent), but if
-// 50 orders fire at once, 50 requests pile up in the design app's
-// queue — the last ones wait 50/10 × 30s = 150s before they even
-// START rendering, then another 30s to render = 180s total. With
-// slower renders or more orders, this exceeds the 300s timeout.
+// The design app has its own render limiter (3 concurrent by default),
+// but if 50 orders fire at once, 50 requests pile up in the design
+// app's queue — the last ones wait 50/3 × 30s before they even START
+// rendering, then another 30s to render. That exceeds any upstream
+// timeout.
 //
 // By processing only 3 orders at a time on the backend side, the
 // design app's queue stays short (at most 3 orders × ~2 products =

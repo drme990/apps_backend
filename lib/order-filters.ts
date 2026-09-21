@@ -132,14 +132,15 @@ export async function buildAdminOrdersQuery(
     if (source && source !== 'all') query.source = source;
 
     // Order type filter:
-    // - subOrder: orders created via the sub-order flow (isSubOrder)
-    // - manual:   admin-created orders (createdByAdminId set), excluding
-    //             sub-orders which also carry createdByAdminId
+    // - manual:   admin-created orders (createdByAdminId set) — includes
+    //             sub-orders, which always carry createdByAdminId
     // - website:  storefront orders — no admin creator, not a sub-order
+    // - subOrder: (legacy) orders created via the sub-order flow — kept
+    //             so saved filters / URLs still work; no longer shown as
+    //             a separate tab since it's merged into "manual"
     if (orderType === 'subOrder') {
         query.isSubOrder = true;
     } else if (orderType === 'manual') {
-        query.isSubOrder = { $ne: true };
         andConditions.push({
             createdByAdminId: { $exists: true, $nin: [null, ''] },
         });

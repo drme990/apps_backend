@@ -4,6 +4,7 @@ import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IOrder } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { deleteMultipleR2Objects, extractR2Key } from '@/lib/services/r2';
+import { deleteDesignAppProjects } from '@/lib/services/design-app-callback';
 import {
   buildDeleteOperationId,
   buildUploadOperationId,
@@ -305,10 +306,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Delete the JPG(s) directly from R2 storage
+    // Delete the JPG(s) directly from R2 storage.
+    //
+    // IMPORTANT: never delete keys under `design/orders-design/versions/`
+    // — those are immutable version archives. `designUrls[].url` points
+    // at the archived version URL, so deleting it would break
+    // "restore version" (the admin_delete snapshot would point at a
+    // dead file). Only the mutable key is safe to delete.
     const keys = toDelete
       .map((d) => extractR2Key(d.url))
-      .filter((key): key is string => Boolean(key));
+      .filter((key): key is string => Boolean(key))
+      .filter((key) => !key.includes('/versions/'));
 
     if (keys.length > 0) {
       try {
@@ -317,6 +325,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         console.error('[DELETE /api/admin/orders/[id]/designs] R2 deletion failed:', r2Error);
         // Continue anyway — we still remove the entry/entries from the order
       }
+    }
+
+    // Tell the design app to clean up its side: the design_projects
+    // instance docs + their per-design BG copies. Without this, every
+    // deleted design leaves orphaned project docs and R2 assets in the
+    // design app. Best-effort — failures are logged, not fatal.
+    const projectIds = toDelete
+      .map((d) => d.projectId)
+      .filter((pid): pid is string => Boolean(pid));
+    if (projectIds.length > 0) {
+      deleteDesignAppProjects(projectIds).catch((err) => {
+        console.error('[DELETE /api/admin/orders/[id]/designs] design-app cleanup failed:', err);
+      });
     }
 
     // ── Record admin_delete history events ──────────────────────────────

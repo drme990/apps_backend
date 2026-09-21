@@ -6,6 +6,7 @@ import {
   deleteVideoFromR2,
   isR2Url,
   extractR2Key,
+  isDesignOwnedKey,
 } from '@/lib/services/r2';
 import { validateInput } from '@/lib/validation/http';
 import { z } from 'zod';
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
     const result = await uploadVideoToR2(uploadedFile);
 
     // Delete old media only after the replacement upload succeeds.
-    if (oldKey && oldKey !== result.key) {
+    if (oldKey && oldKey !== result.key && !isDesignOwnedKey(oldKey)) {
       await deleteVideoFromR2(oldKey);
     }
 
@@ -120,6 +121,12 @@ export async function DELETE(request: NextRequest) {
 
     if (isR2Url(url)) {
       const key = extractR2Key(url);
+      if (key && isDesignOwnedKey(key)) {
+        return NextResponse.json(
+          { success: false, error: 'Design assets are managed by the design system and cannot be deleted here' },
+          { status: 403 },
+        );
+      }
       if (key) {
         await deleteVideoFromR2(key);
         return NextResponse.json({ success: true });

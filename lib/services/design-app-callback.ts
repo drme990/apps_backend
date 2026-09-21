@@ -13,7 +13,11 @@
  *                                `x-callback-secret` header
  */
 
-const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes — render queue can be long
+// 4 minutes for the manual admin path — deliberately UNDER the typical
+// Nginx/proxy 300s cap so the abort fires cleanly on our side and the
+// retry loop gets the failure early instead of the connection dying at
+// the proxy after we've already waited past the point of recovery.
+const DEFAULT_TIMEOUT_MS = 240_000;
 const AUTO_TIMEOUT_MS = 120_000; // 2 minutes — shorter for auto path (serverless-safe)
 
 function getDesignAppUrl(): string {
@@ -142,8 +146,8 @@ export async function generateDesignForProduct(params: {
 
   // Use a shorter timeout for the auto path (webhook/status-change)
   // since it may run on Vercel serverless where long-running requests
-  // are killed. The manual admin button uses the full 10-min timeout
-  // since the admin is waiting and the VPS process is long-lived.
+  // are killed. The manual admin button uses a longer timeout that
+  // stays under the Nginx 300s proxy cap.
   // The retry loop in design-generation-core.ts handles transient
   // timeouts from the shorter window.
   const timeoutMs = trigger === 'auto' ? AUTO_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
@@ -220,6 +224,41 @@ export async function generateDesignForProduct(params: {
       error: 'fetchFailed',
       message: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Ask the design app to delete design-instance projects created for an
+ * order. The design app removes the `design_projects` documents AND
+ * their per-design R2 assets (BG copies, the generated JPG).
+ *
+ * Called when the admin deletes designs from an order — without this,
+ * the design-app side is orphaned (project docs + R2 files accumulate).
+ *
+ * Best-effort: returns silently on any failure (caller logs).
+ */
+export async function deleteDesignAppProjects(projectIds: string[]): Promise<void> {
+  if (projectIds.length === 0) return;
+
+  const baseUrl = getDesignAppUrl();
+  const secret = getCallbackSecret();
+  if (!baseUrl || !secret) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    await fetch(`${baseUrl}/api/orders/delete-designs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-callback-secret': secret,
+      },
+      body: JSON.stringify({ projectIds }),
+      signal: controller.signal,
+    });
   } finally {
     clearTimeout(timeout);
   }

@@ -236,6 +236,17 @@ export const isR2Url = (url: string): boolean => {
   return url.startsWith(publicUrl);
 };
 
+/**
+ * Keys under `design/` are owned by the design app's lifecycle —
+ * mutable order designs, immutable version archives, template
+ * backgrounds, layer images, fonts, shapes, thumbnails. The generic
+ * admin upload/delete routes must never delete them (doing so breaks
+ * "restore version" and live designs). Design cleanup goes through the
+ * design app or the dedicated designs routes.
+ */
+export const isDesignOwnedKey = (key: string): boolean =>
+  key.startsWith('design/');
+
 export const extractR2Key = (url: string): string | null => {
   if (!publicUrl) return null;
   if (!url.startsWith(publicUrl)) return null;
@@ -465,23 +476,32 @@ export const deleteR2Folder = async (prefix: string): Promise<number> => {
     throw new Error('R2 credentials are missing');
   }
 
-  // First, list all objects with the prefix
-  const listCommand = new ListObjectsV2Command({
-    Bucket: bucketName,
-    Prefix: prefix,
-  });
-
   try {
-    const listResponse = await s3Client.send(listCommand);
-    const keys = listResponse.Contents?.map((obj) => obj.Key!).filter(Boolean) || [];
+    let deleted = 0;
+    let continuationToken: string | undefined;
 
-    if (keys.length === 0) {
-      return 0;
-    }
+    // Paginate — ListObjectsV2 returns max 1000 objects per call, so a
+    // large folder needs multiple list+delete rounds.
+    do {
+      const listResponse = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      const keys =
+        listResponse.Contents?.map((obj) => obj.Key!).filter(Boolean) || [];
+      if (keys.length > 0) {
+        const result = await deleteMultipleR2Objects(keys);
+        deleted += result.deleted.length;
+      }
+      continuationToken = listResponse.IsTruncated
+        ? listResponse.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
 
-    // Delete all objects
-    const deleteResult = await deleteMultipleR2Objects(keys);
-    return deleteResult.deleted.length;
+    return deleted;
   } catch (error) {
     console.error('Error deleting R2 folder:', error);
     throw error;

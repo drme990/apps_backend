@@ -7,6 +7,7 @@ import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { bulkOrderStatusSchema } from '@/lib/validation/schemas';
 import { renumberExecutionDay } from '@/lib/services/execution-number';
+import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generation';
 
 const BULK_ALLOWED_STATUSES: ReadonlySet<OrderStatus> = new Set([
   'completed',
@@ -80,6 +81,23 @@ export async function PUT(request: NextRequest) {
       }
     }
 
+    // Snapshot the pre-update state of every selected order so we can
+    // evaluate auto design generation per-order after the update.
+    // updateMany bypasses Mongoose hooks — the per-order status-change
+    // path (PUT /api/admin/orders/[id]) never sees these transitions, so
+    // without this, bulk-completing a paid order with missing designs
+    // would silently skip generation.
+    const ordersBefore = await Order.find(
+      { _id: { $in: orderIds } },
+      {
+        orderNumber: 1,
+        status: 1,
+        designUrls: 1,
+        items: 1,
+        source: 1,
+      },
+    ).lean();
+
     const result = await Order.updateMany(
       { _id: { $in: orderIds }, status: { $ne: normalizedStatus } },
       {
@@ -94,6 +112,32 @@ export async function PUT(request: NextRequest) {
     // clean 1..N sequence with no gaps.
     for (const date of affectedDates) {
       await renumberExecutionDay(date);
+    }
+
+    // Evaluate auto design generation for every order that actually
+    // changed status. 'completed' is a paid-like status, so orders
+    // bulk-completed while still missing designs get generated here
+    // (needsDesignGeneration catches the gap even though 'completed'
+    // isn't a paid-entry transition). Fire-and-forget per order.
+    for (const before of ordersBefore) {
+      if (before.status === normalizedStatus) continue; // no transition
+      evaluateAndTriggerAutoDesign(
+        {
+          _id: before._id,
+          orderNumber: before.orderNumber,
+          status: normalizedStatus,
+          designUrls: before.designUrls,
+          items: before.items,
+          source: before.source,
+        },
+        before.status,
+        'auto_admin',
+      ).catch((err) => {
+        console.error(
+          `[bulk-status] design eval failed for ${before.orderNumber}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
 
     await logActivity({

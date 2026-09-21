@@ -22,6 +22,7 @@ import { connectDB } from '../lib/db';
 import Order, { type IOrder } from '../lib/models/Order';
 import OrderDesignVersion from '../lib/models/OrderDesignVersion';
 import OrderDesignLog from '../lib/models/OrderDesignLog';
+import { deleteDesignAppProjects } from '../lib/services/design-app-callback';
 import {
   extractR2Key,
   isR2Url,
@@ -122,6 +123,7 @@ async function cleanupOldDesigns() {
   let r2Failed = 0;
   let ordersUpdated = 0;
   const orderNumbersProcessed: string[] = [];
+  const designProjectIds: string[] = [];
 
   for await (const rawOrder of cursor) {
     const order = rawOrder as unknown as IOrder & { save: () => Promise<unknown> };
@@ -136,6 +138,11 @@ async function cleanupOldDesigns() {
 
     // ── 1. Delete each design from R2 ────────────────────────────
     for (const design of designUrls) {
+      // Collect the design-app project ID so we can clean up the
+      // design_projects document + its owned R2 assets afterwards.
+      if (design.projectId) {
+        designProjectIds.push(design.projectId);
+      }
       if (!design.url || !isStorageUrl(design.url)) {
         console.log(`    Skip (not storage): ${design.url}`);
         continue;
@@ -161,18 +168,32 @@ async function cleanupOldDesigns() {
     orderNumbersProcessed.push(order.orderNumber);
   }
 
-  // ── 3. Delete OrderDesignVersion records for these orders ───────
+  // ── 3. Delete OrderDesignVersion records + their archive files ──
+  // Deleting the records without deleting the archived JPGs leaves
+  // orphaned R2 objects; deleting the files without the records leaves
+  // dead archivedUrl pointers. Do both together.
   if (orderNumbersProcessed.length > 0) {
+    const versions = await OrderDesignVersion.find(
+      { orderNumber: { $in: orderNumbersProcessed } },
+      { archivedUrl: 1 },
+    ).lean();
+
+    console.log(`\nDeleting ${versions.length} OrderDesignVersion archive file(s)...`);
+    for (const version of versions) {
+      const url = (version as { archivedUrl?: string }).archivedUrl;
+      if (url && isStorageUrl(url)) {
+        const ok = await deleteR2Url(url);
+        if (ok) r2Deleted++; else r2Failed++;
+      }
+    }
+
     if (isDryRun) {
-      const count = await OrderDesignVersion.countDocuments({
-        orderNumber: { $in: orderNumbersProcessed },
-      });
-      console.log(`\n[DRY RUN] Would delete ${count} OrderDesignVersion record(s)`);
+      console.log(`[DRY RUN] Would delete ${versions.length} OrderDesignVersion record(s)`);
     } else {
       const result = await OrderDesignVersion.deleteMany({
         orderNumber: { $in: orderNumbersProcessed },
       });
-      console.log(`\nDeleted ${result.deletedCount} OrderDesignVersion record(s)`);
+      console.log(`Deleted ${result.deletedCount} OrderDesignVersion record(s)`);
     }
   }
 
@@ -188,6 +209,23 @@ async function cleanupOldDesigns() {
         orderNumber: { $in: orderNumbersProcessed },
       });
       console.log(`Deleted ${result.deletedCount} OrderDesignLog record(s)`);
+    }
+  }
+
+  // ── 5. Clean up design-app project documents ────────────────────
+  // Each order design has a design_projects doc in the shared DB plus
+  // per-design R2 assets (BG copies). Without this they orphan forever.
+  if (designProjectIds.length > 0) {
+    const unique = [...new Set(designProjectIds)];
+    if (isDryRun) {
+      console.log(`\n[DRY RUN] Would delete ${unique.length} design-app project(s)`);
+    } else {
+      try {
+        await deleteDesignAppProjects(unique);
+        console.log(`\nRequested design-app cleanup for ${unique.length} project(s)`);
+      } catch (err) {
+        console.error('\nDesign-app cleanup request failed:', err);
+      }
     }
   }
 
