@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { validatePhoneNumber } from './phone-validation';
 import { isValidCustomerName } from '@/lib/utils/name';
+import { countryNameToCode } from '@/lib/country-visibility';
 
 // EasyKash rejects names containing special characters
 // (onlyNumbersAndCharacters). Reject them at the API boundary so stored
@@ -123,7 +124,7 @@ export const checkoutSchema = z
               message: 'Invalid phone number format',
             },
           ),
-        country: z.string().trim().optional(),
+        country: z.string().trim().min(1),
       })
       .strict(),
     locale: z.string().trim().optional(),
@@ -830,7 +831,19 @@ export const manualOrderCreateSchema = z
         phone: z.string().trim().min(1),
         country: z.string().trim().min(1),
       })
-      .strict(),
+      .strict()
+      .refine(
+        (data) => {
+          // Validate the phone against the billing country (the
+          // country value is the English name — mapped to ISO code).
+          const code = countryNameToCode(data.country);
+          return validatePhoneNumber(data.phone, code || undefined).isValid;
+        },
+        {
+          message: 'Invalid phone number for the selected country',
+          path: ['phone'],
+        },
+      ),
     reservationData: z
       .array(
         z.object({
@@ -874,20 +887,6 @@ export const manualOrderCreateSchema = z
     {
       message: 'Payment method is required for non-free orders; free orders require a reason',
       path: ['paymentMethod'],
-    },
-  )
-  .refine(
-    (data) => {
-      const fullName = data.billingData.fullName.trim();
-      if (fullName) return true;
-      const sacrificeFor = data.reservationData.find(
-        (r): r is { key: string; value: string } => r.key === 'sacrificeFor',
-      )?.value;
-      return Boolean(sacrificeFor?.trim());
-    },
-    {
-      message: 'Either customer fullName or a sacrificeFor name is required',
-      path: ['billingData', 'fullName'],
     },
   );
 

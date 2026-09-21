@@ -777,6 +777,64 @@ export async function PATCH(
       });
     }
 
+    // ── Billing data (customer identity) ──────────────────────────
+    // Lets admins repair orders with incomplete billing info (legacy
+    // orders may be missing fields). Only non-empty values are
+    // accepted — a field can never be blanked out.
+    if (body.billingData && typeof body.billingData === 'object') {
+      const { isValidCustomerName } = await import('@/lib/utils/name');
+      const { validatePhoneNumber } = await import('@/lib/validation/phone-validation');
+      const { countryNameToCode } = await import('@/lib/country-visibility');
+      const next = body.billingData as Record<string, unknown>;
+      const current = {
+        fullName: order.billingData?.fullName || '',
+        email: order.billingData?.email || '',
+        phone: order.billingData?.phone || '',
+        country: order.billingData?.country || '',
+      };
+      const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      const applyField = (
+        key: 'fullName' | 'email' | 'phone' | 'country',
+        validate?: (v: string) => boolean,
+      ): true | string => {
+        const raw = next[key];
+        if (typeof raw !== 'string') return true;
+        const value = raw.trim();
+        if (!value) return `${key} cannot be empty`;
+        if (validate && !validate(value)) return `Invalid ${key}`;
+        if (value !== (current[key] || '')) {
+          changes.push({
+            changeType: 'billing',
+            previousValue: current[key] || null,
+            newValue: value,
+          });
+          current[key] = value;
+        }
+        return true;
+      };
+
+      // Country is applied before phone so a phone updated in the same
+      // request is validated against the NEW billing country.
+      for (const result of [
+        applyField('fullName', isValidCustomerName),
+        applyField('email', (v) => EMAIL_RE.test(v)),
+        applyField('country'),
+        applyField('phone', (v) => {
+          const code = countryNameToCode(current.country);
+          return validatePhoneNumber(v, code || undefined).isValid;
+        }),
+      ]) {
+        if (result !== true) {
+          return NextResponse.json(
+            { success: false, error: result },
+            { status: 400 },
+          );
+        }
+      }
+      order.billingData = current;
+    }
+
     let itemsChanged = false;
     if (Array.isArray(body.items) && body.items.length > 0) {
       const prevItemsArr = order.items || [];

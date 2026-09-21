@@ -68,6 +68,26 @@ export async function POST(
       );
     }
 
+    // Sub-orders inherit the parent's billingData — refuse to create one
+    // when the parent's customer identity is incomplete (legacy orders
+    // may be missing fields). The parent must be fixed first.
+    const parentBilling = parent.billingData || ({} as Record<string, string | undefined>);
+    const missingBilling = [
+      !parentBilling.fullName?.trim() && 'fullName',
+      !parentBilling.email?.trim() && 'email',
+      !parentBilling.phone?.trim() && 'phone',
+      !parentBilling.country?.trim() && 'country',
+    ].filter(Boolean);
+    if (missingBilling.length > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Parent order is missing billing data (${missingBilling.join(', ')}). Update the parent order's customer information first.`,
+        },
+        { status: 400 },
+      );
+    }
+
     const currencyUpper = (parent.currency || 'SAR').toUpperCase();
 
     // ── Resolve each item (same logic as create route) ──

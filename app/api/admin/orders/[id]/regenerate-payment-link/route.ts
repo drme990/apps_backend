@@ -49,9 +49,19 @@ export async function POST(
     }
 
     const billingData = order.billingData;
-    if (!billingData) {
+    if (
+      !billingData ||
+      !billingData.fullName?.trim() ||
+      !billingData.email?.trim() ||
+      !billingData.phone?.trim() ||
+      !billingData.country?.trim()
+    ) {
       return NextResponse.json(
-        { success: false, error: 'Order has no billing data' },
+        {
+          success: false,
+          error:
+            'Order has incomplete billing data (name, email, phone, country required). Update the order customer information first.',
+        },
         { status: 400 },
       );
     }

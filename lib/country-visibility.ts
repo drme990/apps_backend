@@ -69,6 +69,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'mauritania': 'MR',
   'djibouti': 'DJ',
   'comoros': 'KM',
+  'iran': 'IR',
 
   // Turkey & Central Asia
   'turkey': 'TR',
@@ -98,12 +99,16 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'cambodia': 'KH',
   'singapore': 'SG',
   'brunei': 'BN',
+  'laos': 'LA',
 
   // East Asia
   'china': 'CN',
   'japan': 'JP',
   'south korea': 'KR',
+  'north korea': 'KP',
   'mongolia': 'MN',
+  'hong kong': 'HK',
+  'taiwan': 'TW',
 
   // Europe
   'united states': 'US',
@@ -152,6 +157,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'cyprus': 'CY',
   'malta': 'MT',
   'luxembourg': 'LU',
+  'andorra': 'AD',
 
   // Africa
   'nigeria': 'NG',
@@ -179,6 +185,11 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'botswana': 'BW',
   'namibia': 'NA',
   'mauritius': 'MU',
+  'angola': 'AO',
+  'benin': 'BJ',
+  'congo (drc)': 'CD',
+  'eritrea': 'ER',
+  'south sudan': 'SS',
 
   // Americas
   'canada': 'CA',
@@ -193,6 +204,20 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'guyana': 'GY',
   'suriname': 'SR',
   'trinidad and tobago': 'TT',
+  'belize': 'BZ',
+  'bolivia': 'BO',
+  'costa rica': 'CR',
+  'cuba': 'CU',
+  'dominican republic': 'DO',
+  'el salvador': 'SV',
+  'guatemala': 'GT',
+  'haiti': 'HT',
+  'honduras': 'HN',
+  'jamaica': 'JM',
+  'nicaragua': 'NI',
+  'panama': 'PA',
+  'paraguay': 'PY',
+  'uruguay': 'UY',
 
   // Oceania
   'australia': 'AU',

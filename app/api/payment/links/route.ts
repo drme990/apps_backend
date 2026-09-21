@@ -379,6 +379,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // EasyKash requires complete customer identity — legacy orders may
+    // carry empty billing fields, which would fail gateway-side with an
+    // opaque error. Bail early with an actionable message instead.
+    const billing = order.billingData;
+    if (
+      !billing ||
+      !billing.fullName?.trim() ||
+      !billing.email?.trim() ||
+      !billing.phone?.trim() ||
+      !billing.country?.trim()
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Order has incomplete billing data (name, email, phone, country required). Update the order customer information first.',
+        },
+        { status: 400 },
+      );
+    }
+
     const cashExpiryHours = getEasykashCashExpiryHours();
     let easykashResponse: Awaited<ReturnType<typeof createPayment>> | null =
       null;

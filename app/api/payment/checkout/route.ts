@@ -544,6 +544,36 @@ export async function POST(request: NextRequest) {
       resolvedDetectedCountry = normalizeCountryCode(ipCountry) || 'OT';
     }
 
+    // Strict billing gate — an order must never be persisted without a
+    // complete customer identity. Resolved fields can come from the
+    // request or the authenticated user's profile, so verify the final
+    // resolved values rather than the raw input.
+    if (
+      !billingData.fullName.trim() ||
+      !resolvedBillingEmail ||
+      !resolvedBillingPhone ||
+      !resolvedBillingCountry
+    ) {
+      log('warn', 'checkout.missing_billing_data', {
+        ip,
+        traceId,
+        source: orderSource,
+        userId: effectiveUserId,
+        hasEmail: Boolean(resolvedBillingEmail),
+        hasPhone: Boolean(resolvedBillingPhone),
+        hasCountry: Boolean(resolvedBillingCountry),
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Complete billing information is required (name, email, phone, country)',
+          code: 'MISSING_BILLING_DATA',
+        },
+        { status: 400 },
+      );
+    }
+
     // Outstanding balance check removed - users can now pay for new orders
     // while having remaining balance. The UI popup serves as a reminder only.
     // const outstandingBalanceLock = await getOutstandingBalanceLock({
@@ -1362,7 +1392,7 @@ export async function POST(request: NextRequest) {
         fullName: billingData.fullName,
         email: partialPaymentIdentity.normalizedEmail || resolvedBillingEmail,
         phone: resolvedBillingPhone,
-        country: resolvedBillingCountry || 'N/A',
+        country: resolvedBillingCountry,
       },
       referralId: resolvedRef,
       couponCode: appliedCouponCode,

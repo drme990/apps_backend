@@ -22,7 +22,8 @@ export interface IOrderChangeHistory {
   | 'status'
   | 'payment'
   | 'totalAmount'
-  | 'referral';
+  | 'referral'
+  | 'billing';
   previousValue: string | null;
   newValue: string | null;
   changedByUserId: string;
@@ -62,6 +63,7 @@ const OrderChangeHistorySchema = new mongoose.Schema<IOrderChangeHistory>(
         'payment',
         'totalAmount',
         'referral',
+        'billing',
       ],
       index: true,
     },
