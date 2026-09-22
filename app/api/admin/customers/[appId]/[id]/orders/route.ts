@@ -19,17 +19,6 @@ const querySchema = z.object({
   status: z.string().optional(),
 });
 
-const ALL_ORDER_STATUSES = [
-  'pending',
-  'processing',
-  'partial-paid',
-  'paid',
-  'completed',
-  'failed',
-  'refunded',
-  'cancelled',
-];
-
 // Only these statuses should be returned
 const VALID_ORDER_STATUSES = [
   'paid',
@@ -39,7 +28,15 @@ const VALID_ORDER_STATUSES = [
   'cancelled',
 ];
 
-type OrderStatus = (typeof ALL_ORDER_STATUSES)[number];
+type OrderStatus =
+  | 'pending'
+  | 'processing'
+  | 'partial-paid'
+  | 'paid'
+  | 'completed'
+  | 'failed'
+  | 'refunded'
+  | 'cancelled';
 
 type OrderItem = {
   productId: string;
@@ -68,8 +65,47 @@ type OrderDTO = {
     email?: string;
     phone?: string;
   };
+  reservationData?: Array<{
+    key?: string;
+    label?: { ar?: string; en?: string };
+    value?: string;
+  }>;
   createdAt: Date;
   updatedAt: Date;
+};
+
+// Shapes of the lean Mongo documents before DTO mapping — fields are
+// optional because the API trusts nothing from the wire/DB blindly.
+type RawReservationEntry = {
+  key?: unknown;
+  label?: { ar?: unknown; en?: unknown };
+  value?: unknown;
+};
+
+type RawOrderItem = {
+  productId?: string;
+  productName?: { en: string; ar: string };
+  price?: number;
+  quantity?: number;
+  size?: string;
+  sizeName?: string;
+  sizeLabel?: string;
+};
+
+type RawOrder = {
+  _id: unknown;
+  orderNumber?: string;
+  status?: OrderStatus;
+  totalAmount?: number;
+  paidAmount?: number;
+  remainingAmount?: number;
+  currency?: string;
+  source?: string;
+  items?: RawOrderItem[];
+  billingData?: OrderDTO['billingData'];
+  reservationData?: RawReservationEntry[];
+  createdAt?: Date;
+  updatedAt?: Date;
 };
 
 export async function GET(
@@ -118,13 +154,13 @@ export async function GET(
         .skip(skip)
         .limit(limit)
         .select(
-          'orderNumber status totalAmount paidAmount remainingAmount currency source items billingData createdAt updatedAt',
+          'orderNumber status totalAmount paidAmount remainingAmount currency source items billingData reservationData createdAt updatedAt',
         )
         .lean(),
       Order.countDocuments(query),
     ]);
 
-    const orderDTOs: OrderDTO[] = orders.map((order: any) => ({
+    const orderDTOs: OrderDTO[] = (orders as RawOrder[]).map((order) => ({
       _id: String(order._id),
       orderNumber: order.orderNumber || '',
       status: order.status || 'pending',
@@ -134,16 +170,41 @@ export async function GET(
       currency: order.currency || 'USD',
       source: order.source,
       items: Array.isArray(order.items)
-        ? order.items.map((item: any) => ({
-            productId: item.productId || '',
-            productName: item.productName || { en: 'Unknown', ar: 'غير معروف' },
-            price: item.price || 0,
-            quantity: item.quantity || 1,
-            size: item.size || item.sizeName || item.sizeLabel,
-            total: (item.price || 0) * (item.quantity || 1),
-          }))
+        ? order.items.map((item) => ({
+          productId: item.productId || '',
+          productName: item.productName || { en: 'Unknown', ar: 'غير معروف' },
+          price: item.price || 0,
+          quantity: item.quantity || 1,
+          size: item.size || item.sizeName || item.sizeLabel,
+          total: (item.price || 0) * (item.quantity || 1),
+        }))
         : [],
       billingData: order.billingData,
+      reservationData: Array.isArray(order.reservationData)
+        ? order.reservationData
+          .filter(
+            (entry): entry is RawReservationEntry =>
+              Boolean(entry) && typeof entry === 'object',
+          )
+          .map((entry) => ({
+            key: typeof entry.key === 'string' ? entry.key : undefined,
+            label:
+              entry.label && typeof entry.label === 'object'
+                ? {
+                  ar:
+                    typeof entry.label.ar === 'string'
+                      ? entry.label.ar
+                      : undefined,
+                  en:
+                    typeof entry.label.en === 'string'
+                      ? entry.label.en
+                      : undefined,
+                }
+                : undefined,
+            value:
+              typeof entry.value === 'string' ? entry.value : undefined,
+          }))
+        : undefined,
       createdAt:
         order.createdAt instanceof Date ? order.createdAt : new Date(0),
       updatedAt:

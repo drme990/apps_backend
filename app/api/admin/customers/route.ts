@@ -10,6 +10,7 @@ import {
 } from '@/lib/auth/app-users';
 import Order from '@/lib/models/Order';
 import { normalizeCountryName } from '@/lib/country-visibility';
+import { RESERVATION_FIELD_PRESETS } from '@/lib/reservation-fields';
 
 function parseIsoDateParts(
   value: string | null,
@@ -41,12 +42,31 @@ function getUtcStartOfLocalDay(
   return new Date(utcMidnightMs + timezoneOffsetMinutes * 60 * 1000);
 }
 
+const INTENTION_PRESET = RESERVATION_FIELD_PRESETS.find(
+  (preset) => preset.key === 'intention',
+);
+
+/**
+ * Stored `reservationData[].value` holds whichever label language the
+ * customer saw at checkout — 'عقيقة' or 'Aqeeqah'. Filtering by one
+ * label must match both, so an English-locale admin still finds orders
+ * stored in Arabic (and vice versa). Unknown values pass through
+ * unchanged (custom per-product options).
+ */
+function intentionValueCandidates(value: string): string[] {
+  const option = INTENTION_PRESET?.options?.find(
+    (opt) => opt.ar === value || opt.en === value,
+  );
+  return option ? [option.ar, option.en] : [value];
+}
+
 const querySchema = z.object({
   appId: z.enum(['ghadaq', 'manasik']).optional(),
   search: z.string().trim().optional(),
   isBanned: z.enum(['true', 'false']).optional(),
   ref: z.string().trim().optional(),
   tier: z.string().trim().optional(),
+  intention: z.string().trim().optional(),
   hasOrders: z.enum(['ordered', 'never']).optional(),
   country: z.string().trim().optional(),
   detectedCountry: z.string().trim().optional(),
@@ -104,6 +124,8 @@ export async function GET(request: NextRequest) {
       isBanned: request.nextUrl.searchParams.get('isBanned') || undefined,
       ref: request.nextUrl.searchParams.get('ref') || undefined,
       tier: request.nextUrl.searchParams.get('tier') || undefined,
+      intention:
+        request.nextUrl.searchParams.get('intention') || undefined,
       hasOrders: request.nextUrl.searchParams.get('hasOrders') || undefined,
       country: request.nextUrl.searchParams.get('country') || undefined,
       detectedCountry:
@@ -171,6 +193,44 @@ export async function GET(request: NextRequest) {
           return null;
         })
         .filter((id): id is mongoose.Types.ObjectId => id !== null);
+    }
+
+    // Intention filter — same semantics as the execution page: match
+    // orders whose reservationData contains { key: 'intention',
+    // value: <label> }. Resolved per appId via order.source so a user
+    // only matches orders from their own app.
+    const intentionFilter = parsed.data.intention;
+    const intentionUserIdsByApp = new Map<
+      string,
+      mongoose.Types.ObjectId[]
+    >();
+    if (intentionFilter && intentionFilter !== 'all') {
+      const candidates = intentionValueCandidates(intentionFilter);
+      await Promise.all(
+        appIds.map(async (appId) => {
+          const rawIds = await Order.distinct('userId', {
+            source: appId,
+            reservationData: {
+              $elemMatch: {
+                key: 'intention',
+                value: { $in: candidates },
+              },
+            },
+          });
+          intentionUserIdsByApp.set(
+            appId,
+            rawIds
+              .map((id) => {
+                if (id instanceof mongoose.Types.ObjectId) return id;
+                if (typeof id === 'string' && mongoose.isValidObjectId(id)) {
+                  return new mongoose.Types.ObjectId(id);
+                }
+                return null;
+              })
+              .filter((id): id is mongoose.Types.ObjectId => id !== null),
+          );
+        }),
+      );
     }
 
     const results = await Promise.all(
@@ -274,6 +334,12 @@ export async function GET(request: NextRequest) {
             hasOrdersFilter === 'ordered'
               ? { $in: orderedUserObjectIds }
               : { $nin: orderedUserObjectIds };
+        }
+
+        const intentionIds = intentionUserIdsByApp.get(appId);
+        if (intentionIds) {
+          // $and so it composes with the hasOrders `_id` constraint.
+          andConditions.push({ _id: { $in: intentionIds } });
         }
 
         if (andConditions.length > 0) {
