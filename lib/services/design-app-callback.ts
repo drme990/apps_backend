@@ -21,8 +21,50 @@ const DEFAULT_TIMEOUT_MS = 240_000;
 const AUTO_TIMEOUT_MS = 120_000; // 2 minutes — shorter for auto path (serverless-safe)
 
 function getDesignAppUrl(): string {
-  const url = (process.env.DESIGN_APP_URL || '').replace(/\/$/, '');
+  const url = (process.env.DESIGN_APP_URL || '').trim().replace(/\/+$/, '');
   return url;
+}
+
+/**
+ * Extract the REAL reason behind a Node `fetch` failure.
+ *
+ * Node's fetch (undici) throws a generic `TypeError: fetch failed` and
+ * buries the actual cause — ECONNREFUSED, ENOTFOUND, socket hangup,
+ * TLS error — in `error.cause`. When the connection was attempted to
+ * multiple addresses (e.g. localhost → ::1 + 127.0.0.1), `cause` is an
+ * AggregateError with a `.errors` array. Without digging these out, every
+ * failure logs as the useless string "fetch failed".
+ */
+function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const parts: string[] = [error.message];
+  let cause: unknown = error.cause;
+
+  // Unwrap nested causes (undici sometimes nests twice)
+  for (let depth = 0; depth < 3 && cause; depth++) {
+    if (cause instanceof AggregateError && Array.isArray(cause.errors)) {
+      const inner = cause.errors
+        .map((e) => describeFetchError(e))
+        .filter(Boolean)
+        .join(' | ');
+      if (inner) parts.push(inner);
+      break;
+    }
+    if (cause instanceof Error) {
+      const detail =
+        'code' in cause && typeof cause.code === 'string'
+          ? `${cause.code}${'address' in cause ? ` ${cause.address}` : ''}${'port' in cause ? `:${cause.port}` : ''}`
+          : cause.message;
+      if (detail && detail !== error.message) parts.push(detail);
+      cause = cause.cause;
+    } else {
+      parts.push(String(cause));
+      break;
+    }
+  }
+
+  return parts.join(' — ');
 }
 
 function getCallbackSecret(): string {
@@ -133,6 +175,14 @@ export async function generateDesignForProduct(params: {
       message: 'DESIGN_APP_URL is not set on the backend.',
     };
   }
+  if (!/^https?:\/\/.+/.test(baseUrl)) {
+    return {
+      success: false,
+      productId,
+      error: 'designAppNotConfigured',
+      message: `DESIGN_APP_URL is not a valid http(s) URL: "${baseUrl}"`,
+    };
+  }
 
   const secret = getCallbackSecret();
   if (!secret) {
@@ -218,11 +268,16 @@ export async function generateDesignForProduct(params: {
         message: `Design app did not respond within ${timeoutMs / 1000}s.`,
       };
     }
+    const detail = describeFetchError(error);
+    console.error(
+      `[design-gen] fetch to ${baseUrl}/api/orders/generate-design failed:`,
+      detail,
+    );
     return {
       success: false,
       productId,
       error: 'fetchFailed',
-      message: error instanceof Error ? error.message : String(error),
+      message: detail,
     };
   } finally {
     clearTimeout(timeout);
