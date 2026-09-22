@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Category from '@/lib/models/Categories';
+import { normalizeCountryName } from '@/lib/country-visibility';
 
 function parseIsoDateParts(
     value: string | null,
@@ -193,9 +194,12 @@ export async function buildAdminOrdersQuery(
     }
 
     if (country && country !== 'all') {
+        // Stored values are canonical long names — normalize the filter
+        // input too so a code like 'EG' still matches 'Egypt'.
+        const normalizedCountry = normalizeCountryName(country);
         andConditions.push({
             'billingData.country': {
-                $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+                $regex: `^${normalizedCountry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
                 $options: 'i',
             },
         });

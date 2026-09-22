@@ -21,7 +21,10 @@ export function normalizeCountryCode(raw: unknown): string | null {
   if (!/^[A-Z]{2}$/.test(code)) return null;
   if (code === 'XX' || code === 'ZZ') return null;
   // Map Israel → Palestine everywhere in the app.
-  return code === 'IL' ? 'PS' : code;
+  if (code === 'IL') return 'PS';
+  // 'UK' is not an ISO alpha-2 code — 'GB' is the canonical one.
+  if (code === 'UK') return 'GB';
+  return code;
 }
 
 function normalizeVisibilityOptions(
@@ -226,6 +229,190 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'papua new guinea': 'PG',
 };
 
+// ISO code → canonical English name (long format).
+// Single source of truth for display/storage normalization — matches the
+// admin panel's COUNTRIES list plus a few codes used only internally.
+const COUNTRY_CODE_TO_NAME: Record<string, string> = {
+  AF: 'Afghanistan',
+  AL: 'Albania',
+  DZ: 'Algeria',
+  AD: 'Andorra',
+  AO: 'Angola',
+  AR: 'Argentina',
+  AM: 'Armenia',
+  AU: 'Australia',
+  AT: 'Austria',
+  AZ: 'Azerbaijan',
+  BH: 'Bahrain',
+  BD: 'Bangladesh',
+  BY: 'Belarus',
+  BE: 'Belgium',
+  BZ: 'Belize',
+  BJ: 'Benin',
+  BO: 'Bolivia',
+  BA: 'Bosnia and Herzegovina',
+  BW: 'Botswana',
+  BR: 'Brazil',
+  BN: 'Brunei',
+  BG: 'Bulgaria',
+  BF: 'Burkina Faso',
+  KH: 'Cambodia',
+  CM: 'Cameroon',
+  CA: 'Canada',
+  CL: 'Chile',
+  CN: 'China',
+  CO: 'Colombia',
+  CD: 'Congo (DRC)',
+  CR: 'Costa Rica',
+  HR: 'Croatia',
+  CU: 'Cuba',
+  CY: 'Cyprus',
+  CZ: 'Czech Republic',
+  DK: 'Denmark',
+  DJ: 'Djibouti',
+  DO: 'Dominican Republic',
+  EC: 'Ecuador',
+  EG: 'Egypt',
+  SV: 'El Salvador',
+  ER: 'Eritrea',
+  EE: 'Estonia',
+  ET: 'Ethiopia',
+  FI: 'Finland',
+  FR: 'France',
+  GE: 'Georgia',
+  DE: 'Germany',
+  GH: 'Ghana',
+  GR: 'Greece',
+  GT: 'Guatemala',
+  GN: 'Guinea',
+  HT: 'Haiti',
+  HN: 'Honduras',
+  HK: 'Hong Kong',
+  HU: 'Hungary',
+  IS: 'Iceland',
+  IN: 'India',
+  ID: 'Indonesia',
+  IR: 'Iran',
+  IQ: 'Iraq',
+  IE: 'Ireland',
+  IT: 'Italy',
+  JM: 'Jamaica',
+  JP: 'Japan',
+  JO: 'Jordan',
+  KZ: 'Kazakhstan',
+  KE: 'Kenya',
+  KW: 'Kuwait',
+  KG: 'Kyrgyzstan',
+  LA: 'Laos',
+  LV: 'Latvia',
+  LB: 'Lebanon',
+  LY: 'Libya',
+  LT: 'Lithuania',
+  LU: 'Luxembourg',
+  MG: 'Madagascar',
+  MY: 'Malaysia',
+  ML: 'Mali',
+  MT: 'Malta',
+  MR: 'Mauritania',
+  MU: 'Mauritius',
+  MX: 'Mexico',
+  MD: 'Moldova',
+  MN: 'Mongolia',
+  ME: 'Montenegro',
+  MA: 'Morocco',
+  MZ: 'Mozambique',
+  MM: 'Myanmar',
+  NA: 'Namibia',
+  NP: 'Nepal',
+  NL: 'Netherlands',
+  NZ: 'New Zealand',
+  NI: 'Nicaragua',
+  NE: 'Niger',
+  NG: 'Nigeria',
+  KP: 'North Korea',
+  MK: 'North Macedonia',
+  NO: 'Norway',
+  OM: 'Oman',
+  PK: 'Pakistan',
+  PS: 'Palestine',
+  PA: 'Panama',
+  PY: 'Paraguay',
+  PE: 'Peru',
+  PH: 'Philippines',
+  PL: 'Poland',
+  PT: 'Portugal',
+  QA: 'Qatar',
+  RO: 'Romania',
+  RU: 'Russia',
+  RW: 'Rwanda',
+  SA: 'Saudi Arabia',
+  SN: 'Senegal',
+  RS: 'Serbia',
+  SG: 'Singapore',
+  SK: 'Slovakia',
+  SI: 'Slovenia',
+  SO: 'Somalia',
+  ZA: 'South Africa',
+  KR: 'South Korea',
+  SS: 'South Sudan',
+  ES: 'Spain',
+  LK: 'Sri Lanka',
+  SD: 'Sudan',
+  SE: 'Sweden',
+  CH: 'Switzerland',
+  SY: 'Syria',
+  TW: 'Taiwan',
+  TJ: 'Tajikistan',
+  TZ: 'Tanzania',
+  TH: 'Thailand',
+  TN: 'Tunisia',
+  TR: 'Turkey',
+  TM: 'Turkmenistan',
+  UG: 'Uganda',
+  UA: 'Ukraine',
+  AE: 'United Arab Emirates',
+  GB: 'United Kingdom',
+  US: 'United States',
+  UY: 'Uruguay',
+  UZ: 'Uzbekistan',
+  VE: 'Venezuela',
+  VN: 'Vietnam',
+  YE: 'Yemen',
+  ZM: 'Zambia',
+  ZW: 'Zimbabwe',
+  // Codes used only internally (not in the admin selector list)
+  XK: 'Kosovo',
+  CI: 'Ivory Coast',
+  OT: 'Other',
+};
+
+export function countryCodeToName(code: string): string | null {
+  const normalized = normalizeCountryCode(code);
+  if (!normalized) return null;
+  return COUNTRY_CODE_TO_NAME[normalized] || null;
+}
+
+/**
+ * Normalize any country input to the canonical English long name.
+ *
+ *   'EG' → 'Egypt'   'egypt' → 'Egypt'   'SA'/'saudi' → 'Saudi Arabia'
+ *
+ * Unknown values are returned trimmed as-is so free-text entries are
+ * never silently dropped.
+ */
+export function normalizeCountryName(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const value = raw.trim();
+  if (!value) return '';
+  // ISO code (or IL→PS) → name
+  const code = normalizeCountryCode(value);
+  if (code) return COUNTRY_CODE_TO_NAME[code] || value;
+  // Name (any casing/alias) → canonical name
+  const resolved = countryNameToCode(value);
+  if (resolved) return COUNTRY_CODE_TO_NAME[resolved] || value;
+  return value;
+}
+
 export function countryNameToCode(countryName: string): string | null {
   if (!countryName || typeof countryName !== 'string') return null;
 
@@ -234,7 +421,9 @@ export function countryNameToCode(countryName: string): string | null {
   // If it's already a 2-letter code, return it (map IL → PS)
   if (/^[a-z]{2}$/.test(normalized)) {
     const upper = normalized.toUpperCase();
-    return upper === 'IL' ? 'PS' : upper;
+    if (upper === 'IL') return 'PS';
+    if (upper === 'UK') return 'GB';
+    return upper;
   }
 
   // Map 'israel' → 'PS' (Palestine)

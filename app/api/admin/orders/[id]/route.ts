@@ -784,7 +784,7 @@ export async function PATCH(
     if (body.billingData && typeof body.billingData === 'object') {
       const { isValidCustomerName } = await import('@/lib/utils/name');
       const { validatePhoneNumber } = await import('@/lib/validation/phone-validation');
-      const { countryNameToCode } = await import('@/lib/country-visibility');
+      const { countryNameToCode, normalizeCountryName } = await import('@/lib/country-visibility');
       const next = body.billingData as Record<string, unknown>;
       const current = {
         fullName: order.billingData?.fullName || '',
@@ -800,8 +800,9 @@ export async function PATCH(
       ): true | string => {
         const raw = next[key];
         if (typeof raw !== 'string') return true;
-        const value = raw.trim();
+        let value = raw.trim();
         if (!value) return `${key} cannot be empty`;
+        if (key === 'country') value = normalizeCountryName(value);
         if (validate && !validate(value)) return `Invalid ${key}`;
         if (value !== (current[key] || '')) {
           changes.push({

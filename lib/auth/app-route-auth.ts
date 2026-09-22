@@ -27,6 +27,7 @@ import {
 } from '@/lib/services/partial-payment-guard';
 import { validateReferralCode } from '@/lib/services/referral-validation';
 import { getClientIp, getClientCountry, isValidIp } from '@/lib/utils/ip';
+import { normalizeCountryName } from '@/lib/country-visibility';
 import { isValidCustomerName } from '@/lib/utils/name';
 import { isIpBanned } from '@/lib/models/BannedIP';
 
@@ -262,7 +263,7 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
       if (!user.detectedCountry) {
         const country = getClientCountry(request);
         if (country) {
-          user.detectedCountry = country;
+          user.detectedCountry = normalizeCountryName(country);
         }
       }
       await user.save();
@@ -401,7 +402,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     if (appId !== 'admin_panel') {
       const country = getClientCountry(request);
       if (country) {
-        createPayload.detectedCountry = country;
+        createPayload.detectedCountry = normalizeCountryName(country);
       }
     }
 
@@ -410,7 +411,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       createPayload.allowedPages = [];
     } else {
       createPayload.phone = normalizedPhone || '';
-      createPayload.country = country || '';
+      createPayload.country = normalizeCountryName(country);
       createPayload.registerSource = registerSource || null;
 
       let resolvedRef: string | null = null;
@@ -509,7 +510,7 @@ export async function getProfileForApp(app: RouteApp, request?: NextRequest) {
     if (request && appId !== 'admin_panel' && !user.detectedCountry) {
       const country = getClientCountry(request);
       if (country) {
-        user.detectedCountry = country;
+        user.detectedCountry = normalizeCountryName(country);
         await user.save();
       }
     }
@@ -580,7 +581,7 @@ export async function updateProfileForApp(request: NextRequest, app: RouteApp) {
         updatePayload.phone = normalizedPhone;
       }
       if (typeof parsed.data.country === 'string') {
-        updatePayload.country = parsed.data.country;
+        updatePayload.country = normalizeCountryName(parsed.data.country);
       }
     }
 
@@ -750,7 +751,7 @@ export async function setupAccountForApp(request: NextRequest, app: RouteApp) {
 
     userDoc.name = name;
     userDoc.email = normalizedEmail;
-    userDoc.country = country;
+    userDoc.country = normalizeCountryName(country);
     userDoc.password = password;
     userDoc.accountSetUp = true;
 

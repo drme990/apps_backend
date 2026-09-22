@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { validatePhoneNumber } from './phone-validation';
 import { isValidCustomerName } from '@/lib/utils/name';
-import { countryNameToCode } from '@/lib/country-visibility';
+import { countryNameToCode, normalizeCountryName } from '@/lib/country-visibility';
 
 // EasyKash rejects names containing special characters
 // (onlyNumbersAndCharacters). Reject them at the API boundary so stored
@@ -124,7 +124,7 @@ export const checkoutSchema = z
               message: 'Invalid phone number format',
             },
           ),
-        country: z.string().trim().min(1),
+        country: z.string().trim().min(1).transform(normalizeCountryName),
       })
       .strict(),
     locale: z.string().trim().optional(),
@@ -829,7 +829,7 @@ export const manualOrderCreateSchema = z
           }),
         email: z.string().email(),
         phone: z.string().trim().min(1),
-        country: z.string().trim().min(1),
+        country: z.string().trim().min(1).transform(normalizeCountryName),
       })
       .strict()
       .refine(

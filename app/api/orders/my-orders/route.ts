@@ -6,6 +6,7 @@ import { getEasykashCashExpiryHours } from '@/lib/services/easykash';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
 import { getClientCountry } from '@/lib/utils/ip';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
+import { normalizeCountryName } from '@/lib/country-visibility';
 
 type DetectedCountryUserDoc = {
   _id: string;
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
       if (dbUser && !dbUser.detectedCountry) {
         const country = getClientCountry(request);
         if (country) {
-          dbUser.detectedCountry = country;
+          dbUser.detectedCountry = normalizeCountryName(country);
           await dbUser.save();
         }
       }

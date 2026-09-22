@@ -19,7 +19,6 @@ import { trackOpenAIPurchase } from '@/lib/services/openai-capi';
 import { trackSnapPurchase } from '@/lib/services/snapchat-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
 import WebhookEvent from '@/lib/models/WebhookEvent';
-import TerminalLog from '@/lib/models/TerminalLog';
 import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
 import { evaluateAndUpdateUserTier } from '@/lib/services/user-tier-evaluator';
@@ -132,27 +131,11 @@ function createSyntheticPayment(
 }
 
 export async function POST(request: NextRequest) {
-  const rawRequestBody = await request.clone().text();
-  const requestHeaders = Object.fromEntries(request.headers.entries());
-  const auditPayload: Record<string, unknown> = {
-    route: '/api/payment/webhook',
-    method: request.method,
-    url: request.nextUrl.pathname,
-    search: request.nextUrl.search,
-    headers: requestHeaders,
-    rawBody: rawRequestBody,
-    parsedBody: null,
-    validationStage: 'received',
-  };
-
   try {
     await connectDB();
 
     const parsed = await parseJsonBody(request, webhookSchema);
     if (!parsed.success) {
-      auditPayload.validationStage = 'schema_validation_failed';
-      auditPayload.result = 'rejected';
-      auditPayload.responseStatus = 400;
       return parsed.response;
     }
     const rawBody = parsed.data;
@@ -164,7 +147,6 @@ export async function POST(request: NextRequest) {
       PaymentMethod: rawBody.PaymentMethod || rawBody.paymentOption,
       Timestamp: rawBody.Timestamp || rawBody.timestamp || undefined,
     };
-    auditPayload.parsedBody = body;
 
     // EasyKash signature might come in body or header sometimes
     const providedSignature =
@@ -177,9 +159,6 @@ export async function POST(request: NextRequest) {
 
     const bypassSignatureValidation =
       shouldBypassSignatureValidationForTesting(request);
-    auditPayload.signatureValidationMode = bypassSignatureValidation
-      ? 'bypassed_for_test'
-      : 'strict';
 
     if (bypassSignatureValidation) {
       console.warn(
@@ -188,9 +167,6 @@ export async function POST(request: NextRequest) {
     } else {
       // Signature verification is mandatory unless test bypass mode is enabled.
       if (!process.env.EASYKASH_HMAC_SECRET) {
-        auditPayload.validationStage = 'missing_hmac_secret';
-        auditPayload.result = 'rejected';
-        auditPayload.responseStatus = 503;
         console.error(
           'EasyKash webhook rejected: EASYKASH_HMAC_SECRET is not configured',
         );
@@ -201,7 +177,6 @@ export async function POST(request: NextRequest) {
       }
 
       if (!body.signatureHash) {
-        auditPayload.validationStage = 'missing_signature';
         console.warn(
           'EasyKash webhook: Missing signatureHash in payload or headers. Bypassing signature check since EasyKash sometimes omits it on pending/cancel.',
         );
@@ -209,9 +184,6 @@ export async function POST(request: NextRequest) {
         const isValid = verifyCallbackSignature(body);
 
         if (!isValid) {
-          auditPayload.validationStage = 'invalid_signature';
-          auditPayload.result = 'rejected';
-          auditPayload.responseStatus = 403;
           console.error('EasyKash webhook: invalid signature');
           return NextResponse.json(
             { error: 'Invalid signature' },
@@ -240,9 +212,6 @@ export async function POST(request: NextRequest) {
     // on pending/cancel callbacks), so we can't reject on its absence.
     // When present and parseable, reject stale callbacks to prevent replays.
     if (timestamp && !isNaN(timestamp) && now - timestamp > MAX_WEBHOOK_AGE) {
-      auditPayload.validationStage = 'expired_timestamp';
-      auditPayload.result = 'rejected';
-      auditPayload.responseStatus = 403;
       console.error(
         `EasyKash webhook rejected: timestamp expired (age=${now - timestamp}s, max=${MAX_WEBHOOK_AGE}s, value=${body.Timestamp})`,
       );
@@ -255,7 +224,6 @@ export async function POST(request: NextRequest) {
     if (body.Timestamp && (!timestamp || isNaN(timestamp))) {
       // Timestamp was provided but couldn't be parsed — log as a warning
       // (not an error) and continue, since the format varies across providers.
-      auditPayload.timestampWarning = 'unparseable_timestamp';
       console.warn(
         `EasyKash webhook: timestamp present but unparseable (${body.Timestamp}), skipping freshness check`,
       );
@@ -276,11 +244,6 @@ export async function POST(request: NextRequest) {
       normalizedStatus === 'PAID' || normalizedStatus === 'SUCCESS';
     const parsedReference = parsePaymentReference(customerRefStr);
 
-    auditPayload.customerReference = customerRefStr;
-    auditPayload.status = normalizedStatus;
-    auditPayload.easykashRef = easykashRef;
-    auditPayload.referenceType = parsedReference?.kind || 'order';
-
     const paymentLinkId = parsedReference?.paymentLinkId || null;
     let linkedPaymentLink = null;
     if (paymentLinkId && OBJECT_ID_REGEX.test(paymentLinkId)) {
@@ -299,7 +262,6 @@ export async function POST(request: NextRequest) {
         },
         { $set: { status: 'used', usedAt: new Date() } },
       );
-      auditPayload.paymentLinkMarkedUsed = true;
     }
 
     // Idempotency key guarantees we process each callback event once.
@@ -314,8 +276,6 @@ export async function POST(request: NextRequest) {
       const mongoError = error as { code?: number };
       if (mongoError?.code === 11000) {
         console.log('Webhook duplicate ignored:', eventKey);
-        auditPayload.result = 'duplicate';
-        auditPayload.responseStatus = 200;
         return NextResponse.json({ success: true, duplicate: true });
       }
 
@@ -325,9 +285,6 @@ export async function POST(request: NextRequest) {
     if (parsedReference?.kind === 'custom') {
       // Standalone custom links are not bound to an order, so processing
       // ends after idempotency + payment link status synchronization.
-      auditPayload.validationStage = 'processed';
-      auditPayload.result = 'success';
-      auditPayload.responseStatus = 200;
       return NextResponse.json({ success: true, type: 'custom_link' });
     }
 
@@ -364,8 +321,6 @@ export async function POST(request: NextRequest) {
 
     if (!order) {
       console.error('Webhook order not found:', customerRefStr);
-      auditPayload.result = 'order_not_found';
-      auditPayload.responseStatus = 404;
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
@@ -414,7 +369,6 @@ export async function POST(request: NextRequest) {
       );
       order.payments.push(syntheticPayment);
       paymentRecord = order.payments[order.payments.length - 1];
-      auditPayload.syntheticPaymentCreated = true;
     }
 
     const expectedGatewayAmount = Number(paymentRecord?.gatewayAmount || 0);
@@ -436,11 +390,6 @@ export async function POST(request: NextRequest) {
       console.error(
         `Amount mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmountForWarning}`,
       );
-
-      auditPayload.amountWarning = {
-        webhookAmount,
-        expectedAmount: expectedAmountForWarning,
-      };
 
       // Do not reject signed paid callbacks due to amount drift.
       // Some link-based flows charge a gateway amount that can differ by
@@ -773,17 +722,9 @@ export async function POST(request: NextRequest) {
         evaluateAndUpdateUserTier(String(order.userId), order.source).catch(() => { });
       }
     }
-    auditPayload.validationStage = 'processed';
-    auditPayload.result = 'success';
-    auditPayload.responseStatus = 200;
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('EasyKash webhook error:', error);
-    auditPayload.validationStage = 'error';
-    auditPayload.result = 'error';
-    auditPayload.responseStatus = 500;
-    auditPayload.errorMessage =
-      error instanceof Error ? error.message : String(error);
 
     captureException(error, {
       service: 'PaymentWebhook',
@@ -795,18 +736,5 @@ export async function POST(request: NextRequest) {
       { success: false, error: 'Webhook processing failed' },
       { status: 500 },
     );
-  } finally {
-    try {
-      await TerminalLog.create({
-        ts: new Date().toISOString(),
-        level: 'info',
-        event: 'webhook.call',
-        source: 'request',
-        message: 'EasyKash webhook request audit',
-        payload: auditPayload,
-      });
-    } catch {
-      // best-effort logging
-    }
   }
 }

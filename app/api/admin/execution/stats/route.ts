@@ -13,6 +13,7 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
+import { normalizeCountryName } from '@/lib/country-visibility';
 
 export async function GET(request: NextRequest) {
   try {
@@ -156,7 +157,9 @@ export async function GET(request: NextRequest) {
           },
         ]
         : []),
-      ...(country && country !== 'all' ? [{ $match: { 'billingData.country': { $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } } }] : []),
+      // Stored values are canonical long names — normalize the filter
+      // input too so a code like 'EG' still matches 'Egypt'.
+      ...(country && country !== 'all' ? [{ $match: { 'billingData.country': { $regex: `^${normalizeCountryName(country).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } } }] : []),
       // Invoice filter: same as the main execution route.
       // - No invoices → show normally
       // - Has invoices → only the FIRST invoice (whileCreating: true) must be

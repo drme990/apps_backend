@@ -25,6 +25,7 @@ import {
 
 import { parseJsonBody } from '@/lib/validation/http';
 import { manualOrderCreateSchema } from '@/lib/validation/schemas';
+import { normalizeCountryName } from '@/lib/country-visibility';
 import {
   matchReservationOption,
   normalizeReservationFields,
@@ -169,6 +170,8 @@ export async function POST(request: NextRequest) {
     // ── Resolve the effective customer name ──
     const reservationInput = Array.isArray(reservationData) ? reservationData : [];
     const effectiveFullName = billingData.fullName.trim();
+    // Canonical long country name — 'EG'/'egypt' → 'Egypt'
+    const billingCountry = normalizeCountryName(billingData.country);
 
     // ── Resolve or create the customer user ──
     let resolvedUserId = userId;
@@ -198,7 +201,7 @@ export async function POST(request: NextRequest) {
             email: trimmedEmail,
             password: trimmedEmail,
             phone: normalizedPhone,
-            country: billingData.country.trim() || '',
+            country: billingCountry,
             appId: orderSource,
             isAdminCreated: true,
             termsAgreedAt: new Date(),
@@ -779,7 +782,7 @@ export async function POST(request: NextRequest) {
           fullName: effectiveFullName,
           email: billingData.email.trim().toLowerCase(),
           phone: billingData.phone.trim(),
-          country: billingData.country.trim(),
+          country: billingCountry,
         },
         reservationData: reservationAnswers,
         source: orderSource,
@@ -893,7 +896,7 @@ export async function POST(request: NextRequest) {
         fullName: effectiveFullName,
         email: billingData.email.trim().toLowerCase(),
         phone: billingData.phone.trim(),
-        country: billingData.country.trim(),
+        country: billingCountry,
       },
       reservationData: reservationAnswers,
       source: orderSource,

@@ -12,7 +12,7 @@ import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
 import { validateReferralCode } from '@/lib/services/referral-validation';
 import { getClientCountry } from '@/lib/utils/ip';
-import { countryNameToCode } from '@/lib/country-visibility';
+import { countryNameToCode, normalizeCountryName } from '@/lib/country-visibility';
 
 const COUNTRY_HEADER_CANDIDATES = [
   'x-vercel-ip-country',
@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
 
     let resolvedBillingEmail = normalizedInputEmail;
     let resolvedBillingPhone = normalizedInputPhone;
-    let resolvedBillingCountry = billingData.country?.trim() || '';
+    let resolvedBillingCountry = normalizeCountryName(billingData.country);
     let resolvedDetectedCountry: string | null = null;
 
     if (sessionUser) {
@@ -264,7 +264,7 @@ export async function POST(request: NextRequest) {
       if (!authenticatedUser.detectedCountry) {
         const country = getClientCountry(request);
         if (country) {
-          authenticatedUser.detectedCountry = country;
+          authenticatedUser.detectedCountry = normalizeCountryName(country);
           await authenticatedUser.save();
         }
       }
@@ -288,7 +288,7 @@ export async function POST(request: NextRequest) {
       resolvedBillingPhone =
         normalizePhone(authenticatedUser.phone) || normalizedInputPhone;
       resolvedBillingCountry =
-        authenticatedUser.country?.trim() || resolvedBillingCountry;
+        normalizeCountryName(authenticatedUser.country) || resolvedBillingCountry;
 
       if (!normalizePhone(authenticatedUser.phone) && normalizedInputPhone) {
         const existingPhone = await UserModel.findOne({
@@ -391,7 +391,7 @@ export async function POST(request: NextRequest) {
         if (!existingEmailUser.detectedCountry) {
           const country = getClientCountry(request);
           if (country) {
-            existingEmailUser.detectedCountry = country;
+            existingEmailUser.detectedCountry = normalizeCountryName(country);
           }
         }
         resolvedDetectedCountry = existingEmailUser.detectedCountry || null;
@@ -409,7 +409,7 @@ export async function POST(request: NextRequest) {
         resolvedBillingPhone =
           normalizePhone(existingEmailUser.phone) || normalizedInputPhone;
         resolvedBillingCountry =
-          existingEmailUser.country?.trim() || resolvedBillingCountry;
+          normalizeCountryName(existingEmailUser.country) || resolvedBillingCountry;
       } else {
         if (existingPhoneUser) {
           return NextResponse.json(
@@ -444,7 +444,7 @@ export async function POST(request: NextRequest) {
         };
         const country = getClientCountry(request);
         if (country) {
-          newUserPayload.detectedCountry = country;
+          newUserPayload.detectedCountry = normalizeCountryName(country);
         }
         const newUser = await UserModel.create(newUserPayload);
         resolvedDetectedCountry =
@@ -464,7 +464,7 @@ export async function POST(request: NextRequest) {
         resolvedBillingPhone =
           normalizePhone(newUser.phone) || normalizedInputPhone;
         resolvedBillingCountry =
-          newUser.country?.trim() || resolvedBillingCountry;
+          normalizeCountryName(newUser.country) || resolvedBillingCountry;
       }
     }
 
@@ -1407,7 +1407,7 @@ export async function POST(request: NextRequest) {
       source: orderSource,
       latestClientIp: partialPaymentIdentity.normalizedIp,
       deviceFingerprint: partialPaymentIdentity.normalizedFingerprint,
-      location: locationCode || undefined,
+      location: normalizeCountryName(locationCode) || undefined,
       locale,
       attribution: attribution
         ? {

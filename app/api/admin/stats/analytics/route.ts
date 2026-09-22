@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
+import { normalizeCountryName } from '@/lib/country-visibility';
 
 type RevenuePoint = { label: string; revenue: number };
 type AnalyticsMatchFilter = { status?: string };
@@ -372,12 +373,24 @@ export async function GET(request: Request) {
       }),
     );
 
-    const ordersByCountryData = ordersByCountry.map(
-      (item: { _id: string | null; value: number }) => ({
-        name: item._id || 'Unknown',
-        value: item.value,
-      }),
-    );
+    // Merge buckets that normalize to the same canonical country name —
+    // legacy records may store 'EG' while newer ones store 'Egypt'.
+    const mergeCountryBuckets = (
+      items: Array<{ _id: string | null; value: number }>,
+    ) => {
+      const merged = new Map<string, number>();
+      for (const item of items) {
+        const name = item._id
+          ? normalizeCountryName(item._id)
+          : 'Unknown';
+        merged.set(name, (merged.get(name) ?? 0) + item.value);
+      }
+      return [...merged.entries()]
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value);
+    };
+
+    const ordersByCountryData = mergeCountryBuckets(ordersByCountry);
 
     const revenueByDayMap = new Map<string, number>(
       revenueByDayAgg.map(
@@ -460,12 +473,7 @@ export async function GET(request: Request) {
       EUR: earningsByCurrencyMap.get('EUR') ?? 0,
     };
 
-    const ordersByLocationData = ordersByLocation.map(
-      (item: { _id: string | null; value: number }) => ({
-        name: item._id || 'Unknown',
-        value: item.value,
-      }),
-    );
+    const ordersByLocationData = mergeCountryBuckets(ordersByLocation);
 
     return NextResponse.json({
       success: true,

@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import type { IOrder } from '../models/Order';
+import { normalizeCountryName } from '../country-visibility';
 
 // ─── Brand Configs ───────────────────────────────────────────────
 const BRANDS = {
@@ -244,7 +245,7 @@ function buildEmailHtml(order: IOrder): string {
                 </tr>
                 <tr>
                   <td style="padding:10px 16px;font-size:13px;color:#777;">${L.country}</td>
-                  <td style="padding:10px 16px;font-size:13px;color:#333;">${order.billingData?.country || ''}</td>
+                  <td style="padding:10px 16px;font-size:13px;color:#333;">${order.billingData?.country ? normalizeCountryName(order.billingData.country) : ''}</td>
                 </tr>
               </table>
             </td>

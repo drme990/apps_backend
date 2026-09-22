@@ -94,7 +94,10 @@ export async function PATCH(
     }
 
     if (hasCountry) {
-      const nextCountry = body.detectedCountry || null;
+      const { normalizeCountryName } = await import('@/lib/country-visibility');
+      const nextCountry = body.detectedCountry
+        ? normalizeCountryName(body.detectedCountry)
+        : null;
       const previousCountry = customerBefore.detectedCountry || null;
       if (previousCountry !== nextCountry) {
         update.detectedCountry = nextCountry;

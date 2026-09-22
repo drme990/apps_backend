@@ -9,6 +9,7 @@ import {
   type IBaseAppUserMethods,
 } from '@/lib/auth/app-users';
 import Order from '@/lib/models/Order';
+import { normalizeCountryName } from '@/lib/country-visibility';
 
 function parseIsoDateParts(
   value: string | null,
@@ -198,15 +199,19 @@ export async function GET(request: NextRequest) {
         if (typeof isBannedFilter === 'boolean') {
           filterQuery.isBanned = isBannedFilter;
         }
+        // Stored values are canonical long names — normalize filter
+        // inputs too so a code like 'EG' still matches 'Egypt'.
         if (countryFilter) {
+          const normalized = normalizeCountryName(countryFilter);
           filterQuery.country = {
-            $regex: `^${countryFilter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            $regex: `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
             $options: 'i',
           };
         }
         if (detectedCountryFilter) {
+          const normalized = normalizeCountryName(detectedCountryFilter);
           filterQuery.detectedCountry = {
-            $regex: `^${detectedCountryFilter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            $regex: `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
             $options: 'i',
           };
         }

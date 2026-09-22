@@ -4,6 +4,7 @@ import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Order from '@/lib/models/Order';
 import Category from '@/lib/models/Categories';
+import { normalizeCountryName } from '@/lib/country-visibility';
 
 /**
  * Execution orders API
@@ -105,8 +106,11 @@ export async function GET(request: NextRequest) {
       ];
     }
     if (country && country !== 'all') {
+      // Stored values are canonical long names — normalize the filter
+      // input too so a code like 'EG' still matches 'Egypt'.
+      const normalizedCountry = normalizeCountryName(country);
       baseMatch['billingData.country'] = {
-        $regex: `^${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+        $regex: `^${normalizedCountry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
         $options: 'i',
       };
     }

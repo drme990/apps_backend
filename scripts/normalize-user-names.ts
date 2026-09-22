@@ -26,8 +26,13 @@ import mongoose, { Document, Types } from 'mongoose';
 import { sanitizeCustomerNameForGateway } from '../lib/utils/name';
 
 declare function require(name: string): unknown;
-const fs = require('fs');
-const path = require('path');
+const fs = require('fs') as {
+  existsSync(filePath: string): boolean;
+  readFileSync(filePath: string, encoding: string): string;
+};
+const path = require('path') as {
+  join(...parts: string[]): string;
+};
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -121,12 +126,15 @@ const Order = mongoose.model<OrderDoc>('NormOrder', OrderSchema, 'orders');
 /**
  * Normalize every `name` in a user collection. Returns the number of
  * documents updated.
+ *
+ * Writes via updateOne with $set on the leaf path only — never rewrites
+ * the whole document.
  */
 async function normalizeUserCollection(
   label: string,
   model: mongoose.Model<UserDoc>,
 ): Promise<number> {
-  const users = await model.find({ name: { $type: 'string' } });
+  const users = await model.find({ name: { $type: 'string' } }).lean();
   let updated = 0;
 
   for (const user of users) {
@@ -141,8 +149,10 @@ async function normalizeUserCollection(
     console.log(`  [${label}] "${original}" → "${normalized}"`);
 
     if (!isDryRun) {
-      user.name = normalized;
-      await user.save();
+      await model.updateOne(
+        { _id: user._id },
+        { $set: { name: normalized } },
+      );
     }
   }
 
@@ -155,11 +165,18 @@ async function normalizeUserCollection(
 /**
  * Normalize `billingData.fullName` on all orders — this is the exact
  * field sent to EasyKash when generating payment links.
+ *
+ * IMPORTANT: writes via updateOne with $set on 'billingData.fullName'
+ * ONLY. A previous version assigned `order.billingData = {...}` then
+ * called `order.save()` — but the declared schema only knows `fullName`,
+ * so `doc.billingData` exposed just that one key and save() overwrote
+ * the whole object, wiping billingData.phone/.email/.country. Never
+ * reintroduce a document-level save here.
  */
 async function normalizeOrderNames(): Promise<number> {
   const orders = await Order.find({
     'billingData.fullName': { $type: 'string', $ne: '' },
-  });
+  }).lean();
   let updated = 0;
 
   for (const order of orders) {
@@ -176,11 +193,10 @@ async function normalizeOrderNames(): Promise<number> {
     );
 
     if (!isDryRun) {
-      order.billingData = {
-        ...(order.billingData || {}),
-        fullName: normalized,
-      };
-      await order.save();
+      await Order.updateOne(
+        { _id: order._id },
+        { $set: { 'billingData.fullName': normalized } },
+      );
     }
   }
 
