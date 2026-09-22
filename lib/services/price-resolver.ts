@@ -339,9 +339,12 @@ export async function resolveUnitPriceWithVisibility(
   const base = baseCurrency.toUpperCase();
 
   // Determine the viewer's home currency (the "main" currency for exchange)
-  const viewerCountry = allCountries.find(
-    (c) => c.code.toUpperCase() === viewerCountryCode.toUpperCase(),
-  );
+  // Unsupported viewers fall back to 'OT' so they use Other's currency,
+  // matching getVisibleCountriesForViewer's treatment.
+  const viewerCountry =
+    allCountries.find(
+      (c) => c.code.toUpperCase() === viewerCountryCode.toUpperCase(),
+    ) ?? allCountries.find((c) => c.code.toUpperCase() === 'OT');
   const mainCurrencyCode = viewerCountry?.currencyCode?.toUpperCase() || base;
 
   // Get visibility settings for all countries from the viewer's perspective
@@ -499,9 +502,10 @@ export async function resolveProductPrices(
   // IP/location detection failed), fall back to the first product's
   // baseCurrency — this mirrors resolveUnitPriceWithVisibility's behavior
   // of using the product's base currency as the exchange base.
-  const viewerCountry = allCountries.find(
-    (c) => c.code.toUpperCase() === viewerCountryCode.toUpperCase(),
-  );
+  const viewerCountry =
+    allCountries.find(
+      (c) => c.code.toUpperCase() === viewerCountryCode.toUpperCase(),
+    ) ?? allCountries.find((c) => c.code.toUpperCase() === 'OT');
   const mainCurrencyCode = viewerCountry?.currencyCode?.toUpperCase() || '';
 
   // Get visible countries for the viewer.

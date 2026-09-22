@@ -481,15 +481,30 @@ export function getVisibleCountriesForViewer<T extends CountryVisibilityRecord>(
   countries: T[],
   viewerCountryCode: string,
 ): Array<T & { viewerVisibility: CountryVisibilityOptions }> {
-  const viewerCode = normalizeCountryCode(viewerCountryCode);
+  const viewerCode =
+    normalizeCountryCode(viewerCountryCode) ??
+    countryNameToCode(viewerCountryCode);
   if (!viewerCode) return [];
 
-  const viewer = countries.find((country) => country.code === viewerCode);
+  // Unsupported viewers (detected country not in the list, e.g. 'SY')
+  // are treated as 'OT' (Other): OT becomes their home country, so it
+  // gets the self-visibility entry below and OT's visibilityMode /
+  // countriesToSee apply. If 'OT' isn't in the list either, fall
+  // through to the show-all behavior below.
+  let effectiveViewerCode = viewerCode;
+  let viewer = countries.find((country) => country.code === viewerCode);
+  if (!viewer && viewerCode !== 'OT') {
+    const otCountry = countries.find((country) => country.code === 'OT');
+    if (otCountry) {
+      viewer = otCountry;
+      effectiveViewerCode = 'OT';
+    }
+  }
   if (!viewer || (viewer.visibilityMode ?? 'all') === 'all') {
     return countries.map((country) => ({
       ...country,
       viewerVisibility:
-        country.code === viewerCode
+        country.code === effectiveViewerCode
           ? { realPrice: true, exchangePrice: false }
           : { realPrice: true, exchangePrice: true },
     }));
@@ -501,7 +516,7 @@ export function getVisibleCountriesForViewer<T extends CountryVisibilityRecord>(
     .map((country) => ({
       ...country,
       viewerVisibility:
-        country.code === viewerCode
+        country.code === effectiveViewerCode
           ? { realPrice: true, exchangePrice: false }
           : visibleMap[country.code],
     }))
