@@ -117,7 +117,7 @@ export async function incrementShareCampaignSold(
       {
         $inc: { soldShares: sharesToAdd },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
 
     if (!updated) return null;
