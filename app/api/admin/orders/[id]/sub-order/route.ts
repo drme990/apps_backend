@@ -21,6 +21,7 @@ import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generat
 import {
   matchReservationOption,
   normalizeReservationFields,
+  RESERVATION_FIELD_PRESETS,
   type ReservationFieldDefinition,
 } from '@/lib/reservation-fields';
 
@@ -117,6 +118,19 @@ export async function POST(
       string,
       ReservationFieldDefinition
     >();
+
+    // Custom items have no product config — seed the full preset list
+    // (all optional) so their reservation answers are stored instead of
+    // silently dropped.
+    if (items.some((item) => item.type === 'custom')) {
+      for (const preset of RESERVATION_FIELD_PRESETS) {
+        mergedReservationFieldDefs.set(preset.key, {
+          ...preset,
+          required: false,
+          options: preset.options ? [...preset.options] : undefined,
+        });
+      }
+    }
 
     for (const item of items) {
       if (item.type === 'custom') {
