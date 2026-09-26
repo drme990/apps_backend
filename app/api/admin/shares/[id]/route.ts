@@ -6,7 +6,7 @@ import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { shareCampaignUpdateSchema } from '@/lib/validation/schemas';
-import { incrementShareCampaignSold } from '@/lib/services/share-campaign';
+import { addReservedShares } from '@/lib/services/share-campaign';
 
 export async function GET(
   request: NextRequest,
@@ -182,25 +182,25 @@ export async function PATCH(
       }
     }
 
-    // Manually reserved shares go through the same increment logic as
-    // orders — so overflow creates a new campaign and a full count
-    // completes this one. Runs after save() so the stale in-memory
-    // soldShares can't clobber the increment. manualShares tracks how
-    // much of a campaign's soldShares came from manual additions so the
-    // admin UI can show the "orders vs manual" breakdown.
+    // Manually reserved shares fill campaigns sequentially — top up the
+    // current campaign to completion first, then spill the remainder
+    // into the next campaign(s). Runs after save() so the stale
+    // in-memory soldShares can't clobber the increment. Each campaign
+    // gets its own manualShares portion + entry so the admin UI's
+    // "orders vs manual" breakdown stays correct per campaign.
     if (addSoldShares !== undefined && addSoldShares > 0) {
-      const result = await incrementShareCampaignSold(
+      const allocations = await addReservedShares(
         campaign._id,
         addSoldShares,
       );
-      if (result) {
+      for (const allocation of allocations) {
         await ShareCampaign.updateOne(
-          { _id: result._id },
+          { _id: allocation.campaign._id },
           {
-            $inc: { manualShares: addSoldShares },
+            $inc: { manualShares: allocation.added },
             $push: {
               manualShareEntries: {
-                count: addSoldShares,
+                count: allocation.added,
                 addedAt: new Date(),
                 addedById: auth.user.userId,
                 addedByName: auth.user.name,

@@ -151,6 +151,149 @@ export async function incrementShareCampaignSold(
   return await createActiveCampaignForOverflow(campaign, sharesToAdd);
 }
 
+export interface ReservedShareAllocation {
+  campaign: IShareCampaign;
+  added: number;
+}
+
+/**
+ * Distribute manually-reserved shares across campaigns sequentially.
+ *
+ * Unlike incrementShareCampaignSold (order semantics — one order's
+ * shares live on exactly one campaign), reserved shares are a pool
+ * fill: the current campaign is topped up to completion first, then
+ * the remainder spills into the next active campaign (or a newly
+ * created one), repeating until all shares are placed.
+ *
+ * Example (totalShares = 10):
+ *   Campaign #14: 0/10 (active), add 20
+ *   → #14 filled to 10/10 (completed)
+ *   → #15 filled to 10/10 (completed)
+ *   → a fresh active campaign is ensured for the product
+ *
+ * @returns Per-campaign allocations so callers can attribute
+ *          manualShares / manualShareEntries to each campaign.
+ */
+export async function addReservedShares(
+  campaignId: string | mongoose.Types.ObjectId,
+  sharesToAdd: number,
+): Promise<ReservedShareAllocation[]> {
+  const allocations: ReservedShareAllocation[] = [];
+  if (!Number.isFinite(sharesToAdd) || sharesToAdd <= 0) return allocations;
+
+  let remaining = Math.floor(sharesToAdd);
+  const initial = await ShareCampaign.findById(campaignId).lean();
+  if (!initial) return allocations;
+
+  let current: IShareCampaign = initial;
+  const productId = current.productId;
+  const template = current;
+
+  // Guard against pathological loops — every iteration either places
+  // >= 1 share or breaks, so remaining + a small race budget is enough.
+  let guard = remaining + 10;
+
+  while (remaining > 0 && guard-- > 0) {
+    // Resolve the campaign to fill: keep `current` while it's a live,
+    // non-full campaign; otherwise take the oldest fillable active
+    // campaign for this product; otherwise create a new active one.
+    if (
+      current.status !== 'active' ||
+      current.soldShares >= current.totalShares
+    ) {
+      const next =
+        (await ShareCampaign.findOne({
+          productId,
+          status: 'active',
+          $expr: { $lt: ['$soldShares', '$totalShares'] },
+        })
+          .sort({ campaignNumber: 1 })
+          .lean()) ??
+        (await createActiveReservedCampaign(template));
+      if (!next) break;
+      current = next;
+      continue;
+    }
+
+    const capacity = current.totalShares - current.soldShares;
+    const add = Math.min(capacity, remaining);
+
+    const updated = await ShareCampaign.findOneAndUpdate(
+      {
+        _id: current._id,
+        status: 'active',
+        soldShares: { $lte: current.totalShares - add },
+      },
+      { $inc: { soldShares: add } },
+      { returnDocument: 'after' },
+    ).lean();
+
+    if (!updated) {
+      // Lost a race — refetch and retry with fresh state.
+      current = (await ShareCampaign.findById(current._id).lean()) ?? current;
+      continue;
+    }
+
+    remaining -= add;
+
+    if (updated.soldShares >= updated.totalShares) {
+      await ShareCampaign.updateOne(
+        { _id: updated._id },
+        { status: 'completed', completedAt: new Date() },
+      );
+      allocations.push({
+        campaign: { ...updated, status: 'completed' } as IShareCampaign,
+        added: add,
+      });
+      current = { ...updated, status: 'completed' } as IShareCampaign;
+      continue;
+    }
+
+    allocations.push({ campaign: updated, added: add });
+    break;
+  }
+
+  // Keep a live campaign for the product once the fill settles.
+  if (allocations.length > 0) {
+    await createNextCampaign(template);
+  }
+
+  return allocations;
+}
+
+/**
+ * Create a new empty active campaign inheriting config from a
+ * template campaign. Used by addReservedShares when no fillable
+ * active campaign exists for the product.
+ */
+async function createActiveReservedCampaign(
+  templateCampaign: IShareCampaign,
+): Promise<IShareCampaign | null> {
+  try {
+    const nextNumber = await getNextCampaignNumber(templateCampaign.productId);
+
+    const created = await ShareCampaign.create({
+      productId: templateCampaign.productId,
+      totalShares: templateCampaign.totalShares,
+      soldShares: 0,
+      status: 'active',
+      campaignNumber: nextNumber,
+      displayOnProductPage: templateCampaign.displayOnProductPage ?? false,
+      minDisplayPercent: templateCampaign.minDisplayPercent ?? 0,
+      sizes: templateCampaign.sizes,
+      completedAt: null,
+    });
+
+    return created.toObject();
+  } catch (error) {
+    console.error(
+      '[shares] Failed to create active campaign for reserved shares:',
+      error,
+    );
+    return null;
+  }
+}
+
 /**
  * Create a new completed campaign for a full order.
  *
