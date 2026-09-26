@@ -11,6 +11,7 @@
 
 import Order, { type IOrder, type IOrderDesignUrl } from '@/lib/models/Order';
 import Referral from '@/lib/models/Referral';
+import ShareCampaign from '@/lib/models/ShareCampaign';
 import {
   generateDesignForProduct,
   type DesignAppResult,
@@ -117,6 +118,12 @@ export async function generateDesignsForOrder(
   // this just ensures we don't add extra sequential wait time on the
   // backend side.
   const productItems = (order.items || []).filter((item) => item.productId);
+  const orderItems = order.items || [];
+  // orderData.items is the same array enriched with campaignCode —
+  // indexOf maps each order item to its enriched counterpart.
+  const payloadItems = (orderData.items ?? []) as Array<{
+    campaignCode?: string;
+  }>;
 
   const buildItemOrderData = (item: (typeof productItems)[number]) => ({
     ...orderData,
@@ -127,6 +134,7 @@ export async function generateDesignsForOrder(
       sizeIndex: item.sizeIndex,
       sizeName: item.sizeName,
       sizeDesignName: item.sizeDesignName || '',
+      campaignCode: payloadItems[orderItems.indexOf(item)]?.campaignCode,
     },
   });
 
@@ -347,6 +355,42 @@ async function loadReferrals(): Promise<
 }
 
 /**
+ * Resolve each order item's share campaign code (campaignNumber).
+ *
+ * Items link to a share campaign via `shareCampaignId` — the design
+ * app's `custom.campaignCode` dynamic field renders this per-item code
+ * on the design generated for that item.
+ *
+ * Returns a map of shareCampaignId (string) → campaignNumber (string).
+ * A single batched query covers all items.
+ */
+async function loadShareCampaignCodes(
+  order: IOrder,
+): Promise<Map<string, string>> {
+  const ids = new Set<string>();
+  for (const item of order.items || []) {
+    if (item.shareCampaignId) ids.add(String(item.shareCampaignId));
+  }
+  const codes = new Map<string, string>();
+  if (ids.size === 0) return codes;
+
+  try {
+    const campaigns = await ShareCampaign.find(
+      { _id: { $in: [...ids] } },
+      { campaignNumber: 1 },
+    ).lean();
+    for (const campaign of campaigns) {
+      if (campaign.campaignNumber !== undefined) {
+        codes.set(String(campaign._id), String(campaign.campaignNumber));
+      }
+    }
+  } catch {
+    // Share campaign lookup failed — the field stays unresolved.
+  }
+  return codes;
+}
+
+/**
  * Build the order data payload sent to the design app.
  *
  * The design app's dynamic field resolver uses paths like
@@ -365,6 +409,16 @@ export async function buildOrderDataPayload(
   }
 
   const referrals = await loadReferrals();
+  const campaignCodes = await loadShareCampaignCodes(order);
+
+  // Enrich each item with its share campaign code so the design app can
+  // resolve `custom.campaignCode` without its own DB lookup.
+  const items = (order.items || []).map((item) => {
+    const code = item.shareCampaignId
+      ? campaignCodes.get(String(item.shareCampaignId))
+      : undefined;
+    return code !== undefined ? { ...item, campaignCode: code } : item;
+  });
 
   const referralId =
     order.referralId ||
@@ -379,8 +433,8 @@ export async function buildOrderDataPayload(
     status: order.status,
     billingData: order.billingData,
     billing: order.billingData,
-    items: order.items,
-    item: order.items?.[0],
+    items,
+    item: items[0],
     reservationData: order.reservationData,
     reservation,
     source: order.source,
