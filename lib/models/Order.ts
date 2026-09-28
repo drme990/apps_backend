@@ -395,6 +395,46 @@ export interface IOrder {
   isSubOrder?: boolean;
   hasSubOrder?: boolean;
   subOrderId?: mongoose.Types.ObjectId | string;
+  // Checkout reuse (see enhance-order-createing.md)
+  /** sha256 of the canonical checkout inputs — decides reuse vs update. */
+  checkoutFingerprint?: string;
+  /** sha256 of source|userId|email|phone — scopes the reuse lookup. */
+  checkoutIdentity?: string;
+  /**
+   * `${checkoutIdentity}:${basketFingerprint}` — present ONLY while the
+   * order is an open unpaid checkout. Carries a unique partial index so
+   * concurrent submits can never create two open orders for the same
+   * customer+basket. Any product change (items/size/quantity/add-ons/
+   * recommended product) hashes to a different basket → different slot
+   * → a brand-new order; the old order's payment timeline is never
+   * touched. Cleared by hooks when the order leaves the open
+   * set (paid/partial-paid/completed/cancelled/refunded, or money paid).
+   */
+  openCheckoutKey?: string;
+  /** How many times the order was rewritten by update-in-place. */
+  checkoutRevision?: number;
+  /**
+   * Booking-intent workflow state — lives ON the order (no separate
+   * collection). Absent intent = 'new' for eligible abandoned orders.
+   * See Booking-intent.md.
+   */
+  intent?: {
+    status?: 'new' | 'contacted' | 'refused' | 'converted' | 'closed';
+    assignedTo?: {
+      adminId: mongoose.Types.ObjectId;
+      name: string;
+      email: string;
+    };
+    assignedAt?: Date;
+    resolvedAt?: Date;
+    resolvedBy?: 'admin' | 'auto';
+    resolvedByAdmin?: {
+      adminId: mongoose.Types.ObjectId;
+      name: string;
+    };
+    autoReason?: 'paid' | 'purchased_elsewhere' | 'cancelled';
+    note?: string;
+  };
   createdAt?: Date;
   updatedAt?: Date;
   _previousStatus?: OrderStatus;
@@ -871,6 +911,57 @@ const OrderSchema = new mongoose.Schema<IOrder>(
       ],
       default: [],
     },
+    // Checkout reuse (see enhance-order-createing.md)
+    checkoutFingerprint: { type: String, trim: true, index: true },
+    checkoutIdentity: { type: String, trim: true, index: true },
+    openCheckoutKey: { type: String, trim: true },
+    checkoutRevision: { type: Number, min: 0, default: 0 },
+    // Booking-intent workflow — embedded on the order (see
+    // Booking-intent.md). Absent `intent` = 'new' for eligible orders.
+    intent: {
+      type: new mongoose.Schema(
+        {
+          status: {
+            type: String,
+            enum: ['new', 'contacted', 'refused', 'converted', 'closed'],
+          },
+          assignedTo: {
+            type: new mongoose.Schema(
+              {
+                adminId: {
+                  type: mongoose.Schema.Types.ObjectId,
+                  required: true,
+                },
+                name: { type: String, required: true },
+                email: { type: String, required: true },
+              },
+              { _id: false },
+            ),
+          },
+          assignedAt: { type: Date },
+          resolvedAt: { type: Date },
+          resolvedBy: { type: String, enum: ['admin', 'auto'] },
+          resolvedByAdmin: {
+            type: new mongoose.Schema(
+              {
+                adminId: {
+                  type: mongoose.Schema.Types.ObjectId,
+                  required: true,
+                },
+                name: { type: String, required: true },
+              },
+              { _id: false },
+            ),
+          },
+          autoReason: {
+            type: String,
+            enum: ['paid', 'purchased_elsewhere', 'cancelled'],
+          },
+          note: { type: String, trim: true, maxlength: 2000 },
+        },
+        { _id: false },
+      ),
+    },
   },
   { timestamps: true },
 );
@@ -949,6 +1040,18 @@ OrderSchema.pre('save', async function () {
   this.paidAmount = totalPaid;
   this.remainingAmount = remainingAmount;
 
+  // Checkout reuse — the openCheckoutKey is the unique slot for "one
+  // live unpaid order per customer+basket". Once the order leaves the
+  // open set (money paid or a terminal/closed status), release the slot
+  // so the next checkout can claim it with a fresh order.
+  const OPEN_CHECKOUT_STATUSES = ['pending', 'processing', 'failed'];
+  if (
+    this.openCheckoutKey &&
+    (!OPEN_CHECKOUT_STATUSES.includes(this.status) || totalPaid > 0)
+  ) {
+    this.openCheckoutKey = undefined;
+  }
+
   const normalizedIp =
     normalizeIp(this.latestClientIp || this.paymentAttempts?.[0]?.ip) ||
     undefined;
@@ -996,6 +1099,21 @@ OrderSchema.post('save', function (doc) {
 OrderSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function () {
   const update = this.getUpdate() as Record<string, unknown> | undefined;
   touchStatusUpdateTime(update);
+
+  // Checkout reuse — non-save() writers (bulk status, admin PATCH) that
+  // move an order out of the open set must release its openCheckoutKey
+  // slot too, otherwise the unique partial index would block the
+  // customer's next checkout for that product.
+  const nextStatus = extractNextStatus(update);
+  const OPEN_CHECKOUT_STATUSES = ['pending', 'processing', 'failed'];
+  if (update && nextStatus && !OPEN_CHECKOUT_STATUSES.includes(nextStatus)) {
+    // Must $unset (not set null) — a null field still exists in the
+    // document and would keep occupying the partial unique index slot.
+    if (!update.$unset || typeof update.$unset !== 'object') {
+      update.$unset = {};
+    }
+    (update.$unset as Record<string, unknown>).openCheckoutKey = '';
+  }
 });
 
 OrderSchema.index({ createdAt: -1 });
@@ -1022,6 +1140,18 @@ OrderSchema.index({
 });
 OrderSchema.index({ source: 1, status: 1, isPartialPayment: 1, createdAt: -1 });
 OrderSchema.index({ 'items.productId': 1 });
+// Booking-intent list — workflow status + attempt date.
+OrderSchema.index({ 'intent.status': 1, createdAt: -1 });
+OrderSchema.index({ 'intent.assignedTo.adminId': 1 });
+// One open unpaid checkout per customer+product — concurrency guard for
+// the reuse matrix. Partial: closed orders drop out and free the slot.
+OrderSchema.index(
+  { openCheckoutKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { openCheckoutKey: { $exists: true } },
+  },
+);
 
 if (process.env.NODE_ENV !== 'production' && mongoose.models.Order) {
   mongoose.deleteModel('Order');

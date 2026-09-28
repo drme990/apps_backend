@@ -97,6 +97,8 @@ export async function GET() {
         defaultExecutionDate: booking?.defaultExecutionDate ?? null,
         summerTimeEnabled: booking?.summerTimeEnabled ?? false,
         paymentMethodTolerances: tolerances,
+        bookingIntentDisplayDelayMinutes:
+          booking?.bookingIntentDisplayDelayMinutes ?? 60,
       },
     });
   } catch (error) {
@@ -216,6 +218,11 @@ export async function PUT(request: NextRequest) {
       update.summerTimeEnabled = body.summerTimeEnabled;
     }
 
+    if (body.bookingIntentDisplayDelayMinutes !== undefined) {
+      update.bookingIntentDisplayDelayMinutes =
+        body.bookingIntentDisplayDelayMinutes;
+    }
+
     if (body.paymentMethodTolerances !== undefined) {
       // Validate and normalize the tolerances map
       const tolerances = body.paymentMethodTolerances;
@@ -295,6 +302,8 @@ export async function PUT(request: NextRequest) {
         defaultExecutionDate: booking?.defaultExecutionDate ?? null,
         summerTimeEnabled: booking?.summerTimeEnabled ?? false,
         paymentMethodTolerances: tolerancesResponse,
+        bookingIntentDisplayDelayMinutes:
+          booking?.bookingIntentDisplayDelayMinutes ?? 60,
       },
     });
   } catch (error) {

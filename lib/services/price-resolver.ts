@@ -1,4 +1,5 @@
 import { convertCurrency, getExchangeRates } from '@/lib/services/currency';
+import Country from '@/lib/models/Country';
 import {
   getVisibleCountriesForViewer,
   type CountryVisibilityOptions,
@@ -37,7 +38,22 @@ export function getBasePrice(
 type CountryRecord = CountryVisibilityRecord & {
   currencyCode: string;
   roundingRule?: string | null;
+  name: { ar: string; en: string };
 };
+
+/**
+ * The single country query used by EVERY user-facing price resolution.
+ *
+ * Display (`resolveProductPrices`) and checkout
+ * (`createStorefrontPriceResolver`) must always resolve against the same
+ * set — an inactive country must never leak into visibility or
+ * exchange-base resolution. Callers must not run their own Country
+ * query for pricing; always go through this loader.
+ */
+export async function loadPricingCountries(): Promise<CountryRecord[]> {
+  const countries = await Country.find({ isActive: true }).lean();
+  return countries as unknown as CountryRecord[];
+}
 
 /**
  * A price that has been resolved for a specific currency, ready for display.
@@ -320,6 +336,9 @@ export async function resolveUnitPrice(
  * This is the checkout path. It uses the same `resolvePriceCore` as the
  * display path (`resolveSizePrices`) to guarantee price consistency.
  *
+ * Internal — callers must go through `createStorefrontPriceResolver`,
+ * which owns the country-set loading.
+ *
  * @param size               The product size with `prices[]`
  * @param baseCurrency       The product's base currency (e.g. "SAR")
  * @param targetCurrency     The currency to resolve the price in (e.g. "EGP")
@@ -328,7 +347,7 @@ export async function resolveUnitPrice(
  *
  * @returns The resolved unit price in the target currency, or 0 if unresolvable.
  */
-export async function resolveUnitPriceWithVisibility(
+async function resolveUnitPriceWithVisibility(
   size: { prices?: CurrencyPriceEntry[] },
   baseCurrency: string,
   targetCurrency: string,
@@ -373,6 +392,38 @@ export async function resolveUnitPriceWithVisibility(
   );
 
   return result?.amount ?? 0;
+}
+
+/**
+ * The single entry point for user-facing unit-price resolution.
+ *
+ * Loads the pricing country set once per request (the same query the
+ * display path uses via `resolveProductPrices`) and exposes a
+ * `unitPrice` resolver bound to the viewer. Using this guarantees the
+ * checkout/gateway amount is identical to the price the user saw —
+ * no caller can pass a divergent country set.
+ *
+ * Call `connectDB()` before creating the resolver.
+ */
+export function createStorefrontPriceResolver(viewerCountryCode: string) {
+  const countriesPromise = loadPricingCountries();
+
+  return {
+    viewerCountryCode,
+    async unitPrice(
+      size: { prices?: CurrencyPriceEntry[] },
+      baseCurrency: string,
+      targetCurrency: string,
+    ): Promise<number> {
+      return resolveUnitPriceWithVisibility(
+        size,
+        baseCurrency,
+        targetCurrency,
+        viewerCountryCode,
+        await countriesPromise,
+      );
+    },
+  };
 }
 
 /**
@@ -483,16 +534,19 @@ async function resolveSizePrices(
  * pre-resolved price for every visible currency. The frontend can
  * look up prices directly without any conversion logic.
  *
+ * Loads the pricing country set itself via `loadPricingCountries()` —
+ * callers never pass a country list, so display and checkout always
+ * resolve against the same data.
+ *
  * @param products           Array of product objects (will be mutated)
  * @param viewerCountryCode  The viewer's home country code (2-letter)
- * @param allCountries       All country records from the DB
  * @returns The same array of products with `resolvedPrices` added to each size
  */
 export async function resolveProductPrices(
   products: Record<string, unknown>[],
   viewerCountryCode: string,
-  allCountries: CountryRecord[],
 ): Promise<Record<string, unknown>[]> {
+  const allCountries = await loadPricingCountries();
   if (!viewerCountryCode || allCountries.length === 0) {
     return products;
   }

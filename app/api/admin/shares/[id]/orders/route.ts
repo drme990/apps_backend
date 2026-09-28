@@ -35,7 +35,7 @@ export async function GET(
 
     const [orders, total] = await Promise.all([
       Order.find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ createdAt: 1 })
         .skip(skip)
         .limit(maxLimit)
         .lean(),

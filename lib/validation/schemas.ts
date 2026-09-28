@@ -592,6 +592,11 @@ export const bookingUpdateSchema = z
       .nullable()
       .optional(),
     summerTimeEnabled: z.boolean().optional(),
+    bookingIntentDisplayDelayMinutes: z
+      .number()
+      .min(0)
+      .max(10080)
+      .optional(),
     paymentMethodTolerances: z
       .record(
         z.string(),
@@ -621,6 +626,14 @@ export const bulkOrderStatusSchema = z
   .object({
     orderIds: z.array(z.string().trim().min(1)).min(1),
     status: z.string().trim().min(1),
+  })
+  .strict();
+
+export const bookingIntentResolveSchema = z
+  .object({
+    outcome: z.enum(['refused', 'converted']),
+    note: z.string().trim().max(2000).optional(),
+    cascade: z.boolean().optional(),
   })
   .strict();
 

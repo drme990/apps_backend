@@ -9,7 +9,10 @@ import {
     type CountryVisibilityOptions,
 } from '@/lib/country-visibility';
 import { getExchangeRates } from '@/lib/services/currency';
-import { getBasePrice } from '@/lib/services/price-resolver';
+import {
+    getBasePrice,
+    loadPricingCountries,
+} from '@/lib/services/price-resolver';
 
 const priceSchema = z.object({
     productId: z.string().trim().min(1),
@@ -72,7 +75,7 @@ async function buildPriceResponse(productId: string, country: string) {
     const [userCountry, product, allCountries] = await Promise.all([
         Country.findOne(countryQuery).lean(),
         Product.findById(productId).lean(),
-        Country.find({}).lean(),
+        loadPricingCountries(),
     ]);
 
     if (!userCountry) {

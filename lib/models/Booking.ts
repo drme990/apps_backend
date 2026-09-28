@@ -35,6 +35,11 @@ export interface IBooking {
    * - `fixnumber`:  order is paid when invoiceValue >= remaining - value
    */
   paymentMethodTolerances?: Record<string, PaymentMethodTolerance> | null;
+  /**
+   * Booking Intent — minutes an unpaid order must age before it shows on
+   * the Booking Intent page. Default 60 when unset.
+   */
+  bookingIntentDisplayDelayMinutes?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -92,6 +97,12 @@ const BookingSchema = new mongoose.Schema<IBooking>(
       type: Map,
       of: PaymentMethodToleranceSchema,
       default: {},
+    },
+    bookingIntentDisplayDelayMinutes: {
+      type: Number,
+      min: 0,
+      max: 10080,
+      default: 60,
     },
   },
   { timestamps: true },

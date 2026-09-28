@@ -18,6 +18,7 @@ import Booking from '@/lib/models/Booking';
 import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
+import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
 
 /** Currencies supported by the EasyKash payment gateway. */
@@ -356,6 +357,29 @@ export async function PUT(
       previousStatus !== 'completed'
     ) {
       await applyShareIncrementsForOrder(order.toObject());
+    }
+
+    // ── Booking intent sync ── paid-like statuses convert the intent
+    // (and suppress same-product intents); cancelled/refunded close it.
+    if (nextStatus !== previousStatus) {
+      const intentOutcome =
+        nextStatus === 'paid' ||
+          nextStatus === 'partial-paid' ||
+          nextStatus === 'completed'
+          ? 'paid'
+          : nextStatus === 'cancelled' || nextStatus === 'refunded'
+            ? 'closed'
+            : null;
+      if (intentOutcome) {
+        syncIntentsOnOrderTerminal(order.toObject(), intentOutcome).catch(
+          (err) => {
+            console.error(
+              `[admin PUT] booking-intent sync failed for ${order.orderNumber}:`,
+              err instanceof Error ? err.message : err,
+            );
+          },
+        );
+      }
     }
 
     if (nextStatus !== previousStatus) {
@@ -1368,6 +1392,33 @@ export async function PATCH(
       )
     ) {
       await applyShareIncrementsForOrder(order.toObject());
+    }
+
+    // ── Booking intent sync ── invoice-driven status changes reach
+    // paid-like or cancelled/refunded states here.
+    {
+      const lastStatusChange = [...changes]
+        .reverse()
+        .find((c) => c.changeType === 'status');
+      const finalStatus = lastStatusChange?.newValue;
+      const intentOutcome =
+        finalStatus === 'paid' ||
+          finalStatus === 'partial-paid' ||
+          finalStatus === 'completed'
+          ? 'paid'
+          : finalStatus === 'cancelled' || finalStatus === 'refunded'
+            ? 'closed'
+            : null;
+      if (intentOutcome) {
+        syncIntentsOnOrderTerminal(order.toObject(), intentOutcome).catch(
+          (err) => {
+            console.error(
+              `[admin PATCH] booking-intent sync failed for ${order.orderNumber}:`,
+              err instanceof Error ? err.message : err,
+            );
+          },
+        );
+      }
     }
 
     // Record change history entries. Wrap in try-catch so a history

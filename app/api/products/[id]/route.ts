@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import Product from '@/lib/models/Product';
-import Country from '@/lib/models/Country';
 import ShareCampaign from '@/lib/models/ShareCampaign';
 import {
   filterProductMediaForPlatform,
@@ -10,7 +9,7 @@ import {
 } from '@/lib/product-media';
 import { resolveProductPrices } from '@/lib/services/price-resolver';
 import { stripProductForPublic } from '@/lib/product-public-mapper';
-import { normalizeCountryCode, type CountryVisibilityMode } from '@/lib/country-visibility';
+import { normalizeCountryCode } from '@/lib/country-visibility';
 import { getClientCountry } from '@/lib/utils/ip';
 
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -69,18 +68,7 @@ export async function GET(
       // all currencies with real prices, but no exchange conversion
       // (since there's no home country to convert from).
       const effectiveViewerCode = viewerCountryCode || normalizeCountryCode(getClientCountry(request)) || 'OT';
-      const allCountries = await Country.find({ isActive: true }).lean();
-      await resolveProductPrices(
-        [productData],
-        effectiveViewerCode,
-        allCountries as unknown as Array<{
-          code: string;
-          currencyCode: string;
-          roundingRule?: string | null;
-          visibilityMode?: CountryVisibilityMode;
-          countriesToSee?: unknown;
-        }>,
-      );
+      await resolveProductPrices([productData], effectiveViewerCode);
       // Strip admin-only fields not needed by the frontend
       stripProductForPublic(productData);
 

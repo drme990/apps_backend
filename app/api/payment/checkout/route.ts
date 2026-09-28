@@ -3,10 +3,12 @@ import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
 import { captureException } from '@/lib/services/error-monitor';
 import { normalizeCurrencyCode } from '@/lib/currencies';
-import Order, { type PaymentMethod, type IOrderItem } from '@/lib/models/Order';
+import Order, {
+  type IOrder,
+  type IOrderItem,
+} from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import Booking from '@/lib/models/Booking';
-import Country from '@/lib/models/Country';
 import { getAuthUser } from '@/lib/auth';
 import { AppId, getUserModelByAppId } from '@/lib/auth/app-users';
 import { generateToken } from '@/lib/services/jwt';
@@ -37,10 +39,6 @@ import {
   normalizeReservationFields,
 } from '@/lib/reservation-fields';
 import {
-  createPayment,
-  getEasykashCashExpiryHours,
-} from '@/lib/services/easykash';
-import {
   acquirePartialPaymentCreationLock,
   buildPartialPaymentIdentity,
   canUserCreatePartialPayment,
@@ -51,15 +49,24 @@ import {
 import { validateCoupon } from '@/lib/services/coupon';
 import { trackInitiateCheckout } from '@/lib/services/fb-capi';
 import { uploadFileToR2, compressImageBuffer } from '@/lib/services/r2';
-import { convertCurrency } from '@/lib/services/currency';
 import {
   findActiveShareCampaign,
   getSharesForSize,
 } from '@/lib/services/share-campaign';
 import {
-  resolveUnitPriceWithVisibility,
-  PAYMENT_GATEWAY_CURRENCIES,
-} from '@/lib/services/price-resolver';
+  attachEasykashPayment,
+  buildCheckoutBasketFingerprint,
+  buildCheckoutFingerprint,
+  buildCheckoutIdentity,
+  buildOpenCheckoutKey,
+  CHECKOUT_REUSE_WINDOW_MS,
+  expirePendingPayments,
+  findLivePendingPayment,
+  GatewayPaymentError,
+  OPEN_CHECKOUT_STATUSES,
+  type CheckoutAction,
+} from '@/lib/services/checkout-reuse';
+import { createStorefrontPriceResolver } from '@/lib/services/price-resolver';
 import { rateLimit, getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
@@ -68,33 +75,12 @@ import {
   refreshDefaultExecutionDateCache,
   skipBlockedDates,
 } from '@/lib/execution-date';
-import { randomBytes } from 'crypto';
-
-
-
-function generatePaymentId(): string {
-  return `pay_${randomBytes(12).toString('hex')}`;
-}
-
-function isCustomerReferenceAlreadyUsedError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes('customerreference') &&
-    (message.includes('already used') || message.includes('already exists'))
-  );
-}
 
 function isDuplicateOrderNumberError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 
   const maybeError = error as Error & { code?: number };
   return maybeError.code === 11000 && error.message.includes('orderNumber_1');
-}
-
-function getPaymentAttemptNumber(order: { payments?: unknown[] }): number {
-  return (order.payments?.length ?? 0) + 1;
 }
 
 type CheckoutAppUserDoc = mongoose.Document & {
@@ -137,6 +123,63 @@ async function releasePartialPaymentLock(
   } catch {
     // Ignore lock release failures to avoid masking checkout errors.
   }
+}
+
+/**
+ * Upload deferred reservation pictures to R2 and swap the answers'
+ * values for the resulting URL arrays. Called only on the `created` /
+ * `updated` paths — reused/revived orders keep their stored URLs.
+ */
+async function materializeReservationPictures(
+  answers: Array<{ value: string }>,
+  pending: Array<{ answerIndex: number; imageValues: string[] }>,
+): Promise<void> {
+  for (const upload of pending) {
+    const uploadedUrls: string[] = [];
+    for (const imageValue of upload.imageValues) {
+      if (!imageValue.startsWith('data:image/')) {
+        // HTTP URL passthrough — already hosted.
+        uploadedUrls.push(imageValue);
+        continue;
+      }
+
+      const [header, base64Data] = imageValue.split(',');
+      const mimeType = header.match(/data:(.*?);base64/)?.[1] || 'image/png';
+      const rawBuffer = Buffer.from(base64Data || '', 'base64');
+
+      // Server-side compression (defense-in-depth, even if the frontend
+      // already compressed the image). Max 1920px, JPEG q80, <500KB.
+      let imageBuffer: Uint8Array = rawBuffer;
+      let outputMimeType = mimeType;
+      try {
+        const compressed = await compressImageBuffer(rawBuffer, mimeType);
+        imageBuffer = compressed.buffer;
+        outputMimeType = compressed.mimeType;
+      } catch {
+        // Compression failed — use the raw buffer (best-effort)
+      }
+
+      // Stored under `Website Images/customers/` — the order number
+      // isn't known yet at this point in the checkout flow.
+      const blobPart = imageBuffer as unknown as BlobPart;
+      const uploaded = await uploadFileToR2(
+        new File([blobPart], 'reservation-picture.jpg', {
+          type: outputMimeType,
+        }),
+        'Website Images/customers',
+        'reservation-picture.jpg',
+      );
+      uploadedUrls.push(uploaded.url);
+    }
+
+    if (answers[upload.answerIndex]) {
+      answers[upload.answerIndex].value = JSON.stringify(uploadedUrls);
+    }
+  }
+
+  // Drain the queue — if a caller retries after a partial failure, the
+  // already-materialized entries must not re-upload (orphan files).
+  pending.length = 0;
 }
 
 export async function POST(request: NextRequest) {
@@ -600,8 +643,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fetch all countries for price visibility resolution
-    const allCountries = await Country.find({}).lean();
+    // Single price resolver bound to the viewer — loads the same
+    // country set the display path uses, so the charged amount always
+    // matches the price the user saw on the product/checkout pages.
+    const priceResolver = createStorefrontPriceResolver(
+      resolvedDetectedCountry || '',
+    );
 
     if (!product.inStock) {
       return NextResponse.json(
@@ -640,12 +687,10 @@ export async function POST(request: NextRequest) {
       const recSize = recommendedProduct.sizes[0];
       if (recSize && recSize.isAvailable !== false) {
         try {
-          recommendedProductPrice = await resolveUnitPriceWithVisibility(
+          recommendedProductPrice = await priceResolver.unitPrice(
             recSize,
             recommendedProduct.baseCurrency || 'SAR',
             currency.toUpperCase(),
-            resolvedDetectedCountry || '',
-            allCountries,
           );
         } catch {
           // If exchange rate conversion fails, skip the recommended product
@@ -753,6 +798,13 @@ export async function POST(request: NextRequest) {
 
     let hasExecutionDateField = false;
 
+    // Picture uploads are deferred until after the reuse decision —
+    // `reused`/`revived` orders already hold valid R2 URLs.
+    const pendingPictureUploads: Array<{
+      answerIndex: number;
+      imageValues: string[];
+    }> = [];
+
     for (const field of normalizedReservationData) {
       let finalValue = field.value;
 
@@ -855,7 +907,6 @@ export async function POST(request: NextRequest) {
         // Cap at 4 images for safety
         imageValues = imageValues.slice(0, 4);
 
-        const uploadedUrls: string[] = [];
         for (const imageValue of imageValues) {
           const isDataImage = imageValue.startsWith('data:image/');
           const isHttpUrl = /^https?:\/\//i.test(imageValue);
@@ -869,50 +920,15 @@ export async function POST(request: NextRequest) {
               { status: 400 },
             );
           }
-
-          if (isDataImage) {
-            const [header, base64Data] = imageValue.split(',');
-            const mimeType =
-              header.match(/data:(.*?);base64/)?.[1] || 'image/png';
-            const rawBuffer = Buffer.from(base64Data || '', 'base64');
-
-            // Server-side compression (defense-in-depth, even if the
-            // frontend already compressed the image). Max 1920px,
-            // JPEG quality 80, target < 500KB.
-            let imageBuffer: Uint8Array = rawBuffer;
-            let outputMimeType = mimeType;
-            try {
-              const compressed = await compressImageBuffer(rawBuffer, mimeType);
-              imageBuffer = compressed.buffer;
-              outputMimeType = compressed.mimeType;
-            } catch {
-              // Compression failed — use the raw buffer (best-effort)
-            }
-
-            // Store under `Website Images/customers/` with a timestamp-based
-            // subfolder for grouping. The order number isn't available yet
-            // at this point in the checkout flow (order is created later).
-            const ext = 'jpg';
-            // Cast through unknown: TS 5.7+ made Uint8Array generic, and
-            // Buffer.from() returns Buffer<ArrayBufferLike>, which isn't
-            // assignable to BlobPart (expects ArrayBuffer-backed). The
-            // runtime data is always a real ArrayBuffer — this is purely
-            // a type-system limitation.
-            const blobPart = imageBuffer as unknown as BlobPart;
-            const uploaded = await uploadFileToR2(
-              new File([blobPart], `reservation-picture.${ext}`, {
-                type: outputMimeType,
-              }),
-              'Website Images/customers',
-              `reservation-picture.${ext}`,
-            );
-            uploadedUrls.push(uploaded.url);
-          } else {
-            uploadedUrls.push(imageValue);
-          }
         }
 
-        finalValue = JSON.stringify(uploadedUrls);
+        // Uploads are DEFERRED until after the reuse decision
+        // (enhance-order-createing.md §3.1) — `reused`/`revived` paths
+        // never touch R2. The answer keeps the raw client values for
+        // now; materializeReservationPictures() swaps them for uploaded
+        // URLs only when the order is actually written.
+        finalValue = JSON.stringify(imageValues);
+        pendingPictureUploads.push({ answerIndex: reservationAnswers.length, imageValues });
       }
 
       if (finalValue) {
@@ -953,12 +969,10 @@ export async function POST(request: NextRequest) {
     }
     let unitPrice: number;
     try {
-      unitPrice = await resolveUnitPriceWithVisibility(
+      unitPrice = await priceResolver.unitPrice(
         selectedSize,
         product.baseCurrency || 'SAR',
         currencyUpper,
-        resolvedDetectedCountry || '',
-        allCountries,
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Unknown error';
@@ -1029,12 +1043,10 @@ export async function POST(request: NextRequest) {
 
         let addOnPrice: number;
         try {
-          addOnPrice = await resolveUnitPriceWithVisibility(
+          addOnPrice = await priceResolver.unitPrice(
             { prices: addOn.prices },
             product.baseCurrency || 'SAR',
             currencyUpper,
-            resolvedDetectedCountry || '',
-            allCountries,
           );
         } catch {
           continue; // skip add-ons that can't be priced in this currency
@@ -1164,112 +1176,408 @@ export async function POST(request: NextRequest) {
       fingerprint: deviceFingerprint,
     });
 
-    // Reuse existing processing order if it matches the same checkout details
-    // Avoid creating duplicate orders when a user clicks Buy multiple times
-    // and an earlier payment session is still valid.
-    try {
-      const now = Date.now();
-      const cashExpiryWindowMs = getEasykashCashExpiryHours() * 60 * 60 * 1000;
+    // ── Order items payload (pure computation — needed by both the
+    //    create and update-in-place paths) ──
+    const orderItemsPayload: IOrderItem[] = [
+      {
+        productId: product._id,
+        productSlug: product.slug,
+        productName: { ar: product.name.ar, en: product.name.en },
+        price: unitPrice,
+        currency: currencyUpper,
+        quantity,
+        sizeIndex: activeSizeIndex,
+        sizeName: {
+          ar: selectedSize?.name?.ar || '',
+          en: selectedSize?.name?.en || '',
+        },
+        sizeDesignName: selectedSize?.designName || '',
+      },
+    ];
 
-      const candidateProcessingOrders = await Order.find({
-        source: orderSource,
-        status: 'processing',
-        userId: effectiveUserId,
-        isPartialPayment: isPartialPayment,
-        'items.0.productId': product._id.toString(),
-      })
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .lean();
+    if (recommendedProduct && recommendedProductPrice > 0) {
+      const recSize = recommendedProduct.sizes[0];
+      orderItemsPayload.push({
+        productId: recommendedProduct._id,
+        productSlug: recommendedProduct.slug,
+        productName: {
+          ar: recommendedProduct.name.ar,
+          en: recommendedProduct.name.en,
+        },
+        price: recommendedProductPrice,
+        currency: currencyUpper,
+        quantity: 1,
+        sizeIndex: 0,
+        sizeName: {
+          ar: recSize?.name?.ar || '',
+          en: recSize?.name?.en || '',
+        },
+        sizeDesignName: recSize?.designName || '',
+      });
+    }
 
-      for (const existing of candidateProcessingOrders) {
-        // Basic checks: payment type, full amount, item details
-        const existingPaymentType =
-          existing.paymentType ||
-          (existing.isPartialPayment ? 'partial' : 'full');
-        if (existingPaymentType !== paymentType) continue;
+    for (const { addOn, quantity: addOnQty, price: addOnPrice } of resolvedAddOns) {
+      orderItemsPayload.push({
+        productId: product._id,
+        productSlug: product.slug,
+        productName: { ar: addOn.name.ar, en: addOn.name.en },
+        price: addOnPrice,
+        currency: currencyUpper,
+        quantity: addOnQty,
+        isAddOn: true,
+        parentItemIndex: 0,
+      });
+    }
 
-        if (Number(existing.fullAmount ?? 0) !== Number(amountAfterDiscount))
-          continue;
-
-        const firstItem = (existing.items || [])[0] || {};
-        if (Number(firstItem.sizeIndex) !== Number(activeSizeIndex)) continue;
-        if (Number(firstItem.quantity || 1) !== Number(quantity || 1)) continue;
-
-        const normalizedExistingEmail = normalizeEmail(
-          existing.billingData?.email,
-        );
-        const normalizedExistingPhone = normalizePhone(
-          existing.billingData?.phone,
-        );
-        const normalizedCurrentEmail =
-          partialPaymentIdentity.normalizedEmail ||
-          normalizeEmail(resolvedBillingEmail);
-        const normalizedCurrentPhone = normalizePhone(resolvedBillingPhone);
-        if (normalizedExistingEmail !== normalizedCurrentEmail) continue;
-        if (normalizedExistingPhone !== normalizedCurrentPhone) continue;
-
-        const couponMatches =
-          (existing.couponCode || '') === (appliedCouponCode || '');
-        if (!couponMatches) continue;
-
-        // Reservation data deep-equality
-        const existingReservation = JSON.stringify(
-          existing.reservationData || [],
-        );
-        const currentReservation = JSON.stringify(reservationAnswers || []);
-        if (existingReservation !== currentReservation) continue;
-
-        const payments = Array.isArray(existing.payments)
-          ? existing.payments
-          : [];
-        if (payments.length === 0) continue;
-
-        const firstPayment = payments[0];
-        if (
-          !firstPayment ||
-          !firstPayment.redirectUrl ||
-          !firstPayment.expiresAt
-        )
-          continue;
-
-        const expiresAt = new Date(firstPayment.expiresAt).getTime();
-        const createdAt = firstPayment.createdAt
-          ? new Date(firstPayment.createdAt).getTime()
-          : 0;
-        const isStillValid =
-          expiresAt > now &&
-          (createdAt === 0 || createdAt + cashExpiryWindowMs > now);
-        if (!isStillValid) continue;
-
-        // Reuse existing processing order
-        const response = NextResponse.json({
-          success: true,
-          data: {
-            order: {
-              _id: existing._id,
-              orderNumber: existing.orderNumber,
-              totalAmount: existing.totalAmount,
-              fullAmount: existing.fullAmount,
-              remainingAmount: existing.isPartialPayment
-                ? (existing.fullAmount || 0) - (existing.paidAmount || 0)
-                : 0,
-              isPartialPayment: !!existing.isPartialPayment,
-              couponDiscount: existing.couponDiscount || 0,
-              currency: existing.currency,
-              status: existing.status,
-            },
-            checkoutUrl: firstPayment.redirectUrl,
-            reused: true,
+    // ── Checkout reuse matrix (enhance-order-createing.md §3) ──
+    // One customer + one basket = one live unpaid order. The unique
+    // openCheckoutKey makes concurrent double-creates impossible, and
+    // because it embeds the basket fingerprint, ANY product change
+    // (product, size, quantity, add-ons, recommended product) lands on
+    // a different slot → brand-new order; the old order's payment
+    // timeline is never touched.
+    const checkoutIdentity = buildCheckoutIdentity({
+      source: orderSource,
+      userId: effectiveUserId,
+      email: resolvedBillingEmail,
+      phone: resolvedBillingPhone,
+    });
+    const basketItems = [
+      {
+        productId: product._id.toString(),
+        sizeIndex: activeSizeIndex,
+        quantity,
+      },
+      ...(recommendedProduct && recommendedProductPrice > 0
+        ? [
+          {
+            productId: recommendedProduct._id.toString(),
+            sizeIndex: 0,
+            quantity: 1,
           },
-        });
+        ]
+        : []),
+      ...resolvedAddOns.map(({ addOn, quantity: addOnQty }) => ({
+        productId: `addon:${addOn._id?.toString() ?? addOn.name.en}`,
+        sizeIndex: 0,
+        quantity: addOnQty,
+        isAddOn: true,
+      })),
+    ];
+    const openCheckoutKey = buildOpenCheckoutKey(
+      checkoutIdentity,
+      buildCheckoutBasketFingerprint(
+        basketItems,
+        isUpgrade && fromProductId ? String(fromProductId) : undefined,
+      ),
+    );
+    const checkoutFingerprint = buildCheckoutFingerprint({
+      source: orderSource,
+      userId: effectiveUserId,
+      email: resolvedBillingEmail,
+      phone: resolvedBillingPhone,
+      fullName: billingData.fullName,
+      country: resolvedBillingCountry,
+      items: basketItems,
+      reservationAnswers,
+      paymentType,
+      fullAmount: amountAfterDiscount,
+      payAmount,
+      currency: currencyUpper,
+      couponCode: appliedCouponCode,
+    });
 
-        if (tokenToSet) setAuthCookie(response, checkoutAppId, tokenToSet);
-        return response;
+    const buildCheckoutResponse = (
+      order: {
+        _id: unknown;
+        orderNumber: string;
+        totalAmount?: number;
+        fullAmount?: number;
+        remainingAmount?: number;
+        isPartialPayment?: boolean;
+        couponDiscount?: number;
+        currency?: string;
+        status?: string;
+      },
+      checkoutUrl: string | null,
+      checkoutAction: CheckoutAction,
+      extra?: Record<string, unknown>,
+    ) =>
+      NextResponse.json({
+        success: true,
+        data: {
+          order: {
+            _id: order._id,
+            orderNumber: order.orderNumber,
+            totalAmount: order.totalAmount,
+            fullAmount: order.fullAmount,
+            remainingAmount: order.isPartialPayment
+              ? order.remainingAmount ??
+              ((order.fullAmount || 0) -
+                ((order as { paidAmount?: number }).paidAmount ?? 0))
+              : 0,
+            isPartialPayment: !!order.isPartialPayment,
+            couponDiscount: order.couponDiscount || 0,
+            currency: order.currency,
+            status: order.status,
+          },
+          checkoutUrl,
+          checkoutAction,
+          // Back-compat: frontends read `reused` today.
+          reused: checkoutAction === 'reused',
+          ...extra,
+        },
+      });
+
+    /** Re-run share-campaign tagging after items are (re)built. */
+    const retagShareCampaign = async (
+      orderId: mongoose.Types.ObjectId | string,
+    ) => {
+      const anyCampaign = await findActiveShareCampaign(product._id);
+      if (!anyCampaign) return;
+
+      const sharesPerPurchase = getSharesForSize(anyCampaign, activeSizeIndex);
+      if (sharesPerPurchase <= 0) return;
+
+      const totalShares = sharesPerPurchase * quantity;
+      const bestFitCampaign = await findActiveShareCampaign(
+        product._id,
+        totalShares,
+      );
+      const campaignToUse = bestFitCampaign || anyCampaign;
+      const campaignId = String(campaignToUse._id);
+
+      await Order.updateOne(
+        {
+          _id: String(orderId),
+          items: {
+            $elemMatch: {
+              productId: new mongoose.Types.ObjectId(String(product._id)),
+              sizeIndex: Number(activeSizeIndex),
+              isAddOn: { $ne: true },
+            },
+          },
+        },
+        {
+          $set: {
+            'items.$.isShare': true,
+            'items.$.shareCampaignId': new mongoose.Types.ObjectId(campaignId),
+            'items.$.shareQuantity': totalShares,
+          },
+        },
+      );
+    };
+
+    /**
+     * Run the reuse decision tree against an open unpaid order found via
+     * its openCheckoutKey. Returns a response, or null when the caller
+     * should fall through to creating a new order.
+     */
+    const decideExistingCheckout = async (
+      existing: mongoose.HydratedDocument<IOrder>,
+    ): Promise<NextResponse | null> => {
+      if (existing.checkoutFingerprint === checkoutFingerprint) {
+        const livePayment = findLivePendingPayment(existing);
+        if (livePayment?.redirectUrl) {
+          log('info', 'checkout.reused', {
+            ip,
+            traceId,
+            orderNumber: existing.orderNumber,
+          });
+          return buildCheckoutResponse(
+            existing,
+            livePayment.redirectUrl,
+            'reused',
+          );
+        }
+
+        // Same inputs, dead/missing link → append the next payment on
+        // the SAME order. Pending-but-dead entries expire first.
+        expirePendingPayments(existing);
+        try {
+          const attached = await attachEasykashPayment({
+            order: existing,
+            orderAmount: payAmount,
+            orderCurrency: currencyUpper,
+            customerName: billingData.fullName,
+            customerEmail: resolvedBillingEmail,
+            customerPhone: resolvedBillingPhone,
+            ip,
+            userId: effectiveUserId,
+          });
+          existing.status = 'processing';
+          await existing.save();
+
+          log('info', 'checkout.revived', {
+            ip,
+            traceId,
+            orderNumber: existing.orderNumber,
+          });
+          return buildCheckoutResponse(
+            existing,
+            attached.redirectUrl,
+            'revived',
+          );
+        } catch (gatewayError) {
+          existing.status = 'failed';
+          existing.internalNotes = [
+            ...(existing.internalNotes ?? []),
+            {
+              text: `Gateway payment creation failed on revive: ${gatewayError instanceof Error ? gatewayError.message : 'unknown'}`,
+              author: 'system',
+              createdAt: new Date(),
+            },
+          ];
+          await existing.save().catch(() => { });
+          throw gatewayError;
+        }
       }
-    } catch {
-      // Log and continue creating a new order if reuse checks fail unexpectedly
-      // (avoid blocking checkout flow on reuse logic issues)
+
+      // Fingerprint differs, same customer + same basket (the slot key
+      // matched, so items are identical) → UPDATE IN PLACE. A changed
+      // basket never reaches here — it mints a new order instead.
+      // Never mutate an order with money or a state we can't touch —
+      // the candidate predicate already guarantees that, but re-check
+      // for defense against a race between lookup and write.
+      if (
+        !OPEN_CHECKOUT_STATUSES.includes(existing.status) ||
+        (existing.paidAmount ?? 0) > 0
+      ) {
+        return null;
+      }
+
+      // Deferred picture uploads happen now — the update needs real URLs.
+      await materializeReservationPictures(
+        reservationAnswers,
+        pendingPictureUploads,
+      );
+
+      // Expire every pending payment BEFORE rewriting amounts — a stale
+      // gateway link must never pay against new totals (§3.4).
+      expirePendingPayments(existing);
+
+      existing.items = orderItemsPayload;
+      existing.reservationData = reservationAnswers;
+      existing.totalAmount = payAmount;
+      existing.fullAmount = amountAfterDiscount;
+      existing.isPartialPayment = isPartialPayment;
+      existing.paymentType = paymentType;
+      existing.currency = currencyUpper;
+      existing.billingData = {
+        fullName: billingData.fullName,
+        email: partialPaymentIdentity.normalizedEmail || resolvedBillingEmail,
+        phone: resolvedBillingPhone,
+        country: resolvedBillingCountry,
+      };
+      existing.couponCode = appliedCouponCode;
+      existing.couponId = appliedCouponId;
+      existing.couponDiscount = couponDiscount;
+      existing.isUpgrade = isUpgrade ?? false;
+      existing.fromProductId = fromProductId || undefined;
+      existing.upgradeDiscount =
+        upgradeDiscountPercent > 0 ? upgradeDiscountPercent : undefined;
+      existing.latestClientIp = partialPaymentIdentity.normalizedIp;
+      existing.deviceFingerprint = partialPaymentIdentity.normalizedFingerprint;
+      existing.location = normalizeCountryName(locationCode) || undefined;
+      existing.locale = locale;
+      existing.checkoutFingerprint = checkoutFingerprint;
+      existing.checkoutRevision = (existing.checkoutRevision ?? 0) + 1;
+      // Kept untouched: orderNumber, orderCreatedAt/createdAt,
+      // referralId, attribution (first-touch wins — §3.3).
+
+      try {
+        const attached = await attachEasykashPayment({
+          order: existing,
+          orderAmount: payAmount,
+          orderCurrency: currencyUpper,
+          customerName: billingData.fullName,
+          customerEmail: resolvedBillingEmail,
+          customerPhone: resolvedBillingPhone,
+          ip,
+          userId: effectiveUserId,
+        });
+        existing.status = 'processing';
+        await existing.save();
+        await retagShareCampaign(existing._id);
+
+        log('info', 'checkout.updated', {
+          ip,
+          traceId,
+          orderNumber: existing.orderNumber,
+          revision: existing.checkoutRevision,
+        });
+        return buildCheckoutResponse(
+          existing,
+          attached.redirectUrl,
+          'updated',
+        );
+      } catch (gatewayError) {
+        existing.status = 'failed';
+        existing.internalNotes = [
+          ...(existing.internalNotes ?? []),
+          {
+            text: `Gateway payment creation failed on update: ${gatewayError instanceof Error ? gatewayError.message : 'unknown'}`,
+            author: 'system',
+            createdAt: new Date(),
+          },
+        ];
+        await existing.save().catch(() => { });
+        throw gatewayError;
+      }
+    };
+
+    // ── Reuse lookup — openCheckoutKey is unique among open unpaid
+    //    orders, so at most one doc can hold this slot. ──
+    try {
+      const slotHolder = await Order.findOne({ openCheckoutKey });
+
+      if (slotHolder) {
+        const isFresh =
+          new Date(slotHolder.createdAt ?? 0).getTime() >=
+          Date.now() - CHECKOUT_REUSE_WINDOW_MS;
+        const isOpenUnpaid =
+          OPEN_CHECKOUT_STATUSES.includes(slotHolder.status) &&
+          (slotHolder.paidAmount ?? 0) === 0;
+
+        if (!isFresh || !isOpenUnpaid) {
+          // Stale or wrongly-held slot — release it so the new order
+          // can claim the key (self-healing for missed hook clears).
+          await Order.updateOne(
+            { _id: slotHolder._id },
+            { $unset: { openCheckoutKey: '' } },
+          );
+        } else {
+          const reuseResponse = await decideExistingCheckout(slotHolder);
+          if (reuseResponse) {
+            if (tokenToSet) setAuthCookie(reuseResponse, checkoutAppId, tokenToSet);
+            return reuseResponse;
+          }
+        }
+      }
+    } catch (reuseError) {
+      // A gateway failure during revive/update was already persisted as
+      // 'failed' on the order — surface it. Lookup bugs fall through to
+      // the create path (never block checkout on reuse issues).
+      if (reuseError instanceof GatewayPaymentError) {
+        captureException(reuseError, {
+          service: 'Checkout',
+          operation: 'reuseGatewayPayment',
+          severity: 'high',
+        });
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Payment gateway error. Please try again.',
+          },
+          { status: 502 },
+        );
+      }
+      log('warn', 'checkout.reuse_lookup_failed', {
+        ip,
+        traceId,
+        error:
+          reuseError instanceof Error ? reuseError.message : 'unknown',
+      });
     }
 
     if (paymentType === 'partial') {
@@ -1324,57 +1632,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const orderItemsPayload: IOrderItem[] = [
-      {
-        productId: product._id,
-        productSlug: product.slug,
-        productName: { ar: product.name.ar, en: product.name.en },
-        price: unitPrice,
-        currency: currencyUpper,
-        quantity,
-        sizeIndex: activeSizeIndex,
-        sizeName: {
-          ar: selectedSize?.name?.ar || '',
-          en: selectedSize?.name?.en || '',
-        },
-        sizeDesignName: selectedSize?.designName || '',
-      },
-    ];
-
-    if (recommendedProduct && recommendedProductPrice > 0) {
-      const recSize = recommendedProduct.sizes[0];
-      orderItemsPayload.push({
-        productId: recommendedProduct._id,
-        productSlug: recommendedProduct.slug,
-        productName: {
-          ar: recommendedProduct.name.ar,
-          en: recommendedProduct.name.en,
-        },
-        price: recommendedProductPrice,
-        currency: currencyUpper,
-        quantity: 1, // Only 1 quantity for recommended product
-        sizeIndex: 0,
-        sizeName: {
-          ar: recSize?.name?.ar || '',
-          en: recSize?.name?.en || '',
-        },
-        sizeDesignName: recSize?.designName || '',
-      });
-    }
-
-    // Add resolved add-ons as separate order items
-    for (const { addOn, quantity: addOnQty, price: addOnPrice } of resolvedAddOns) {
-      orderItemsPayload.push({
-        productId: product._id,
-        productSlug: product.slug,
-        productName: { ar: addOn.name.ar, en: addOn.name.en },
-        price: addOnPrice,
-        currency: currencyUpper,
-        quantity: addOnQty,
-        isAddOn: true,
-        parentItemIndex: 0,
-      });
-    }
+    // ── Deferred R2 uploads — only the create path reaches here with
+    //    unmaterialized pictures (update-in-place uploads inside
+    //    decideExistingCheckout). ──
+    await materializeReservationPictures(
+      reservationAnswers,
+      pendingPictureUploads,
+    );
 
     const orderPayload = {
       items: orderItemsPayload,
@@ -1417,6 +1681,11 @@ export async function POST(request: NextRequest) {
             request.headers.get('user-agent') || undefined,
         }
         : undefined,
+      // Checkout reuse identity — claims the open slot for this
+      // customer+basket so a concurrent submit can't create a twin.
+      checkoutFingerprint,
+      checkoutIdentity,
+      openCheckoutKey,
       payments: [],
       paymentAttempts: [],
     };
@@ -1428,6 +1697,42 @@ export async function POST(request: NextRequest) {
         try {
           return await Order.create(orderPayload);
         } catch (orderCreateError) {
+          const errorCode = (orderCreateError as { code?: number })?.code;
+          const message =
+            orderCreateError instanceof Error ? orderCreateError.message : '';
+
+          // Concurrent submit won the openCheckoutKey slot — join the
+          // winner's order instead of creating a twin. If the winner is
+          // no longer open (paid/cancelled mid-flight), release the slot
+          // and retry the create.
+          if (errorCode === 11000 && message.includes('openCheckoutKey')) {
+            const winner = await Order.findOne({ openCheckoutKey });
+            if (winner) {
+              let joined: NextResponse | null = null;
+              try {
+                joined = await decideExistingCheckout(winner);
+              } catch (joinError) {
+                if (joinError instanceof GatewayPaymentError) {
+                  return NextResponse.json(
+                    {
+                      success: false,
+                      error: 'Payment gateway error. Please try again.',
+                    },
+                    { status: 502 },
+                  );
+                }
+                throw joinError;
+              }
+              if (joined) return joined;
+              await Order.updateOne(
+                { _id: winner._id },
+                { $unset: { openCheckoutKey: '' } },
+              );
+            }
+            if (attempt < maxOrderCreateRetries) continue;
+            throw orderCreateError;
+          }
+
           if (
             isDuplicateOrderNumberError(orderCreateError) &&
             attempt < maxOrderCreateRetries
@@ -1448,63 +1753,24 @@ export async function POST(request: NextRequest) {
       throw new Error('Failed to create order after retrying order number');
     };
 
-    const order = await createOrderWithRetries();
+    const created = await createOrderWithRetries();
+
+    // A concurrent-submit join returns a full response instead of an
+    // order doc — pass it through with the auth cookie if needed.
+    if (created instanceof NextResponse) {
+      if (tokenToSet) setAuthCookie(created, checkoutAppId, tokenToSet);
+      return created;
+    }
+
+    const order = created;
 
     // ── Share campaign detection (silent) ──
-    // Check if this product has an active share campaign. If so,
-    // look up the shares-per-purchase for the selected size and mark
-    // the order item as a share purchase. The soldShares increment
-    // happens later in the webhook when payment is confirmed.
-    // The customer never sees this.
-    //
-    // If multiple active campaigns exist (from overflow orders),
-    // find the one that can best fit this order's shares, preferring
-    // the one closest to completion.
+    // If this product has an active share campaign, mark the order item
+    // as a share purchase. The soldShares increment happens later in
+    // the webhook when payment is confirmed. The customer never sees
+    // this. Best-fit prefers the campaign closest to completion.
     try {
-      const anyCampaign = await findActiveShareCampaign(product._id);
-
-      if (anyCampaign) {
-        const sharesPerPurchase = getSharesForSize(
-          anyCampaign,
-          activeSizeIndex,
-        );
-
-        if (sharesPerPurchase > 0) {
-          const totalShares = sharesPerPurchase * quantity;
-
-          // Find the best-fit campaign for this order's shares
-          const bestFitCampaign = await findActiveShareCampaign(
-            product._id,
-            totalShares,
-          );
-          const campaignToUse = bestFitCampaign || anyCampaign;
-          const campaignId = String(campaignToUse._id);
-
-          // Mark the main order item as a share purchase (pending
-          // increment — the actual soldShares increment happens in
-          // the webhook when payment is confirmed).
-          await Order.updateOne(
-            {
-              _id: order._id,
-              items: {
-                $elemMatch: {
-                  productId: new mongoose.Types.ObjectId(String(product._id)),
-                  sizeIndex: Number(activeSizeIndex),
-                  isAddOn: { $ne: true },
-                },
-              },
-            },
-            {
-              $set: {
-                'items.$.isShare': true,
-                'items.$.shareCampaignId':
-                  new mongoose.Types.ObjectId(campaignId),
-                'items.$.shareQuantity': totalShares,
-              },
-            },
-          );
-        }
-      }
+      await retagShareCampaign(order._id);
     } catch (shareError) {
       // If share detection fails, the order should still proceed.
       console.error('[checkout] Share campaign detection failed:', shareError);
@@ -1551,222 +1817,103 @@ export async function POST(request: NextRequest) {
       },
     }).catch(() => { });
 
-    // EasyKash payment
-    if (!process.env.EASYKASH_API_KEY) {
-      const response = NextResponse.json({
-        success: true,
-        data: {
-          order: {
-            _id: order._id,
-            orderNumber: order.orderNumber,
-            totalAmount: payAmount,
-            fullAmount: amountAfterDiscount,
-            remainingAmount: isPartialPayment
-              ? amountAfterDiscount - payAmount
-              : 0,
-            isPartialPayment,
-            couponDiscount,
-            currency: currencyUpper,
-            status: order.status,
-          },
-          checkoutUrl: null,
-          message:
-            'Payment gateway not configured. Order created successfully.',
-        },
+    // ── EasyKash payment — shared helper pushes the -P1 entry ──
+    try {
+      const attached = await attachEasykashPayment({
+        order,
+        orderAmount: payAmount,
+        orderCurrency: currencyUpper,
+        customerName: billingData.fullName,
+        customerEmail: resolvedBillingEmail,
+        customerPhone: resolvedBillingPhone,
+        ip,
+        userId: effectiveUserId,
       });
 
-      if (tokenToSet) {
-        setAuthCookie(response, checkoutAppId, tokenToSet);
-      }
+      order.status = 'processing';
+      await order.save();
 
+      const response = buildCheckoutResponse(
+        order,
+        attached.redirectUrl,
+        'created',
+      );
+      if (tokenToSet) setAuthCookie(response, checkoutAppId, tokenToSet);
       return response;
-    }
+    } catch (gatewayError) {
+      // Never hard-delete the order — mark it failed so the audit trail
+      // survives and the next retry can revive the same order number.
+      const isLowAmount =
+        gatewayError instanceof GatewayPaymentError &&
+        gatewayError.code === 'amount_too_low';
+      const isNotConfigured =
+        gatewayError instanceof GatewayPaymentError &&
+        gatewayError.code === 'not_configured';
+      const isConversion =
+        gatewayError instanceof GatewayPaymentError &&
+        gatewayError.code === 'conversion_failed';
 
-    const sourceBaseUrls: Record<string, string> = {
-      manasik: process.env.MANASIK_URL || 'https://www.manasik.net',
-      ghadaq: process.env.GHADAQ_URL || 'https://www.ghadaqplus.com',
-    };
-    const baseUrl =
-      sourceBaseUrls[order.source || 'manasik'] || sourceBaseUrls.manasik;
-
-    let easykashAmount = payAmount;
-    let paymentCurrency = currencyUpper;
-
-    if (!PAYMENT_GATEWAY_CURRENCIES.includes(currencyUpper as (typeof PAYMENT_GATEWAY_CURRENCIES)[number])) {
-      try {
-        const convertedAmount = await convertCurrency(
-          payAmount,
-          currencyUpper,
-          'EGP',
-        );
-
-        if (!Number.isFinite(convertedAmount) || convertedAmount <= 0) {
-          throw new Error('Converted amount is invalid');
-        }
-
-        easykashAmount = Math.ceil(convertedAmount);
-        paymentCurrency = 'EGP';
-      } catch (conversionError) {
-        // Conversion failed — fail the checkout rather than charging
-        // a re-derived amount that the user never agreed to.
-        await Order.findByIdAndDelete(order._id);
-        const reason =
-          conversionError instanceof Error
-            ? conversionError.message
-            : 'Unknown conversion error';
-
-        captureException(conversionError, {
-          service: 'Checkout',
-          operation: 'egpConversion',
-          severity: 'critical',
-        });
-
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Unable to convert ${currencyUpper} amount to EGP. Please try again or select a different currency. (${reason})`,
+      if (isNotConfigured) {
+        // Gateway absent — order is created but unpayable; return it
+        // without a checkoutUrl (previous behavior kept the order too).
+        const response = NextResponse.json({
+          success: true,
+          data: {
+            order: {
+              _id: order._id,
+              orderNumber: order.orderNumber,
+              totalAmount: payAmount,
+              fullAmount: amountAfterDiscount,
+              remainingAmount: isPartialPayment
+                ? amountAfterDiscount - payAmount
+                : 0,
+              isPartialPayment,
+              couponDiscount,
+              currency: currencyUpper,
+              status: order.status,
+            },
+            checkoutUrl: null,
+            checkoutAction: 'created',
+            message:
+              'Payment gateway not configured. Order created successfully.',
           },
-          { status: 500 },
-        );
+        });
+        if (tokenToSet) setAuthCookie(response, checkoutAppId, tokenToSet);
+        return response;
       }
-    }
 
-    if (easykashAmount <= 1) {
-      await Order.findByIdAndDelete(order._id);
+      order.status = 'failed';
+      order.internalNotes = [
+        ...(order.internalNotes ?? []),
+        {
+          text: `Gateway payment creation failed on create: ${gatewayError instanceof Error ? gatewayError.message : 'unknown'}`,
+          author: 'system',
+          createdAt: new Date(),
+        },
+      ];
+      await order.save().catch(() => { });
+
+      captureException(gatewayError, {
+        service: 'Checkout',
+        operation: 'createPayment_EasyKash',
+        severity: isConversion ? 'critical' : 'high',
+        metadata: { orderNumber: order.orderNumber },
+      });
+
       return NextResponse.json(
         {
           success: false,
-          error: `Payment amount is too low. Minimum accepted by the payment gateway is 2 ${paymentCurrency}.`,
+          error: isLowAmount
+            ? gatewayError instanceof Error
+              ? gatewayError.message
+              : 'Payment amount is too low.'
+            : isConversion
+              ? `${gatewayError instanceof Error ? gatewayError.message : 'Conversion failed'}. Please try again or select a different currency.`
+              : 'Payment gateway error. Please try again.',
         },
-        { status: 400 },
+        { status: isLowAmount ? 400 : 502 },
       );
     }
-
-    // Generate payment ids and easykashOrderId before calling createPayment
-    const initialPaymentAttemptNum = getPaymentAttemptNumber(order);
-    const paymentId = generatePaymentId();
-
-    const cashExpiryHours = getEasykashCashExpiryHours();
-    let easykashResponse: Awaited<ReturnType<typeof createPayment>> | null =
-      null;
-    let easykashOrderId: string | null = null;
-
-    const existingReferences = new Set(
-      (order.payments ?? []).map((payment) => payment.easykashOrderId),
-    );
-    let paymentAttemptNum = initialPaymentAttemptNum;
-    const maxReferenceRetries = 5;
-
-    try {
-      for (let attempt = 0; attempt < maxReferenceRetries; attempt += 1) {
-        let candidateReference = `${order.orderNumber}-P${paymentAttemptNum}`;
-        while (existingReferences.has(candidateReference)) {
-          paymentAttemptNum += 1;
-          candidateReference = `${order.orderNumber}-P${paymentAttemptNum}`;
-        }
-
-        try {
-          easykashResponse = await createPayment({
-            amount: easykashAmount,
-            currency: paymentCurrency,
-            name: billingData.fullName,
-            email: resolvedBillingEmail,
-            mobile: resolvedBillingPhone,
-            cashExpiry: cashExpiryHours,
-            redirectUrl: `${baseUrl}/payment/status?orderNumber=${order.orderNumber}`,
-            customerReference: candidateReference,
-          });
-
-          easykashOrderId = candidateReference;
-          break;
-        } catch (gatewayError) {
-          if (isCustomerReferenceAlreadyUsedError(gatewayError)) {
-            existingReferences.add(candidateReference);
-            paymentAttemptNum += 1;
-            continue;
-          }
-
-          throw gatewayError;
-        }
-      }
-
-      if (!easykashResponse || !easykashOrderId) {
-        throw new Error(
-          'Unable to allocate a unique EasyKash customerReference',
-        );
-      }
-    } catch (easykashError) {
-      // Clean up the orphaned order so it doesn't block future attempts
-      await Order.findByIdAndDelete(order._id);
-      captureException(easykashError, {
-        service: 'Checkout',
-        operation: 'createPayment_EasyKash',
-        severity: 'high',
-        metadata: {
-          easykashOrderId:
-            easykashOrderId ||
-            `${order.orderNumber}-P${initialPaymentAttemptNum}`,
-          orderNumber: order.orderNumber,
-        },
-      });
-      return NextResponse.json(
-        { success: false, error: 'Payment gateway error. Please try again.' },
-        { status: 502 },
-      );
-    }
-
-    // Create first payment record in payments array with -P1 suffix
-    order.payments = [
-      {
-        paymentId,
-        easykashOrderId,
-        orderAmount: payAmount,
-        gatewayAmount: easykashAmount,
-        gatewayCurrency: paymentCurrency,
-        amount: payAmount,
-        currency: currencyUpper,
-        status: 'pending',
-        paymentMethod: 'easykash' as PaymentMethod,
-        redirectUrl: easykashResponse.redirectUrl,
-        expiresAt: new Date(Date.now() + cashExpiryHours * 60 * 60 * 1000),
-        createdAt: new Date(),
-      },
-    ];
-    order.paymentAttempts = [
-      {
-        createdAt: new Date(),
-        ip: ip || undefined,
-        userId: effectiveUserId || undefined,
-      },
-    ];
-    order.status = 'processing';
-    await order.save();
-
-    const response = NextResponse.json({
-      success: true,
-      data: {
-        order: {
-          _id: order._id,
-          orderNumber: order.orderNumber,
-          totalAmount: payAmount,
-          fullAmount: amountAfterDiscount,
-          remainingAmount: isPartialPayment
-            ? amountAfterDiscount - payAmount
-            : 0,
-          isPartialPayment,
-          couponDiscount,
-          currency: currencyUpper,
-          status: order.status,
-        },
-        checkoutUrl: easykashResponse.redirectUrl,
-      },
-    });
-
-    if (tokenToSet) {
-      setAuthCookie(response, checkoutAppId, tokenToSet);
-    }
-
-    return response;
   } catch (error) {
     await releasePartialPaymentLock(partialPaymentLock);
 

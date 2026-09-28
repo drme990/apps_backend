@@ -2,15 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
-import Country from '@/lib/models/Country';
 import Order from '@/lib/models/Order';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { productCreateSchema } from '@/lib/validation/schemas';
 import { normalizeProductMedia } from '@/lib/product-media';
-import { resolveProductPrices } from '@/lib/services/price-resolver';
-import { normalizeCountryCode, countryNameToCode, type CountryVisibilityMode } from '@/lib/country-visibility';
+import { loadPricingCountries, resolveProductPrices } from '@/lib/services/price-resolver';
+import { normalizeCountryCode, countryNameToCode } from '@/lib/country-visibility';
 import { getClientCountry } from '@/lib/utils/ip';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
 
@@ -110,7 +109,7 @@ export async function GET(request: NextRequest) {
         normalizeCountryCode(getClientCountry(request));
 
       if (effectiveViewerCode) {
-        const allCountries = await Country.find({ isActive: true }).lean();
+        const allCountries = await loadPricingCountries();
         // Find the viewer's currency for the response so the frontend
         // can display prices in the customer's currency.
         const viewerCountry = allCountries.find(
@@ -120,13 +119,6 @@ export async function GET(request: NextRequest) {
         await resolveProductPrices(
           normalizedProducts as Record<string, unknown>[],
           effectiveViewerCode,
-          allCountries as unknown as Array<{
-            code: string;
-            currencyCode: string;
-            roundingRule?: string | null;
-            visibilityMode?: CountryVisibilityMode;
-            countriesToSee?: unknown;
-          }>,
         );
       }
     }

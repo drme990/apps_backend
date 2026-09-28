@@ -27,6 +27,7 @@ import {
 } from '@/lib/services/auto-design-generation';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
+import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -388,8 +389,23 @@ export async function POST(request: NextRequest) {
       Math.abs(webhookAmount - expectedAmountForWarning) > 1
     ) {
       console.error(
-        `Amount mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmountForWarning}`,
+        `payment.amount_mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmountForWarning}`,
       );
+
+      // Flag the order for admin review — a mismatch on a paid event can
+      // mean a stale gateway link paid against totals the order was
+      // updated away from (enhance-order-createing.md §3.4). Never
+      // reject: gateway truth wins, but the anomaly must be visible.
+      if (isSuccessfulPayment) {
+        order.internalNotes = [
+          ...(order.internalNotes ?? []),
+          {
+            text: `Payment amount mismatch: gateway reported ${webhookAmount} but the payment entry expected ${expectedAmountForWarning} (ref ${customerRefStr}). Verify before fulfillment.`,
+            author: 'system',
+            createdAt: new Date(),
+          },
+        ];
+      }
 
       // Do not reject signed paid callbacks due to amount drift.
       // Some link-based flows charge a gateway amount that can differ by
@@ -534,6 +550,27 @@ export async function POST(request: NextRequest) {
     // re-linked to it. The current active campaign is left unchanged.
     if (transitionedToPaid || transitionedToPartialPaid) {
       await applyShareIncrementsForOrder(order);
+    }
+
+    // ── Booking intent auto-resolution ──
+    // The abandoned-order intent flips to converted, and any other open
+    // intents of this customer sharing a product get suppressed. A
+    // refunded order closes its intent. Fire-and-forget — never block
+    // the webhook on tracking.
+    if (transitionedToPaid || transitionedToPartialPaid) {
+      syncIntentsOnOrderTerminal(order.toObject(), 'paid').catch((err) => {
+        console.error(
+          `[webhook] booking-intent sync failed for ${order.orderNumber}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+    } else if (order.status === 'refunded') {
+      syncIntentsOnOrderTerminal(order.toObject(), 'closed').catch((err) => {
+        console.error(
+          `[webhook] booking-intent close failed for ${order.orderNumber}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
 
     // ── Auto design generation ──────────────────────────────────────

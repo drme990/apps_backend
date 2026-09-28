@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminPageAccess } from '@/lib/auth';
 import Product from '@/lib/models/Product';
-import Country from '@/lib/models/Country';
 import { normalizeReservationFields } from '@/lib/reservation-fields';
 import { normalizeProductMedia } from '@/lib/product-media';
 import { resolveProductPrices } from '@/lib/services/price-resolver';
-import { normalizeCountryCode, type CountryVisibilityMode } from '@/lib/country-visibility';
+import { normalizeCountryCode } from '@/lib/country-visibility';
 
 export async function GET(request: NextRequest) {
   try {
@@ -50,17 +49,9 @@ export async function GET(request: NextRequest) {
     // public apps would see them — same visibility rules, exchange rates,
     // real vs exchange classification.
     if (viewerCountryCode) {
-      const allCountries = await Country.find({ isActive: true }).lean();
       await resolveProductPrices(
         normalizedProducts as Record<string, unknown>[],
         viewerCountryCode,
-        allCountries as unknown as Array<{
-          code: string;
-          currencyCode: string;
-          roundingRule?: string | null;
-          visibilityMode?: CountryVisibilityMode;
-          countriesToSee?: unknown;
-        }>,
       );
     }
 
