@@ -880,6 +880,34 @@ export async function PATCH(
       }
     }
 
+    // ── Prune designs for removed products ──
+    // When the admin swaps or removes a product, its generated design is
+    // no longer valid — the order should only keep designs for products
+    // that are still in it. Re-generation (triggered below) then fills in
+    // designs for the new products.
+    if (itemsChanged && Array.isArray(order.designUrls) && order.designUrls.length > 0) {
+      const currentProductIds = new Set(
+        (order.items || [])
+          .map((i) => (i.productId ? String(i.productId) : null))
+          .filter((id): id is string => Boolean(id)),
+      );
+      const keptDesigns = order.designUrls.filter((d) =>
+        currentProductIds.has(String(d.productId)),
+      );
+      const removedCount = order.designUrls.length - keptDesigns.length;
+      if (removedCount > 0) {
+        order.designUrls = keptDesigns;
+        if (!Array.isArray(order.internalNotes)) {
+          order.internalNotes = [];
+        }
+        order.internalNotes.push({
+          text: `Removed ${removedCount} design(s) for products no longer in the order after item edit.`,
+          author: 'system',
+          createdAt: new Date(),
+        });
+      }
+    }
+
     // ── Recalculate order total when items change ──
     // When the admin edits item prices, quantities, or swaps products,
     // the order's totalAmount and fullAmount must be recomputed so that
