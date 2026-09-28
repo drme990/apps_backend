@@ -6,7 +6,11 @@ import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { shareCampaignUpdateSchema } from '@/lib/validation/schemas';
-import { addReservedShares } from '@/lib/services/share-campaign';
+import {
+  addReservedShares,
+  logShareCampaignChange,
+  type ShareCampaignActor,
+} from '@/lib/services/share-campaign';
 
 export async function GET(
   request: NextRequest,
@@ -87,6 +91,16 @@ export async function PATCH(
       );
     }
 
+    const actor: ShareCampaignActor = {
+      userId: auth.user.userId,
+      name: auth.user.name,
+      email: auth.user.email,
+    };
+    const productDoc = await Product.findById(campaign.productId, {
+      name: 1,
+    }).lean();
+    const productName = productDoc?.name ?? null;
+
     // Cannot change status of a completed campaign
     if (status !== undefined && campaign.status === 'completed') {
       return NextResponse.json(
@@ -117,15 +131,59 @@ export async function PATCH(
           { status: 400 },
         );
       }
+      const prevNumber = campaign.campaignNumber;
       campaign.campaignNumber = campaignNumber;
+      await logShareCampaignChange({
+        campaign,
+        productName,
+        changeType: 'campaignNumber',
+        previousValue: `#${prevNumber}`,
+        newValue: `#${campaignNumber}`,
+        changedBy: actor,
+      });
     }
 
-    if (status !== undefined) campaign.status = status;
-    if (displayOnProductPage !== undefined) {
-      campaign.displayOnProductPage = displayOnProductPage;
+    if (status !== undefined && status !== campaign.status) {
+      const prevStatus = campaign.status;
+      campaign.status = status;
+      await logShareCampaignChange({
+        campaign,
+        productName,
+        changeType: 'status',
+        previousValue: prevStatus,
+        newValue: status,
+        changedBy: actor,
+      });
     }
-    if (minDisplayPercent !== undefined) {
+    if (
+      displayOnProductPage !== undefined &&
+      displayOnProductPage !== campaign.displayOnProductPage
+    ) {
+      const prev = campaign.displayOnProductPage ?? false;
+      campaign.displayOnProductPage = displayOnProductPage;
+      await logShareCampaignChange({
+        campaign,
+        productName,
+        changeType: 'displayOnProductPage',
+        previousValue: prev,
+        newValue: displayOnProductPage,
+        changedBy: actor,
+      });
+    }
+    if (
+      minDisplayPercent !== undefined &&
+      minDisplayPercent !== campaign.minDisplayPercent
+    ) {
+      const prev = campaign.minDisplayPercent ?? 0;
       campaign.minDisplayPercent = minDisplayPercent;
+      await logShareCampaignChange({
+        campaign,
+        productName,
+        changeType: 'minDisplayPercent',
+        previousValue: `${prev}%`,
+        newValue: `${minDisplayPercent}%`,
+        changedBy: actor,
+      });
     }
 
     await campaign.save();
@@ -135,10 +193,30 @@ export async function PATCH(
     // inherit it automatically (auto-created campaigns copy
     // totalShares from the campaign they were created from).
     if (totalShares !== undefined) {
+      // Snapshot the affected campaigns BEFORE the bulk update so each
+      // history entry shows its own previous totalShares.
+      const affectedActive = await ShareCampaign.find(
+        { productId: campaign.productId, status: 'active' },
+        { totalShares: 1, campaignNumber: 1, productId: 1 },
+      ).lean();
+
       await ShareCampaign.updateMany(
         { productId: campaign.productId, status: 'active' },
         { totalShares },
       );
+
+      for (const affected of affectedActive) {
+        if (affected.totalShares === totalShares) continue;
+        await logShareCampaignChange({
+          campaign: affected,
+          productName,
+          changeType: 'totalShares',
+          previousValue: affected.totalShares,
+          newValue: totalShares,
+          details: 'Applied to all active campaigns of the product',
+          changedBy: actor,
+        });
+      }
 
       // Any active campaign now at/over its total completes.
       const overflowed = await ShareCampaign.find({
@@ -152,6 +230,18 @@ export async function PATCH(
           { _id: { $in: overflowed.map((c) => c._id) } },
           { status: 'completed', completedAt: new Date() },
         );
+
+        for (const completed of overflowed) {
+          await logShareCampaignChange({
+            campaign: completed,
+            productName,
+            changeType: 'autoCompleted',
+            previousValue: 'active',
+            newValue: 'completed',
+            details: `${completed.soldShares}/${totalShares} shares`,
+            changedBy: actor,
+          });
+        }
 
         // If nothing is left active, spin up the next campaign so the
         // product always has a live one.
@@ -167,7 +257,7 @@ export async function PATCH(
           )
             .sort({ campaignNumber: -1 })
             .lean();
-          await ShareCampaign.create({
+          const nextCampaign = await ShareCampaign.create({
             productId: campaign.productId,
             totalShares,
             soldShares: 0,
@@ -177,6 +267,14 @@ export async function PATCH(
             minDisplayPercent: template.minDisplayPercent ?? 0,
             sizes: template.sizes,
             completedAt: null,
+          });
+          await logShareCampaignChange({
+            campaign: nextCampaign.toObject(),
+            productName,
+            changeType: 'autoCreated',
+            newValue: `#${nextCampaign.campaignNumber}`,
+            details: `Auto-created after campaign #${template.campaignNumber} completed`,
+            changedBy: actor,
           });
         }
       }
@@ -279,6 +377,22 @@ export async function DELETE(
     }
 
     await ShareCampaign.findByIdAndDelete(id);
+
+    const productDoc = await Product.findById(campaign.productId, {
+      name: 1,
+    }).lean();
+    await logShareCampaignChange({
+      campaign: campaign.toObject(),
+      productName: productDoc?.name ?? null,
+      changeType: 'deleted',
+      previousValue: `#${campaign.campaignNumber}`,
+      details: `status: ${campaign.status}, shares: ${campaign.soldShares}/${campaign.totalShares}`,
+      changedBy: {
+        userId: auth.user.userId,
+        name: auth.user.name,
+        email: auth.user.email,
+      },
+    });
 
     await logActivity({
       userId: auth.user.userId,

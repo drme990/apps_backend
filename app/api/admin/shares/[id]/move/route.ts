@@ -7,7 +7,12 @@ import ShareCampaign from '@/lib/models/ShareCampaign';
 import Order from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
-import { incrementShareCampaignSold } from '@/lib/services/share-campaign';
+import {
+  incrementShareCampaignSold,
+  logShareCampaignChange,
+  type ShareCampaignActor,
+} from '@/lib/services/share-campaign';
+import Product from '@/lib/models/Product';
 
 export const maxDuration = 60;
 
@@ -57,6 +62,16 @@ export async function POST(
         { status: 404 },
       );
     }
+
+    const actor: ShareCampaignActor = {
+      userId: auth.user.userId,
+      name: auth.user.name,
+      email: auth.user.email,
+    };
+    const productDoc = await Product.findById(source.productId, {
+      name: 1,
+    }).lean();
+    const productName = productDoc?.name ?? null;
 
     if (source.status === 'completed') {
       return NextResponse.json(
@@ -210,6 +225,28 @@ export async function POST(
         );
       }
 
+      await logShareCampaignChange({
+        campaign: source,
+        productName,
+        changeType: 'movedSharesOut',
+        previousValue: `${source.soldShares + appliedQty}`,
+        newValue: `${source.soldShares}`,
+        details: `Order ${order.orderNumber ?? order._id} (${linkedQty} share(s)) → campaign #${landing.campaignNumber}`,
+        changedBy: actor,
+      });
+      await logShareCampaignChange({
+        campaign: {
+          _id: String(landing._id),
+          productId: source.productId,
+          campaignNumber: landing.campaignNumber,
+        },
+        productName,
+        changeType: 'movedSharesIn',
+        newValue: `${appliedQty}`,
+        details: `Order ${order.orderNumber ?? order._id} from campaign #${source.campaignNumber}`,
+        changedBy: actor,
+      });
+
       await logActivity({
         userId: auth.user.userId,
         userName: auth.user.name,
@@ -339,6 +376,28 @@ export async function POST(
         covered += item.shareQuantity || 0;
       }
     }
+
+    await logShareCampaignChange({
+      campaign: source,
+      productName,
+      changeType: 'movedSharesOut',
+      previousValue: `${source.soldShares + amount}`,
+      newValue: `${source.soldShares}`,
+      details: `${amount} share(s) → campaign #${result.campaignNumber}`,
+      changedBy: actor,
+    });
+    await logShareCampaignChange({
+      campaign: {
+        _id: result._id,
+        productId: source.productId,
+        campaignNumber: result.campaignNumber,
+      },
+      productName,
+      changeType: 'movedSharesIn',
+      newValue: `${amount}`,
+      details: `From campaign #${source.campaignNumber}`,
+      changedBy: actor,
+    });
 
     await logActivity({
       userId: auth.user.userId,

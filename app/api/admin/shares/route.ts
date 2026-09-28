@@ -6,6 +6,7 @@ import Product from '@/lib/models/Product';
 import { logActivity } from '@/lib/services/logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { shareCampaignCreateSchema } from '@/lib/validation/schemas';
+import { logShareCampaignChange } from '@/lib/services/share-campaign';
 
 export async function GET(request: NextRequest) {
   try {
@@ -141,6 +142,19 @@ export async function POST(request: NextRequest) {
       minDisplayPercent: minDisplayPercent ?? 0,
       sizes,
       completedAt: null,
+    });
+
+    await logShareCampaignChange({
+      campaign: campaign.toObject(),
+      productName: product.name,
+      changeType: 'created',
+      newValue: `#${campaignNumber}`,
+      details: `totalShares: ${totalShares}, sizes: ${sizes.length}`,
+      changedBy: {
+        userId: auth.user.userId,
+        name: auth.user.name,
+        email: auth.user.email,
+      },
     });
 
     await logActivity({

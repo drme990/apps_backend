@@ -2,7 +2,61 @@ import mongoose from 'mongoose';
 import ShareCampaign, {
   type IShareCampaign,
 } from '@/lib/models/ShareCampaign';
+import ShareCampaignHistory, {
+  type ShareCampaignChangeType,
+} from '@/lib/models/ShareCampaignHistory';
 import Order from '@/lib/models/Order';
+
+export interface ShareCampaignActor {
+  userId: string;
+  name: string;
+  email: string;
+}
+
+const SYSTEM_ACTOR: ShareCampaignActor = {
+  userId: 'system',
+  name: 'System',
+  email: '',
+};
+
+/**
+ * Record a change on a share campaign. Never throws — history is
+ * auxiliary and must not break the operation it describes.
+ */
+export async function logShareCampaignChange(entry: {
+  campaign: Pick<IShareCampaign, '_id' | 'productId' | 'campaignNumber'>;
+  productName?: { en: string; ar: string } | null;
+  changeType: ShareCampaignChangeType;
+  previousValue?: string | number | boolean | null;
+  newValue?: string | number | boolean | null;
+  details?: string;
+  changedBy?: ShareCampaignActor | null;
+}): Promise<void> {
+  try {
+    const actor = entry.changedBy ?? SYSTEM_ACTOR;
+    await ShareCampaignHistory.create({
+      campaignId: entry.campaign._id,
+      productId: entry.campaign.productId,
+      campaignNumber: entry.campaign.campaignNumber,
+      productName: entry.productName ?? null,
+      changeType: entry.changeType,
+      previousValue:
+        entry.previousValue === undefined || entry.previousValue === null
+          ? null
+          : String(entry.previousValue),
+      newValue:
+        entry.newValue === undefined || entry.newValue === null
+          ? null
+          : String(entry.newValue),
+      details: entry.details ?? '',
+      changedByUserId: actor.userId,
+      changedByUserName: actor.name,
+      changedByUserEmail: actor.email,
+    });
+  } catch (error) {
+    console.error('[shares] Failed to write campaign history:', error);
+  }
+}
 
 /**
  * Find the best active share campaign for a product.
