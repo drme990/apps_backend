@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
-import { requireAdminPageAccess } from '@/lib/auth';
+import { requireAdminAction, requireAdminPageAccess } from '@/lib/auth';
 import { getBookingIntentStats } from '@/lib/services/order-intent';
 
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
-    // Achievements are gated behind the customers permission — not
-    // everyone with orders access can see per-admin performance.
-    const auth = await requireAdminPageAccess('customers');
+    const pageAuth = await requireAdminPageAccess('orders');
+    if ('error' in pageAuth) return pageAuth.error;
+
+    // Achievements are an action-level permission — not everyone with
+    // orders access can see per-admin performance.
+    const auth = await requireAdminAction('achievements');
     if ('error' in auth) return auth.error;
 
     const { searchParams } = request.nextUrl;

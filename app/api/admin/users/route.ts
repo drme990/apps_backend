@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
 
     const parsed = await parseJsonBody(request, userCreateSchema);
     if (!parsed.success) return parsed.response;
-    const { name, email, password, role, allowedPages, ref } = parsed.data;
+    const { name, email, password, role, allowedPages, allowedActions, ref } =
+      parsed.data;
 
     const existingUser = await User.findOne({ email: email?.toLowerCase() });
     if (existingUser) {
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest) {
       password,
       role: role || 'admin',
       allowedPages: allowedPages || [],
+      allowedActions: allowedActions || [],
       ref: (ref || []).filter((r: string) => r.length > 0),
     });
 
@@ -76,6 +78,7 @@ export async function POST(request: NextRequest) {
           email: user.email,
           role: user.role,
           allowedPages: user.allowedPages,
+          allowedActions: user.allowedActions,
           ref: user.ref,
         },
       },

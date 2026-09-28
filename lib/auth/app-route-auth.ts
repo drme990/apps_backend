@@ -40,6 +40,7 @@ type AuthUserDoc = {
   password?: string;
   role?: 'admin' | 'super_admin';
   allowedPages?: string[];
+  allowedActions?: string[];
   phone?: string;
   country?: string;
   ref?: string | null;
@@ -140,6 +141,7 @@ function toPublicUser(user: AuthUserDoc, appId: AppId) {
       ? {
         role: user.role,
         allowedPages: user.allowedPages || [],
+        allowedActions: user.allowedActions || [],
       }
       : {}),
   };
@@ -277,6 +279,8 @@ export async function loginForApp(request: NextRequest, app: RouteApp) {
       role: appId === 'admin_panel' ? user.role : undefined,
       allowedPages:
         appId === 'admin_panel' ? user.allowedPages || [] : undefined,
+      allowedActions:
+        appId === 'admin_panel' ? user.allowedActions || [] : undefined,
     });
 
     if (appId === 'admin_panel') {
@@ -409,6 +413,7 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
     if (appId === 'admin_panel') {
       createPayload.role = 'admin';
       createPayload.allowedPages = [];
+      createPayload.allowedActions = [];
     } else {
       createPayload.phone = normalizedPhone || '';
       createPayload.country = normalizeCountryName(country);
@@ -438,6 +443,8 @@ export async function registerForApp(request: NextRequest, app: RouteApp) {
       role: appId === 'admin_panel' ? user.role : undefined,
       allowedPages:
         appId === 'admin_panel' ? user.allowedPages || [] : undefined,
+      allowedActions:
+        appId === 'admin_panel' ? user.allowedActions || [] : undefined,
     });
 
     const response = NextResponse.json(

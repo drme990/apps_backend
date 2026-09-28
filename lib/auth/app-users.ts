@@ -30,12 +30,25 @@ export const ADMIN_ALLOWED_PAGES = [
   'storage-manager',
   'orderDesigns',
   'orderDesignLogs',
-  'export',
-  'freeOrders',
   'shares',
 ] as const;
 
 export type AdminAllowedPage = (typeof ADMIN_ALLOWED_PAGES)[number];
+
+/**
+ * Action-level permissions — granular things an admin can do inside a
+ * page they already have access to (e.g. viewing per-admin performance).
+ * Distinct from page access: a page grants entry, an action grants a
+ * capability within it.
+ */
+export const ADMIN_ALLOWED_ACTIONS = [
+  'achievements',
+  'orderStatsComponent',
+  'export',
+  'freeOrders',
+] as const;
+
+export type AdminAllowedAction = (typeof ADMIN_ALLOWED_ACTIONS)[number];
 
 export interface IBaseAppUser {
   _id?: string;

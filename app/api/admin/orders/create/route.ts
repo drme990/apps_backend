@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import { connectDB } from '@/lib/db';
-import { requireAdminPageAccess } from '@/lib/auth';
+import { requireAdminAction, requireAdminPageAccess } from '@/lib/auth';
 import Order, { type PaymentMethod } from '@/lib/models/Order';
 import Product from '@/lib/models/Product';
 import User from '@/lib/models/User';
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
 
     // Free orders require an additional permission
     if (isFreeOrder) {
-      const freeOrderAuth = await requireAdminPageAccess(['freeOrders']);
+      const freeOrderAuth = await requireAdminAction('freeOrders');
       if ('error' in freeOrderAuth) {
         return NextResponse.json(
           { success: false, error: 'You do not have permission to create free orders' },

@@ -8,6 +8,7 @@ export interface IUser {
   password: string;
   role: 'admin' | 'super_admin';
   allowedPages?: string[];
+  allowedActions?: string[];
   ref?: string[];
   createdAt?: Date;
   updatedAt?: Date;
@@ -77,11 +78,19 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'accounts',
         'orderDesignLogs',
         'orderDesigns',
+        // Legacy values — kept in the enum so existing documents that still
+        // carry them don't fail validation on save. They now live in
+        // allowedActions and are no longer offered as pages.
         'orderStatsComponent',
         'export',
         'freeOrders',
         'shares'
       ],
+      default: [],
+    },
+    allowedActions: {
+      type: [String],
+      enum: ['achievements', 'orderStatsComponent', 'export', 'freeOrders'],
       default: [],
     },
     ref: {

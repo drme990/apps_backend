@@ -3,7 +3,9 @@ import { NextResponse } from 'next/server';
 import { verifyToken, TokenPayload } from './services/jwt';
 import {
   ADMIN_ALLOWED_PAGES,
+  ADMIN_ALLOWED_ACTIONS,
   type AdminAllowedPage,
+  type AdminAllowedAction,
   type AppId,
 } from './auth/app-users';
 import { connectDB } from './db';
@@ -29,6 +31,32 @@ function hasAdminPageAccess(
   const targetPages = Array.isArray(page) ? page : [page];
   return targetPages.some(
     (p) => pages.includes(p) || (p === 'admins' && pages.includes('users')),
+  );
+}
+
+const ADMIN_ACTION_SET = new Set<string>(ADMIN_ALLOWED_ACTIONS);
+
+function normalizeAdminAllowedActions(
+  actions: unknown,
+): AdminAllowedAction[] {
+  if (!Array.isArray(actions)) return [];
+
+  return actions.filter(
+    (action): action is AdminAllowedAction =>
+      typeof action === 'string' && ADMIN_ACTION_SET.has(action),
+  );
+}
+
+function hasAdminAction(
+  action: AdminAllowedAction,
+  allowedActions: unknown,
+  allowedPages: unknown,
+): boolean {
+  // Legacy: these actions used to live in `allowedPages`. Accept them there
+  // too so existing admins keep access until their record is re-saved.
+  return (
+    normalizeAdminAllowedActions(allowedActions).includes(action) ||
+    (Array.isArray(allowedPages) && allowedPages.includes(action))
   );
 }
 
@@ -139,6 +167,68 @@ export async function requireAdminPageAccess(
     }
   } catch (error) {
     console.error('Error validating admin page access:', error);
+  }
+
+  return { error: forbiddenResponse() };
+}
+
+export async function requireAdminAction(
+  action: AdminAllowedAction,
+): Promise<{ user: TokenPayload } | { error: NextResponse }> {
+  const auth = await requireAuth();
+  if ('error' in auth) return auth;
+
+  const { user } = auth;
+  if (user.role === 'super_admin') return auth;
+
+  if (
+    user.role === 'admin' &&
+    hasAdminAction(action, user.allowedActions, user.allowedPages)
+  ) {
+    return auth;
+  }
+
+  // Token permissions can be stale after role/action updates.
+  // Re-check against DB so access changes apply immediately.
+  try {
+    await connectDB();
+    const freshUser = await User.findById(user.userId)
+      .select('role allowedPages allowedActions')
+      .lean();
+
+    if (!freshUser) {
+      return { error: forbiddenResponse() };
+    }
+
+    if (freshUser.role === 'super_admin') {
+      return {
+        user: {
+          ...user,
+          role: 'super_admin',
+          allowedActions: normalizeAdminAllowedActions(
+            freshUser.allowedActions,
+          ),
+        },
+      };
+    }
+
+    if (
+      freshUser.role === 'admin' &&
+      hasAdminAction(action, freshUser.allowedActions, freshUser.allowedPages)
+    ) {
+      return {
+        user: {
+          ...user,
+          role: 'admin',
+          allowedPages: normalizeAdminAllowedPages(freshUser.allowedPages),
+          allowedActions: normalizeAdminAllowedActions(
+            freshUser.allowedActions,
+          ),
+        },
+      };
+    }
+  } catch (error) {
+    console.error('Error validating admin action access:', error);
   }
 
   return { error: forbiddenResponse() };

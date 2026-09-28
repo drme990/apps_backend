@@ -10,6 +10,7 @@ export interface TokenPayload {
   email: string;
   role?: 'admin' | 'super_admin';
   allowedPages?: string[];
+  allowedActions?: string[];
 }
 
 export function generateToken(user: {
@@ -19,6 +20,7 @@ export function generateToken(user: {
   email: string;
   role?: 'admin' | 'super_admin';
   allowedPages?: string[];
+  allowedActions?: string[];
 }): string {
   if (!JWT_SECRET) {
     throw new Error('JWT_SECRET is not defined in environment variables');
@@ -31,6 +33,7 @@ export function generateToken(user: {
     email: user.email,
     ...(user.role ? { role: user.role } : {}),
     ...(user.allowedPages ? { allowedPages: user.allowedPages } : {}),
+    ...(user.allowedActions ? { allowedActions: user.allowedActions } : {}),
   };
 
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
