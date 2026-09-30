@@ -413,28 +413,6 @@ export interface IOrder {
   openCheckoutKey?: string;
   /** How many times the order was rewritten by update-in-place. */
   checkoutRevision?: number;
-  /**
-   * Booking-intent workflow state — lives ON the order (no separate
-   * collection). Absent intent = 'new' for eligible abandoned orders.
-   * See Booking-intent.md.
-   */
-  intent?: {
-    status?: 'new' | 'contacted' | 'refused' | 'converted' | 'closed';
-    assignedTo?: {
-      adminId: mongoose.Types.ObjectId;
-      name: string;
-      email: string;
-    };
-    assignedAt?: Date;
-    resolvedAt?: Date;
-    resolvedBy?: 'admin' | 'auto';
-    resolvedByAdmin?: {
-      adminId: mongoose.Types.ObjectId;
-      name: string;
-    };
-    autoReason?: 'paid' | 'purchased_elsewhere' | 'cancelled';
-    note?: string;
-  };
   createdAt?: Date;
   updatedAt?: Date;
   _previousStatus?: OrderStatus;
@@ -916,52 +894,6 @@ const OrderSchema = new mongoose.Schema<IOrder>(
     checkoutIdentity: { type: String, trim: true, index: true },
     openCheckoutKey: { type: String, trim: true },
     checkoutRevision: { type: Number, min: 0, default: 0 },
-    // Booking-intent workflow — embedded on the order (see
-    // Booking-intent.md). Absent `intent` = 'new' for eligible orders.
-    intent: {
-      type: new mongoose.Schema(
-        {
-          status: {
-            type: String,
-            enum: ['new', 'contacted', 'refused', 'converted', 'closed'],
-          },
-          assignedTo: {
-            type: new mongoose.Schema(
-              {
-                adminId: {
-                  type: mongoose.Schema.Types.ObjectId,
-                  required: true,
-                },
-                name: { type: String, required: true },
-                email: { type: String, required: true },
-              },
-              { _id: false },
-            ),
-          },
-          assignedAt: { type: Date },
-          resolvedAt: { type: Date },
-          resolvedBy: { type: String, enum: ['admin', 'auto'] },
-          resolvedByAdmin: {
-            type: new mongoose.Schema(
-              {
-                adminId: {
-                  type: mongoose.Schema.Types.ObjectId,
-                  required: true,
-                },
-                name: { type: String, required: true },
-              },
-              { _id: false },
-            ),
-          },
-          autoReason: {
-            type: String,
-            enum: ['paid', 'purchased_elsewhere', 'cancelled'],
-          },
-          note: { type: String, trim: true, maxlength: 2000 },
-        },
-        { _id: false },
-      ),
-    },
   },
   { timestamps: true },
 );
@@ -1140,9 +1072,6 @@ OrderSchema.index({
 });
 OrderSchema.index({ source: 1, status: 1, isPartialPayment: 1, createdAt: -1 });
 OrderSchema.index({ 'items.productId': 1 });
-// Booking-intent list — workflow status + attempt date.
-OrderSchema.index({ 'intent.status': 1, createdAt: -1 });
-OrderSchema.index({ 'intent.assignedTo.adminId': 1 });
 // One open unpaid checkout per customer+product — concurrency guard for
 // the reuse matrix. Partial: closed orders drop out and free the slot.
 OrderSchema.index(

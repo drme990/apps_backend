@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Order, { type IOrder, type OrderStatus } from '@/lib/models/Order';
+import AdminAchievement from '@/lib/models/AdminAchievement';
 import Booking from '@/lib/models/Booking';
 import Category from '@/lib/models/Categories';
 import { normalizeCountryName } from '@/lib/country-visibility';
@@ -7,43 +8,33 @@ import { normalizeCountryName } from '@/lib/country-visibility';
 /**
  * Booking Intent service — see Booking-intent.md.
  *
- * The intent IS the order. Checkout keeps one open unpaid order per
- * customer+basket (enhance-order-createing.md), so an abandoned
- * checkout needs no separate collection — the workflow state lives in
- * `order.intent` and the list reads `orders` directly.
+ * Orders carry NO workflow state. Talking/conversion state lives in the
+ * `adminachievements` collection — one record per (admin, customer):
+ * the first WhatsApp click upserts it to 'talking', and any paid-like
+ * order of that customer flips it to 'paid' (the talking admin gets
+ * the point).
  *
- * `intent.status` values:
- *   (absent)/new — abandoned, nobody has called yet
- *   contacted    — an admin claimed the customer and is talking
- *   refused      — resolved negatively
- *   converted    — paid (or the admin marked it converted)
- *   closed       — the order was cancelled/refunded
+ * The list still reads `orders` grouped by customer — the status/owner
+ * of each row is derived by joining achievements on customerKey.
  */
 
-export type BookingIntentStatus =
-  | 'new'
-  | 'contacted'
-  | 'refused'
-  | 'converted'
-  | 'closed';
+export type BookingIntentStatus = 'new' | 'contacted' | 'converted';
 
-export const OPEN_INTENT_STATUSES: BookingIntentStatus[] = [
-  'new',
-  'contacted',
-];
+// Open/failed orders are live intents. A paid-like latest order keeps
+// the customer on the list only when an achievement exists (someone
+// talked to them) — the row then shows 'converted' for the overview.
+// Cancelled/refunded latest orders never render (an admin closed it,
+// not an abandoned checkout).
 const ELIGIBLE_ORDER_STATUSES: OrderStatus[] = [
   'pending',
   'processing',
   'failed',
 ];
-// The customer's LATEST order decides eligibility — a paid-like latest
-// order means they bought, regardless of earlier abandoned attempts.
-const PAID_LIKE_STATUSES: OrderStatus[] = [
+const PAID_LIKE_ORDER_STATUSES: OrderStatus[] = [
   'paid',
   'partial-paid',
   'completed',
 ];
-const MANUAL_PRODUCT_ID = '__manual_order__';
 export const DEFAULT_DELAY_MINUTES = 60;
 
 export interface AdminIdentity {
@@ -56,32 +47,46 @@ export interface AdminIdentity {
 
 type OrderLike = Pick<
   IOrder,
-  | '_id'
-  | 'userId'
-  | 'billingData'
-  | 'items'
-  | 'reservationData'
-  | 'createdAt'
-  | 'isFreeOrder'
-  | 'isSubOrder'
-  | 'createdByAdminId'
+  '_id' | 'userId' | 'billingData' | 'createdAt' | 'isFreeOrder'
 >;
 
 function normalizeEmail(email: unknown): string {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
 
-function realProductIds(items: IOrder['items'] | undefined): string[] {
-  const ids = new Set<string>();
-  for (const item of items ?? []) {
-    const raw = item.productId;
-    if (raw === undefined || raw === null) continue;
-    const id = String(raw);
-    // Manual-order placeholder must never match across orders.
-    if (!id || id === MANUAL_PRODUCT_ID) continue;
-    ids.add(id);
-  }
-  return [...ids];
+/**
+ * The customer identity the list groups by — userId, else billing
+ * email, else billing phone, else the order id (unidentifiable orders
+ * stay individual). Achievement `customerKey` stores this exact value.
+ */
+function customerKeyFor(order: OrderLike): string {
+  if (order.userId) return String(order.userId);
+  const email = normalizeEmail(order.billingData?.email);
+  if (email) return email;
+  const phone =
+    typeof order.billingData?.phone === 'string'
+      ? order.billingData.phone.trim()
+      : '';
+  if (phone) return phone;
+  return String(order._id);
+}
+
+/**
+ * EVERY identity an order carries — used by the paid hook so a talking
+ * record keyed by any of them still converts (e.g. the abandoned order
+ * had no userId but the paid one does).
+ */
+function customerKeysFor(order: OrderLike): string[] {
+  const keys = new Set<string>();
+  if (order.userId) keys.add(String(order.userId));
+  const email = normalizeEmail(order.billingData?.email);
+  if (email) keys.add(email);
+  const phone =
+    typeof order.billingData?.phone === 'string'
+      ? order.billingData.phone.trim()
+      : '';
+  if (phone) keys.add(phone);
+  return [...keys];
 }
 
 /**
@@ -102,7 +107,9 @@ function sanitizeIntentOrder(order: IOrder): Record<string, unknown> {
 }
 
 /** First non-empty sacrificeFor (مؤدى عنه) entry — for the follow-up message. */
-function extractReservationName(order: OrderLike): string | undefined {
+function extractReservationName(order: OrderLike & {
+  reservationData?: IOrder['reservationData'];
+}): string | undefined {
   const raw = order.reservationData?.find(
     (field) => field.key === 'sacrificeFor' && field.value?.trim(),
   )?.value;
@@ -112,59 +119,6 @@ function extractReservationName(order: OrderLike): string | undefined {
     .map((entry) => entry.trim())
     .filter(Boolean)[0];
   return first || undefined;
-}
-
-/**
- * Mongo `$or` that matches every order belonging to the same customer.
- * userId wins, then normalized billing email, then the billing phone as
- * stored (checkout already normalizes it).
- */
-function customerIdentityOr(order: {
-  userId?: IOrder['userId'];
-  billingData?: IOrder['billingData'];
-}): Record<string, unknown>[] {
-  const or: Record<string, unknown>[] = [];
-  if (order.userId) or.push({ userId: order.userId });
-  const email = normalizeEmail(order.billingData?.email);
-  if (email) or.push({ 'billingData.email': email });
-  const phone =
-    typeof order.billingData?.phone === 'string'
-      ? order.billingData.phone.trim()
-      : '';
-  if (phone) or.push({ 'billingData.phone': phone });
-  return or;
-}
-
-/**
- * Predicate for "this order is a live booking intent" — an unpaid
- * website order in an open status whose intent isn't resolved.
- */
-function liveIntentMatch(): Record<string, unknown> {
-  return {
-    $and: [
-      { status: { $in: ELIGIBLE_ORDER_STATUSES } },
-      {
-        $or: [
-          { paidAmount: 0 },
-          { paidAmount: { $exists: false } },
-          { paidAmount: null },
-        ],
-      },
-      { isFreeOrder: { $ne: true } },
-      { isSubOrder: { $ne: true } },
-      { createdByAdminId: { $exists: false } },
-    ],
-  };
-}
-
-/** Predicate for "the intent is open" (new — incl. absent — or contacted). */
-function openIntentMatch(): Record<string, unknown> {
-  return {
-    $or: [
-      { 'intent.status': { $in: OPEN_INTENT_STATUSES } },
-      { 'intent.status': { $exists: false } },
-    ],
-  };
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────
@@ -199,6 +153,128 @@ export interface ListIntentsParams {
   limit: number;
 }
 
+/**
+ * Pipeline stages that group orders into one row per customer and
+ * derive the talking status from `adminachievements`.
+ * Group `_id` = the customerKey the achievements are keyed by.
+ */
+function intentPipelineStages(): mongoose.PipelineStage[] {
+  // Same precedence as customerKeyFor: userId → email → phone → _id.
+  const customerKeyExpr = {
+    $cond: [
+      { $gt: [{ $strLenCP: { $ifNull: [{ $toString: '$userId' }, ''] } }, 0] },
+      { $toString: '$userId' },
+      {
+        $cond: [
+          {
+            $gt: [
+              { $strLenCP: { $ifNull: ['$billingData.email', ''] } },
+              0,
+            ],
+          },
+          '$billingData.email',
+          {
+            $cond: [
+              {
+                $gt: [
+                  { $strLenCP: { $ifNull: ['$billingData.phone', ''] } },
+                  0,
+                ],
+              },
+              '$billingData.phone',
+              { $toString: '$_id' },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  return [
+    {
+      $group: {
+        _id: customerKeyExpr,
+        doc: { $first: '$$ROOT' },
+      },
+    },
+    // Talking / paid state comes from the achievements collection.
+    {
+      $lookup: {
+        from: 'adminachievements',
+        let: { ck: '$_id' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$customerKey', '$$ck'] } } },
+          {
+            $project: {
+              status: 1,
+              adminId: 1,
+              adminName: 1,
+              adminEmail: 1,
+              claimedAt: 1,
+            },
+          },
+        ],
+        as: 'ach',
+      },
+    },
+    {
+      $addFields: {
+        talkingAch: {
+          $arrayElemAt: [
+            {
+              $filter: {
+                input: '$ach',
+                as: 'a',
+                cond: { $eq: ['$$a.status', 'talking'] },
+              },
+            },
+            0,
+          ],
+        },
+        hasPaidAch: {
+          $gt: [
+            {
+              $size: {
+                $filter: {
+                  input: '$ach',
+                  as: 'a',
+                  cond: { $eq: ['$$a.status', 'paid'] },
+                },
+              },
+            },
+            0,
+          ],
+        },
+        // Kept through the $match (a paid-like latest order only
+        // renders when the customer has an achievement) — harmless
+        // extra field on the grouped docs.
+        hasAch: { $gt: [{ $size: '$ach' }, 0] },
+      },
+    },
+    {
+      $addFields: {
+        intentStatus: {
+          // A paid-like latest order = success → 'converted', even if
+          // the achievement hasn't flipped to 'paid' yet.
+          $cond: [
+            { $in: ['$doc.status', PAID_LIKE_ORDER_STATUSES] },
+            'converted',
+            {
+              $cond: [
+                { $gt: ['$talkingAch', null] },
+                'contacted',
+                { $cond: ['$hasPaidAch', 'converted', 'new'] },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    // Keep the docs lean — `ach` and the flag aren't needed downstream.
+    { $project: { ach: 0, hasPaidAch: 0 } },
+  ];
+}
+
 export async function listBookingIntents(params: ListIntentsParams) {
   const delayMinutes = await getBookingIntentDelayMinutes();
   const cutoff = new Date(Date.now() - delayMinutes * 60_000);
@@ -213,21 +289,30 @@ export async function listBookingIntents(params: ListIntentsParams) {
   };
 
   // ── Eligibility: the customer's LATEST order decides everything.
-  // A paid-like latest order (paid/partial-paid/completed) means the
-  // customer bought — earlier abandoned attempts are just history.
-  // The remaining filters apply to the displayed row, which IS the
-  // customer's latest order.
+  // Open/failed → live intent (delay-gated so fresh orders get time
+  // to complete). Paid-like → keep the row for the overview only when
+  // the customer has an achievement (someone engaged them), shown as
+  // 'converted' — and bypass the delay so a success shows instantly.
+  // Cancelled/refunded → never render (closed, not abandoned).
   const docFilters: Record<string, unknown>[] = [
-    { 'doc.status': { $nin: PAID_LIKE_STATUSES } },
-    { 'doc.createdAt': { $lte: cutoff } },
+    {
+      $or: [
+        {
+          'doc.status': { $in: ELIGIBLE_ORDER_STATUSES },
+          'doc.createdAt': { $lte: cutoff },
+        },
+        {
+          'doc.status': { $in: PAID_LIKE_ORDER_STATUSES },
+          hasAch: true,
+        },
+      ],
+    },
   ];
 
   let statusClause: Record<string, unknown> | null = null;
   if (params.status && params.status !== 'all') {
-    statusClause =
-      params.status === 'new'
-        ? { 'doc.intent.status': { $in: ['new', null] } }
-        : { 'doc.intent.status': params.status };
+    // `intentStatus` is derived by the pipeline (see intentPipelineStages).
+    statusClause = { intentStatus: params.status };
     docFilters.push(statusClause);
   }
 
@@ -311,70 +396,16 @@ export async function listBookingIntents(params: ListIntentsParams) {
   const skip = (params.page - 1) * params.limit;
 
   // Status counts respect every filter EXCEPT the status one — tab badges.
-  // A missing intent subdoc counts as 'new'.
   const countQuery = { $and: docFilters.filter((c) => c !== statusClause) };
 
   // One row per customer — the LATEST matching order represents them.
-  // Identity: userId, else billing email, else billing phone, else the
-  // order id itself (unidentifiable orders stay individual rows).
-  const customerKeyExpr = {
-    $cond: [
-      { $gt: [{ $strLenCP: { $ifNull: [{ $toString: '$userId' }, ''] } }, 0] },
-      { $toString: '$userId' },
-      {
-        $cond: [
-          {
-            $gt: [
-              { $strLenCP: { $ifNull: ['$billingData.email', ''] } },
-              0,
-            ],
-          },
-          '$billingData.email',
-          {
-            $cond: [
-              {
-                $gt: [
-                  { $strLenCP: { $ifNull: ['$billingData.phone', ''] } },
-                  0,
-                ],
-              },
-              '$billingData.phone',
-              { $toString: '$_id' },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-
-  // Per-order "open intent" flag — powers the "Claim N" badge.
-  const openIntentExpr = {
-    $and: [
-      { $in: ['$status', ELIGIBLE_ORDER_STATUSES] },
-      { $lte: [{ $ifNull: ['$paidAmount', 0] }, 0] },
-      {
-        $or: [
-          { $in: ['$intent.status', OPEN_INTENT_STATUSES] },
-          { $eq: [{ $ifNull: ['$intent.status', null] }, null] },
-        ],
-      },
-    ],
-  };
-
-  const groupStage = {
-    $group: {
-      _id: customerKeyExpr,
-      doc: { $first: '$$ROOT' },
-      openIntentCount: { $sum: { $cond: [openIntentExpr, 1, 0] } },
-      orderCount: { $sum: 1 },
-    },
-  };
+  const pipelineStages = intentPipelineStages();
 
   const [listResult, countsAgg] = await Promise.all([
     Order.aggregate([
       { $match: scopeMatch },
       { $sort: { createdAt: -1, _id: -1 } },
-      groupStage,
+      ...pipelineStages,
       { $match: query },
       {
         $facet: {
@@ -384,15 +415,15 @@ export async function listBookingIntents(params: ListIntentsParams) {
       },
     ]),
     // Per-customer status counts — each customer counts once, under the
-    // status of their latest order.
+    // derived status of their latest order.
     Order.aggregate([
       { $match: scopeMatch },
       { $sort: { createdAt: -1, _id: -1 } },
-      { $group: { _id: customerKeyExpr, doc: { $first: '$$ROOT' } } },
+      ...pipelineStages,
       { $match: countQuery },
       {
         $group: {
-          _id: { $ifNull: ['$doc.intent.status', 'new'] },
+          _id: '$intentStatus',
           count: { $sum: 1 },
         },
       },
@@ -401,8 +432,13 @@ export async function listBookingIntents(params: ListIntentsParams) {
 
   const grouped = (listResult[0]?.docs ?? []) as Array<{
     doc: IOrder;
-    openIntentCount: number;
-    orderCount: number;
+    intentStatus: BookingIntentStatus;
+    talkingAch?: {
+      adminId: mongoose.Types.ObjectId;
+      adminName: string;
+      adminEmail: string;
+      claimedAt: Date;
+    };
   }>;
   const total = Number(listResult[0]?.total?.[0]?.n ?? 0);
 
@@ -410,9 +446,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
     all: 0,
     new: 0,
     contacted: 0,
-    refused: 0,
     converted: 0,
-    closed: 0,
   };
   for (const row of countsAgg as Array<{ _id: string; count: number }>) {
     if (row._id in statusCounts) statusCounts[row._id] = row.count;
@@ -420,7 +454,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
   }
 
   return {
-    intents: grouped.map(({ doc: order, openIntentCount, orderCount }) => {
+    intents: grouped.map(({ doc: order, intentStatus, talkingAch }) => {
       const paymentTries =
         order.paymentAttempts?.length ?? order.payments?.length ?? 0;
       return {
@@ -448,24 +482,16 @@ export async function listBookingIntents(params: ListIntentsParams) {
         currency: order.currency ?? 'EGP',
         source: order.source,
         paymentAttemptCount: paymentTries,
-        // How many matching orders this customer has — claim/resolve act
-        // on all of them even though only the latest is displayed.
-        attemptCount: orderCount,
         orderCreatedAt: order.createdAt,
-        status: order.intent?.status ?? 'new',
-        assignedTo: order.intent?.assignedTo
+        status: intentStatus,
+        assignedTo: talkingAch
           ? {
-            adminId: String(order.intent.assignedTo.adminId),
-            name: order.intent.assignedTo.name,
-            email: order.intent.assignedTo.email,
+            adminId: String(talkingAch.adminId),
+            name: talkingAch.adminName,
+            email: talkingAch.adminEmail,
           }
           : undefined,
-        assignedAt: order.intent?.assignedAt,
-        resolvedAt: order.intent?.resolvedAt,
-        resolvedBy: order.intent?.resolvedBy,
-        autoReason: order.intent?.autoReason,
-        note: order.intent?.note,
-        openIntentCount,
+        assignedAt: talkingAch?.claimedAt,
       };
     }),
     statusCounts,
@@ -480,363 +506,100 @@ export async function listBookingIntents(params: ListIntentsParams) {
   };
 }
 
-// ─── Claim / release / resolve / reopen ───────────────────────────────
+// ─── Claim ────────────────────────────────────────────────────────────
 
 export type ClaimResult =
-  | { ok: true; claimedCount: number }
+  | { ok: true }
   | { ok: false; reason: 'not_found' | 'conflict'; claimedBy?: AdminIdentity };
 
 /**
- * Claim = assign THIS order (the customer's latest) to the admin.
- * Previous orders of the customer are skipped — the list only ever
- * shows the latest one. Customer-wide exclusivity still holds: another
- * admin holding any open intent of this customer blocks the claim.
+ * Claim = upsert the (admin, customerKey) achievement to 'talking'.
+ * The first WhatsApp click IS the claim — no separate button.
+ * Exclusive while talking: another admin's 'talking' record on the
+ * same customerKey → 409 with their identity.
  */
 export async function claimCustomer(
   admin: AdminIdentity,
-  intentId: string,
+  orderId: string,
 ): Promise<ClaimResult> {
-  const order = await Order.findById(intentId)
-    .select('userId billingData intent')
+  const order = await Order.findById(orderId)
+    .select('userId billingData')
     .lean();
   if (!order) return { ok: false, reason: 'not_found' };
 
+  const customerKey = customerKeyFor(order);
   const adminId = new mongoose.Types.ObjectId(String(admin.adminId));
-  const identOr = customerIdentityOr(order);
 
-  // Conflict: another admin holds an open intent of this customer.
-  const conflict = identOr.length
-    ? await Order.findOne({
-      $and: [
-        { $or: identOr },
-        liveIntentMatch(),
-        {
-          'intent.assignedTo.adminId': { $exists: true, $ne: adminId },
-        },
-      ],
-    })
-      .select('intent.assignedTo')
-      .lean()
-    : null;
+  // Conflict: another admin is already talking to this customer.
+  const conflict = await AdminAchievement.findOne({
+    customerKey,
+    status: 'talking',
+    adminId: { $ne: adminId },
+  })
+    .select('adminId adminName adminEmail')
+    .lean();
 
-  if (conflict?.intent?.assignedTo) {
+  if (conflict) {
     return {
       ok: false,
       reason: 'conflict',
       claimedBy: {
-        adminId: conflict.intent.assignedTo.adminId,
-        name: conflict.intent.assignedTo.name,
-        email: conflict.intent.assignedTo.email,
+        adminId: conflict.adminId,
+        name: conflict.adminName,
+        email: conflict.adminEmail,
       },
     };
   }
 
-  // Claim ONLY this order — guarded so a concurrent claim can't be
-  // silently overwritten.
-  const result = await Order.updateOne(
-    {
-      _id: order._id,
-      $or: [
-        { 'intent.assignedTo': { $exists: false } },
-        { 'intent.assignedTo.adminId': adminId },
-      ],
-    },
+  // Upsert the (admin, customer) record — a previous 'paid' record for
+  // the same admin re-claims to 'talking' (new conversation).
+  await AdminAchievement.updateOne(
+    { adminId, customerKey },
     {
       $set: {
-        'intent.status': 'contacted',
-        'intent.assignedTo': {
-          adminId,
-          name: admin.name,
-          email: admin.email,
-        },
-        'intent.assignedAt': new Date(),
+        status: 'talking',
+        adminName: admin.name,
+        adminEmail: admin.email,
+        orderId: order._id,
+        claimedAt: new Date(),
       },
+      $unset: { paidAt: '' },
     },
-  );
-
-  if (result.modifiedCount === 0) {
-    const holder = await Order.findById(order._id)
-      .select('intent.assignedTo')
-      .lean();
-    if (holder?.intent?.assignedTo) {
-      return {
-        ok: false,
-        reason: 'conflict',
-        claimedBy: {
-          adminId: holder.intent.assignedTo.adminId,
-          name: holder.intent.assignedTo.name,
-          email: holder.intent.assignedTo.email,
-        },
-      };
-    }
-  }
-
-  return { ok: true, claimedCount: result.modifiedCount };
-}
-
-export type ReleaseResult =
-  | { ok: true; releasedCount: number }
-  | { ok: false; reason: 'not_found' | 'not_assigned' | 'not_owner' };
-
-/** Customer-level release — the whole claim is given up at once. */
-export async function releaseCustomer(
-  admin: AdminIdentity,
-  intentId: string,
-): Promise<ReleaseResult> {
-  const order = await Order.findById(intentId)
-    .select('userId billingData intent')
-    .lean();
-  if (!order) return { ok: false, reason: 'not_found' };
-  if (order.intent?.status !== 'contacted' || !order.intent.assignedTo) {
-    return { ok: false, reason: 'not_assigned' };
-  }
-  if (String(order.intent.assignedTo.adminId) !== String(admin.adminId)) {
-    return { ok: false, reason: 'not_owner' };
-  }
-
-  const identOr = customerIdentityOr(order);
-  const result = await Order.updateMany(
-    {
-      $and: [
-        { $or: identOr },
-        {
-          'intent.status': 'contacted',
-          'intent.assignedTo.adminId': order.intent.assignedTo.adminId,
-        },
-      ],
-    },
-    {
-      $set: { 'intent.status': 'new' },
-      $unset: { 'intent.assignedTo': '', 'intent.assignedAt': '' },
-    },
-  );
-
-  return { ok: true, releasedCount: result.modifiedCount };
-}
-
-export type ResolveOutcome = 'refused' | 'converted';
-export type ResolveResult =
-  | { ok: true; resolvedCount: number }
-  | { ok: false; reason: 'not_found' | 'not_contacted' | 'not_owner' };
-
-export async function resolveIntent(
-  admin: AdminIdentity,
-  intentId: string,
-  outcome: ResolveOutcome,
-  note?: string,
-  cascade = false,
-): Promise<ResolveResult> {
-  const order = await Order.findById(intentId)
-    .select('userId billingData intent')
-    .lean();
-  if (!order) return { ok: false, reason: 'not_found' };
-  if (order.intent?.status !== 'contacted') {
-    return { ok: false, reason: 'not_contacted' };
-  }
-  if (String(order.intent.assignedTo?.adminId) !== String(admin.adminId)) {
-    return { ok: false, reason: 'not_owner' };
-  }
-
-  const adminId = new mongoose.Types.ObjectId(String(admin.adminId));
-  const scope = cascade
-    ? {
-      $and: [
-        { $or: customerIdentityOr(order) },
-        {
-          'intent.status': 'contacted' as const,
-          'intent.assignedTo.adminId': adminId,
-        },
-      ],
-    }
-    : { _id: order._id };
-
-  const result = await Order.updateMany(scope, {
-    $set: {
-      'intent.status': outcome,
-      'intent.resolvedAt': new Date(),
-      'intent.resolvedBy': 'admin',
-      'intent.resolvedByAdmin': { adminId, name: admin.name },
-      ...(note ? { 'intent.note': note } : {}),
-    },
-  });
-
-  return { ok: true, resolvedCount: result.modifiedCount };
-}
-
-export type ReopenResult =
-  | { ok: true }
-  | {
-    ok: false;
-    reason: 'not_found' | 'not_refused' | 'conflict';
-    claimedBy?: AdminIdentity;
-  };
-
-export async function reopenIntent(
-  admin: AdminIdentity,
-  intentId: string,
-): Promise<ReopenResult> {
-  const order = await Order.findById(intentId)
-    .select('userId billingData items intent')
-    .lean();
-  if (!order) return { ok: false, reason: 'not_found' };
-  if (order.intent?.status !== 'refused') {
-    return { ok: false, reason: 'not_refused' };
-  }
-
-  // Reopening must not collide with another open intent order of the
-  // same customer for an overlapping product (e.g. a newer checkout).
-  const productIds = realProductIds(order.items);
-  if (productIds.length > 0) {
-    const conflict = await Order.findOne({
-      $and: [
-        { _id: { $ne: order._id } },
-        { $or: customerIdentityOr(order) },
-        liveIntentMatch(),
-        openIntentMatch(),
-        { 'items.productId': { $in: productIds } },
-      ],
-    })
-      .select('intent.assignedTo')
-      .lean();
-    if (conflict) {
-      return {
-        ok: false,
-        reason: 'conflict',
-        claimedBy: conflict.intent?.assignedTo
-          ? {
-            adminId: conflict.intent.assignedTo.adminId,
-            name: conflict.intent.assignedTo.name,
-            email: conflict.intent.assignedTo.email,
-          }
-          : undefined,
-      };
-    }
-  }
-
-  const adminId = new mongoose.Types.ObjectId(String(admin.adminId));
-  await Order.updateOne(
-    { _id: order._id, 'intent.status': 'refused' },
-    {
-      $set: {
-        'intent.status': 'contacted',
-        'intent.assignedTo': {
-          adminId,
-          name: admin.name,
-          email: admin.email,
-        },
-        'intent.assignedAt': new Date(),
-      },
-      $unset: {
-        'intent.resolvedAt': '',
-        'intent.resolvedBy': '',
-        'intent.resolvedByAdmin': '',
-        'intent.autoReason': '',
-      },
-    },
+    { upsert: true },
   );
 
   return { ok: true };
 }
 
-// ─── Auto-resolution on order terminal states ─────────────────────────
+// ─── Paid hook ────────────────────────────────────────────────────────
 
 /**
- * Call wherever an order reaches a terminal state. `paid` covers
- * paid/partial-paid/completed; `closed` covers cancelled/refunded/deleted.
- * Fire-and-forget — callers wrap in .catch().
+ * Call wherever an order reaches a paid-like state
+ * (paid/partial-paid/completed). Every 'talking' achievement matching
+ * the customer's identity flips to 'paid' — the talking admin gets the
+ * point. Fire-and-forget — callers wrap in .catch().
  */
-export async function syncIntentsOnOrderTerminal(
+export async function syncAchievementOnOrderPaid(
   order: OrderLike,
-  outcome: 'paid' | 'closed',
 ): Promise<void> {
-  // Website orders only — manual, sub-order, and free orders are never
-  // booking intents.
-  if (order.isFreeOrder || order.isSubOrder || order.createdByAdminId) return;
+  // Free orders are never purchases.
+  if (order.isFreeOrder) return;
+  const keys = customerKeysFor(order);
+  if (keys.length === 0) return;
 
-  const orderId = String(order._id);
-  const now = new Date();
-
-  // An order only "is" an intent if it carried workflow state or sat
-  // unpaid past the display delay (the delay is the intent boundary —
-  // a checkout paid within it never surfaced as an intent).
-  const delayMinutes = await getBookingIntentDelayMinutes();
-  const wasListable =
-    !order.createdAt ||
-    now.getTime() - new Date(order.createdAt).getTime() >
-    delayMinutes * 60_000;
-  const untouchedOrOpen: Record<string, unknown> = wasListable
-    ? {
-      $or: [
-        { 'intent.status': { $in: [...OPEN_INTENT_STATUSES, 'refused'] } },
-        { 'intent.status': { $exists: false } },
-      ],
-    }
-    : { 'intent.status': { $in: [...OPEN_INTENT_STATUSES, 'refused'] } };
-
-  if (outcome === 'paid') {
-    await Order.updateOne(
-      {
-        _id: orderId,
-        ...untouchedOrOpen,
-      },
-      {
-        $set: {
-          'intent.status': 'converted',
-          'intent.resolvedAt': now,
-          'intent.resolvedBy': 'auto',
-          'intent.autoReason': 'paid',
-        },
-      },
-    );
-
-    // Suppress other open intent orders of the same customer sharing a
-    // product and created before this purchase.
-    const identOr = customerIdentityOr(order);
-    const productIds = realProductIds(order.items);
-    if (identOr.length > 0 && productIds.length > 0) {
-      await Order.updateMany(
-        {
-          $and: [
-            { _id: { $ne: order._id } },
-            { $or: identOr },
-            liveIntentMatch(),
-            openIntentMatch(),
-            { 'items.productId': { $in: productIds } },
-            { createdAt: { $lt: order.createdAt ?? now } },
-          ],
-        },
-        {
-          $set: {
-            'intent.status': 'converted',
-            'intent.resolvedAt': now,
-            'intent.resolvedBy': 'auto',
-            'intent.autoReason': 'purchased_elsewhere',
-          },
-        },
-      );
-    }
-    return;
-  }
-
-  // outcome === 'closed' — the order was cancelled/refunded/deleted.
-  // Only closes an intent that was actually open or refused.
-  await Order.updateOne(
-    {
-      _id: orderId,
-      ...untouchedOrOpen,
-    },
+  await AdminAchievement.updateMany(
+    { customerKey: { $in: keys }, status: 'talking' },
     {
       $set: {
-        'intent.status': 'closed',
-        'intent.resolvedAt': now,
-        'intent.resolvedBy': 'auto',
-        'intent.autoReason': 'cancelled',
+        status: 'paid',
+        paidAt: new Date(),
+        orderId: order._id,
       },
     },
   );
 }
 
-// ─── Stats (customers permission) ─────────────────────────────────────
+// ─── Stats (achievements action permission) ───────────────────────────
 
 export async function getBookingIntentStats(
   fromDate?: string,
@@ -851,71 +614,49 @@ export async function getBookingIntentStats(
   }
   const inRange = Object.keys(range).length > 0;
 
-  const claimedMatch: Record<string, unknown> = {
-    'intent.assignedTo.adminId': { $exists: true },
-  };
-  if (inRange) claimedMatch['intent.assignedAt'] = range;
+  const claimedMatch: Record<string, unknown> = {};
+  if (inRange) claimedMatch.claimedAt = range;
 
-  const resolvedMatch: Record<string, unknown> = {
-    'intent.status': { $in: ['converted', 'refused'] },
-    'intent.resolvedAt': { $exists: true },
-  };
-  if (inRange) resolvedMatch['intent.resolvedAt'] = range;
+  const paidMatch: Record<string, unknown> = { status: 'paid' };
+  if (inRange) paidMatch.paidAt = range;
 
-  // claimed → by intent.assignedTo.adminId (assignedAt in range)
-  // converted → credited to the assigned admin (resolvedAt in range)
-  // refused → credited to the resolving admin (resolvedAt in range)
-  const [claimedRows, contactedRows, convertedRows, refusedRows] =
-    await Promise.all([
-      Order.aggregate([
-        { $match: claimedMatch },
-        {
-          $group: {
-            _id: '$intent.assignedTo.adminId',
-            name: { $first: '$intent.assignedTo.name' },
-            email: { $first: '$intent.assignedTo.email' },
-            claimed: { $sum: 1 },
-          },
+  // claimed → records claimed in range
+  // contacted → live 'talking' count (no date range)
+  // converted → records that went paid in range
+  const [claimedRows, contactedRows, convertedRows] = await Promise.all([
+    AdminAchievement.aggregate([
+      { $match: claimedMatch },
+      {
+        $group: {
+          _id: '$adminId',
+          name: { $first: '$adminName' },
+          email: { $first: '$adminEmail' },
+          claimed: { $sum: 1 },
         },
-      ]),
-      // Currently talking — live state, no date range.
-      Order.aggregate([
-        {
-          $match: {
-            'intent.status': 'contacted',
-            'intent.assignedTo.adminId': { $exists: true },
-          },
+      },
+    ]),
+    AdminAchievement.aggregate([
+      { $match: { status: 'talking' } },
+      {
+        $group: {
+          _id: '$adminId',
+          name: { $first: '$adminName' },
+          contacted: { $sum: 1 },
         },
-        {
-          $group: {
-            _id: '$intent.assignedTo.adminId',
-            name: { $first: '$intent.assignedTo.name' },
-            contacted: { $sum: 1 },
-          },
+      },
+    ]),
+    AdminAchievement.aggregate([
+      { $match: paidMatch },
+      {
+        $group: {
+          _id: '$adminId',
+          name: { $first: '$adminName' },
+          email: { $first: '$adminEmail' },
+          converted: { $sum: 1 },
         },
-      ]),
-      Order.aggregate([
-        { $match: { ...resolvedMatch, 'intent.status': 'converted' } },
-        {
-          $group: {
-            _id: '$intent.assignedTo.adminId',
-            name: { $first: '$intent.assignedTo.name' },
-            email: { $first: '$intent.assignedTo.email' },
-            converted: { $sum: 1 },
-          },
-        },
-      ]),
-      Order.aggregate([
-        { $match: { ...resolvedMatch, 'intent.status': 'refused' } },
-        {
-          $group: {
-            _id: '$intent.resolvedByAdmin.adminId',
-            name: { $first: '$intent.resolvedByAdmin.name' },
-            refused: { $sum: 1 },
-          },
-        },
-      ]),
-    ]);
+      },
+    ]),
+  ]);
 
   const byAdmin = new Map<
     string,
@@ -926,7 +667,6 @@ export async function getBookingIntentStats(
       claimed: number;
       contacted: number;
       converted: number;
-      refused: number;
       conversionRate: number;
     }
   >();
@@ -941,7 +681,6 @@ export async function getBookingIntentStats(
         claimed: 0,
         contacted: 0,
         converted: 0,
-        refused: 0,
         conversionRate: 0,
       };
       byAdmin.set(id, row);
@@ -968,21 +707,13 @@ export async function getBookingIntentStats(
     row.email = row.email || String(r.email ?? '');
     row.converted = Number(r.converted ?? 0);
   }
-  for (const r of refusedRows as Array<Record<string, unknown>>) {
-    if (r._id == null) continue;
-    const row = ensure(String(r._id));
-    row.name = row.name || String(r.name ?? '');
-    row.refused = Number(r.refused ?? 0);
-  }
 
   const admins = [...byAdmin.values()].map((row) => ({
     ...row,
-    // Resolved-outcome rate: converted share of this admin's refusals +
-    // conversions in range — never exceeds 100%.
+    // Hit rate: share of this admin's in-range claims that converted.
     conversionRate:
-      row.converted + row.refused > 0
-        ? Math.round((row.converted / (row.converted + row.refused)) * 1000) /
-        10
+      row.claimed > 0
+        ? Math.round((row.converted / row.claimed) * 1000) / 10
         : 0,
   }));
 

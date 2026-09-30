@@ -55,13 +55,10 @@ export async function POST(
       action: 'update',
       resource: 'bookingIntent',
       resourceId: id,
-      details: `Claimed booking-intent customer (${result.claimedCount} intents)`,
+      details: 'Claimed booking-intent customer',
     });
 
-    return NextResponse.json({
-      success: true,
-      data: { claimedCount: result.claimedCount },
-    });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error claiming booking intent:', error);
     return NextResponse.json(

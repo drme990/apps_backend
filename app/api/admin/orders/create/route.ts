@@ -35,7 +35,7 @@ import {
 import { getUserModelByAppId, type BaseAppUserModel, normalizeAppUserPhone } from '@/lib/auth/app-users';
 import { MANUAL_ORDER_PRODUCT_ID } from '@/lib/constants/manual-order';
 import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generation';
-import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
+import { syncAchievementOnOrderPaid } from '@/lib/services/order-intent';
 import { randomBytes } from 'crypto';
 
 // Manual order creation involves multiple DB operations, user creation,
@@ -1192,15 +1192,14 @@ export async function POST(request: NextRequest) {
       console.error(`[Create Manual Order] Auto design evaluation failed for ${order.orderNumber}:`, err);
     });
 
-    // ── Booking intent suppression ── a manual order created already
-    // paid suppresses open abandoned-order intents of the same customer
-    // that share a product (he already bought it via the admin).
+    // ── Booking intent sync ── a manual order created already paid
+    // counts as a conversion: the talking admin's achievement goes paid.
     if (
       order.status === 'paid' ||
       order.status === 'partial-paid' ||
       order.status === 'completed'
     ) {
-      syncIntentsOnOrderTerminal(order.toObject(), 'paid').catch((err) => {
+      syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
         console.error(
           `[Create Manual Order] booking-intent sync failed for ${order.orderNumber}:`,
           err instanceof Error ? err.message : err,

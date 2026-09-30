@@ -6,13 +6,7 @@ import {
   type BookingIntentStatus,
 } from '@/lib/services/order-intent';
 
-const VALID_STATUSES = new Set([
-  'all',
-  'new',
-  'contacted',
-  'converted',
-  'closed',
-]);
+const VALID_STATUSES = new Set(['all', 'new', 'contacted', 'converted']);
 
 export async function GET(request: NextRequest) {
   try {

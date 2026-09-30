@@ -17,7 +17,7 @@ import { getClientIp } from '@/lib/rate-limit';
 import { log } from '@/lib/request-logger';
 import { parseJsonBody } from '@/lib/validation/http';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
-import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
+import { syncAchievementOnOrderPaid } from '@/lib/services/order-intent';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 
@@ -309,19 +309,17 @@ export async function POST(request: NextRequest) {
         await order.save();
 
         // Booking intent sync — a link re-check that finds the order
-        // paid converts the abandoned-order intent.
+        // paid marks the talking admin's achievement as paid.
         if (
           order.status !== previousStatus &&
           (order.status === 'paid' || order.status === 'partial-paid')
         ) {
-          syncIntentsOnOrderTerminal(order.toObject(), 'paid').catch(
-            (err) => {
-              console.error(
-                `[payment-links] booking-intent sync failed for ${order.orderNumber}:`,
-                err instanceof Error ? err.message : err,
-              );
-            },
-          );
+          syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
+            console.error(
+              `[payment-links] booking-intent sync failed for ${order.orderNumber}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
         }
 
         if (remainingAmount <= 0) {

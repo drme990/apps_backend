@@ -631,14 +631,6 @@ export const bulkOrderStatusSchema = z
   })
   .strict();
 
-export const bookingIntentResolveSchema = z
-  .object({
-    outcome: z.enum(['refused', 'converted']),
-    note: z.string().trim().max(2000).optional(),
-    cascade: z.boolean().optional(),
-  })
-  .strict();
-
 export const autoPriceSchema = z
   .object({
     targetCurrencies: z.array(z.string().trim().length(3)).min(1),

@@ -18,7 +18,7 @@ import Booking from '@/lib/models/Booking';
 import { recomputeExecutionDateOnInvoiceConfirmed } from '@/lib/execution-date';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
-import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
+import { syncAchievementOnOrderPaid } from '@/lib/services/order-intent';
 import { getUserModelByAppId } from '@/lib/auth/app-users';
 
 /** Currencies supported by the EasyKash payment gateway. */
@@ -359,27 +359,20 @@ export async function PUT(
       await applyShareIncrementsForOrder(order.toObject());
     }
 
-    // ── Booking intent sync ── paid-like statuses convert the intent
-    // (and suppress same-product intents); cancelled/refunded close it.
-    if (nextStatus !== previousStatus) {
-      const intentOutcome =
-        nextStatus === 'paid' ||
-          nextStatus === 'partial-paid' ||
-          nextStatus === 'completed'
-          ? 'paid'
-          : nextStatus === 'cancelled' || nextStatus === 'refunded'
-            ? 'closed'
-            : null;
-      if (intentOutcome) {
-        syncIntentsOnOrderTerminal(order.toObject(), intentOutcome).catch(
-          (err) => {
-            console.error(
-              `[admin PUT] booking-intent sync failed for ${order.orderNumber}:`,
-              err instanceof Error ? err.message : err,
-            );
-          },
+    // ── Booking intent sync ── paid-like statuses mark the talking
+    // admin's achievement as paid.
+    if (
+      nextStatus !== previousStatus &&
+      (nextStatus === 'paid' ||
+        nextStatus === 'partial-paid' ||
+        nextStatus === 'completed')
+    ) {
+      syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
+        console.error(
+          `[admin PUT] booking-intent sync failed for ${order.orderNumber}:`,
+          err instanceof Error ? err.message : err,
         );
-      }
+      });
     }
 
     if (nextStatus !== previousStatus) {
@@ -1422,30 +1415,24 @@ export async function PATCH(
       await applyShareIncrementsForOrder(order.toObject());
     }
 
-    // ── Booking intent sync ── invoice-driven status changes reach
-    // paid-like or cancelled/refunded states here.
+    // ── Booking intent sync ── invoice-driven status changes reaching a
+    // paid-like state mark the talking admin's achievement as paid.
     {
       const lastStatusChange = [...changes]
         .reverse()
         .find((c) => c.changeType === 'status');
       const finalStatus = lastStatusChange?.newValue;
-      const intentOutcome =
+      if (
         finalStatus === 'paid' ||
-          finalStatus === 'partial-paid' ||
-          finalStatus === 'completed'
-          ? 'paid'
-          : finalStatus === 'cancelled' || finalStatus === 'refunded'
-            ? 'closed'
-            : null;
-      if (intentOutcome) {
-        syncIntentsOnOrderTerminal(order.toObject(), intentOutcome).catch(
-          (err) => {
-            console.error(
-              `[admin PATCH] booking-intent sync failed for ${order.orderNumber}:`,
-              err instanceof Error ? err.message : err,
-            );
-          },
-        );
+        finalStatus === 'partial-paid' ||
+        finalStatus === 'completed'
+      ) {
+        syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
+          console.error(
+            `[admin PATCH] booking-intent sync failed for ${order.orderNumber}:`,
+            err instanceof Error ? err.message : err,
+          );
+        });
       }
     }
 

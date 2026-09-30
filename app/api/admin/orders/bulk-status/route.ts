@@ -8,7 +8,7 @@ import { parseJsonBody } from '@/lib/validation/http';
 import { bulkOrderStatusSchema } from '@/lib/validation/schemas';
 import { renumberExecutionDay } from '@/lib/services/execution-number';
 import { evaluateAndTriggerAutoDesign } from '@/lib/services/auto-design-generation';
-import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
+import { syncAchievementOnOrderPaid } from '@/lib/services/order-intent';
 
 const BULK_ALLOWED_STATUSES: ReadonlySet<OrderStatus> = new Set([
   'completed',
@@ -142,40 +142,30 @@ export async function PUT(request: NextRequest) {
     }
 
     // ── Booking intent sync ── updateMany bypasses Mongoose hooks, so
-    // each transitioned order syncs its intent here: completed converts
-    // it (paid-like), cancelled/refunded close it. Fire-and-forget.
-    const transitionedIds = ordersBefore
-      .filter((o) => o.status !== normalizedStatus)
-      .map((o) => o._id);
-    if (transitionedIds.length > 0) {
-      const intentOutcome =
-        normalizedStatus === 'completed' ? 'paid' : 'closed';
-      const transitionedOrders = await Order.find(
-        { _id: { $in: transitionedIds } },
-        {
-          orderNumber: 1,
-          userId: 1,
-          items: 1,
-          totalAmount: 1,
-          fullAmount: 1,
-          currency: 1,
-          billingData: 1,
-          source: 1,
-          createdAt: 1,
-          paymentAttempts: 1,
-          payments: 1,
-          isFreeOrder: 1,
-          isSubOrder: 1,
-          createdByAdminId: 1,
-        },
-      ).lean();
-      for (const doc of transitionedOrders) {
-        syncIntentsOnOrderTerminal(doc, intentOutcome).catch((err) => {
-          console.error(
-            `[bulk-status] booking-intent sync failed for ${doc.orderNumber}:`,
-            err instanceof Error ? err.message : err,
-          );
-        });
+    // each order transitioned to completed marks the talking admin's
+    // achievement as paid. Fire-and-forget.
+    if (normalizedStatus === 'completed') {
+      const transitionedIds = ordersBefore
+        .filter((o) => o.status !== normalizedStatus)
+        .map((o) => o._id);
+      if (transitionedIds.length > 0) {
+        const transitionedOrders = await Order.find(
+          { _id: { $in: transitionedIds } },
+          {
+            orderNumber: 1,
+            userId: 1,
+            billingData: 1,
+            isFreeOrder: 1,
+          },
+        ).lean();
+        for (const doc of transitionedOrders) {
+          syncAchievementOnOrderPaid(doc).catch((err) => {
+            console.error(
+              `[bulk-status] booking-intent sync failed for ${doc.orderNumber}:`,
+              err instanceof Error ? err.message : err,
+            );
+          });
+        }
       }
     }
 

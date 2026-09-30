@@ -27,7 +27,7 @@ import {
 } from '@/lib/services/auto-design-generation';
 import { syncSharedFields } from '@/lib/services/sub-order-sync';
 import { applyShareIncrementsForOrder } from '@/lib/services/share-campaign';
-import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
+import { syncAchievementOnOrderPaid } from '@/lib/services/order-intent';
 
 const MAX_WEBHOOK_AGE = 7 * 60; // 7 minutes
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -552,22 +552,13 @@ export async function POST(request: NextRequest) {
       await applyShareIncrementsForOrder(order);
     }
 
-    // ── Booking intent auto-resolution ──
-    // The abandoned-order intent flips to converted, and any other open
-    // intents of this customer sharing a product get suppressed. A
-    // refunded order closes its intent. Fire-and-forget — never block
-    // the webhook on tracking.
+    // ── Booking intent achievement sync ──
+    // A paid order marks the talking admin's achievement as paid.
+    // Fire-and-forget — never block the webhook on tracking.
     if (transitionedToPaid || transitionedToPartialPaid) {
-      syncIntentsOnOrderTerminal(order.toObject(), 'paid').catch((err) => {
+      syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
         console.error(
           `[webhook] booking-intent sync failed for ${order.orderNumber}:`,
-          err instanceof Error ? err.message : err,
-        );
-      });
-    } else if (order.status === 'refunded') {
-      syncIntentsOnOrderTerminal(order.toObject(), 'closed').catch((err) => {
-        console.error(
-          `[webhook] booking-intent close failed for ${order.orderNumber}:`,
           err instanceof Error ? err.message : err,
         );
       });

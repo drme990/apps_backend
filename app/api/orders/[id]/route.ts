@@ -4,7 +4,7 @@ import { requireAdminPageAccess } from '@/lib/auth';
 import Order, { type IInvoiceUrl } from '@/lib/models/Order';
 import { logActivity } from '@/lib/services/logger';
 import { calculateOrderFinancials } from '@/lib/services/order-financials';
-import { syncIntentsOnOrderTerminal } from '@/lib/services/order-intent';
+import { syncAchievementOnOrderPaid } from '@/lib/services/order-intent';
 import { z } from 'zod';
 import mongoose from 'mongoose';
 
@@ -250,28 +250,20 @@ export async function PATCH(
 
     await order.save();
 
-    // Booking intent sync — an invoice-confirmed payment flips the
-    // abandoned-order intent to converted (and suppresses same-product
-    // intents); a cancelled/refunded order closes it.
-    if (order.status !== statusBefore) {
-      const intentOutcome =
-        order.status === 'paid' ||
-          order.status === 'partial-paid' ||
-          order.status === 'completed'
-          ? 'paid'
-          : order.status === 'cancelled' || order.status === 'refunded'
-            ? 'closed'
-            : null;
-      if (intentOutcome) {
-        syncIntentsOnOrderTerminal(order.toObject(), intentOutcome).catch(
-          (err) => {
-            console.error(
-              `[PATCH /api/orders/${id}] booking-intent sync failed:`,
-              err instanceof Error ? err.message : err,
-            );
-          },
+    // Booking intent sync — an invoice-confirmed payment marks the
+    // talking admin's achievement as paid.
+    if (
+      order.status !== statusBefore &&
+      (order.status === 'paid' ||
+        order.status === 'partial-paid' ||
+        order.status === 'completed')
+    ) {
+      syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
+        console.error(
+          `[PATCH /api/orders/${id}] booking-intent sync failed:`,
+          err instanceof Error ? err.message : err,
         );
-      }
+      });
     }
 
     await logActivity({
