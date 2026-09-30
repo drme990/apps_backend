@@ -10,7 +10,6 @@ const VALID_STATUSES = new Set([
   'all',
   'new',
   'contacted',
-  'refused',
   'converted',
   'closed',
 ]);
@@ -36,7 +35,6 @@ export async function GET(request: NextRequest) {
 
     const result = await listBookingIntents({
       status,
-      assignedTo: searchParams.get('assignedTo') || undefined,
       source:
         searchParams.get('source') === 'ghadaq' ||
           searchParams.get('source') === 'manasik'
@@ -51,7 +49,6 @@ export async function GET(request: NextRequest) {
       referralId: searchParams.get('referralId') || undefined,
       page,
       limit,
-      adminId: auth.user.userId,
     });
 
     return NextResponse.json({ success: true, data: result });

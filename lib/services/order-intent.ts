@@ -84,13 +84,21 @@ function realProductIds(items: IOrder['items'] | undefined): string[] {
   return [...ids];
 }
 
-function buildItemsSummary(order: { items?: IOrder['items'] }): string {
-  return (order.items ?? [])
-    .map((item) => {
-      const name = item.productName?.ar || item.productName?.en || 'item';
-      return (item.quantity ?? 1) > 1 ? `${item.quantity}x ${name}` : name;
-    })
-    .join(' + ');
+/**
+ * Strip heavy/gateway-internal fields before sending the order doc to
+ * the admin panel — the row only needs display fields (reservationData,
+ * items, amounts, whatsapp state).
+ */
+function sanitizeIntentOrder(order: IOrder): Record<string, unknown> {
+  const sanitized = { ...(order as unknown as Record<string, unknown>) };
+  delete sanitized.easykashRef;
+  delete sanitized.easykashProductCode;
+  delete sanitized.easykashVoucher;
+  delete sanitized.easykashResponse;
+  delete sanitized.payments;
+  delete sanitized.paymentAttempts;
+  delete sanitized.internalNotes;
+  return sanitized;
 }
 
 /** First non-empty sacrificeFor (مؤدى عنه) entry — for the follow-up message. */
@@ -175,7 +183,6 @@ export async function getBookingIntentDelayMinutes(): Promise<number> {
 
 export interface ListIntentsParams {
   status?: BookingIntentStatus | 'all';
-  assignedTo?: 'me' | 'none' | string;
   source?: 'manasik' | 'ghadaq';
   search?: string;
   fromDate?: string;
@@ -190,7 +197,6 @@ export interface ListIntentsParams {
   referralId?: string;
   page: number;
   limit: number;
-  adminId: string;
 }
 
 export async function listBookingIntents(params: ListIntentsParams) {
@@ -223,26 +229,6 @@ export async function listBookingIntents(params: ListIntentsParams) {
         ? { 'doc.intent.status': { $in: ['new', null] } }
         : { 'doc.intent.status': params.status };
     docFilters.push(statusClause);
-  }
-
-  if (params.assignedTo === 'me') {
-    docFilters.push({
-      'doc.intent.assignedTo.adminId': new mongoose.Types.ObjectId(
-        params.adminId,
-      ),
-    });
-  } else if (params.assignedTo === 'none') {
-    docFilters.push({ 'doc.intent.assignedTo': { $exists: false } });
-    docFilters.push({ 'doc.intent.status': { $in: ['new', null] } });
-  } else if (
-    typeof params.assignedTo === 'string' &&
-    mongoose.isValidObjectId(params.assignedTo)
-  ) {
-    docFilters.push({
-      'doc.intent.assignedTo.adminId': new mongoose.Types.ObjectId(
-        params.assignedTo,
-      ),
-    });
   }
 
   if (params.source === 'manasik' || params.source === 'ghadaq') {
@@ -384,10 +370,10 @@ export async function listBookingIntents(params: ListIntentsParams) {
     },
   };
 
-  const [listResult, countsAgg, assigneesAgg] = await Promise.all([
+  const [listResult, countsAgg] = await Promise.all([
     Order.aggregate([
       { $match: scopeMatch },
-      { $sort: { createdAt: -1 } },
+      { $sort: { createdAt: -1, _id: -1 } },
       groupStage,
       { $match: query },
       {
@@ -401,23 +387,13 @@ export async function listBookingIntents(params: ListIntentsParams) {
     // status of their latest order.
     Order.aggregate([
       { $match: scopeMatch },
-      { $sort: { createdAt: -1 } },
+      { $sort: { createdAt: -1, _id: -1 } },
       { $group: { _id: customerKeyExpr, doc: { $first: '$$ROOT' } } },
       { $match: countQuery },
       {
         $group: {
           _id: { $ifNull: ['$doc.intent.status', 'new'] },
           count: { $sum: 1 },
-        },
-      },
-    ]),
-    // Distinct assignees — powers the "assigned to" filter dropdown.
-    Order.aggregate([
-      { $match: { 'intent.assignedTo.adminId': { $exists: true } } },
-      {
-        $group: {
-          _id: '$intent.assignedTo.adminId',
-          name: { $first: '$intent.assignedTo.name' },
         },
       },
     ]),
@@ -451,6 +427,9 @@ export async function listBookingIntents(params: ListIntentsParams) {
         _id: String(order._id),
         orderId: String(order._id),
         orderNumber: order.orderNumber ?? '',
+        // Full order doc (sanitized) — the admin panel renders
+        // execution-style cells straight from it.
+        order: sanitizeIntentOrder(order),
         customer: {
           fullName: order.billingData?.fullName ?? '',
           email: order.billingData?.email ?? '',
@@ -464,7 +443,6 @@ export async function listBookingIntents(params: ListIntentsParams) {
           },
           quantity: item.quantity ?? 1,
         })),
-        itemsSummary: buildItemsSummary(order),
         reservationName: extractReservationName(order),
         amount: order.fullAmount ?? order.totalAmount ?? 0,
         currency: order.currency ?? 'EGP',
@@ -491,11 +469,6 @@ export async function listBookingIntents(params: ListIntentsParams) {
       };
     }),
     statusCounts,
-    assignedAdmins: (
-      assigneesAgg as Array<{ _id: unknown; name: string }>
-    )
-      .filter((a) => a._id != null)
-      .map((a) => ({ adminId: String(a._id), name: a.name ?? '' })),
     pagination: {
       currentPage: params.page,
       totalPages: Math.ceil(total / params.limit),

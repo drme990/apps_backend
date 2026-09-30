@@ -889,6 +889,29 @@ export async function POST(request: NextRequest) {
     const isPartialPayment = !isFullPayment;
     const paymentType: 'full' | 'partial' = isPartialPayment ? 'partial' : 'full';
 
+    // Invoice values are receipts proving the paid amount — they can't
+    // exceed it by more than 10%. Only same-currency invoices are
+    // comparable; the create form enforces the same rule client-side.
+    if (!isEasykash) {
+      const invoiceTotal = initialInvoiceUrls.reduce(
+        (sum, inv) =>
+          inv.currency === currencyUpper
+            ? sum + (Number(inv.value) || 0)
+            : sum,
+        0,
+      );
+      if (invoiceTotal > paidAmountValue * 1.1 + 0.001) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'Invoice value cannot exceed the paid amount by more than 10%',
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     const orderPayload = {
       items: orderItemsPayload,
       isGuest: !resolvedUserId,
