@@ -40,3 +40,16 @@ jobs:
           docker compose pull backend
           docker compose up -d backend
           docker image prune -f
+          docker images ghcr.io/drme990/apps_backend --format '{{.ID}} {{.CreatedAt}}' \
+            | sort -rk2 | awk '!seen[$1]++ {print $1}' \
+            | tail -n +6 | xargs -r docker rmi || true
+
+      - name: Prune old GHCR versions (keep last 5)
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: user
+          token: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+          image-names: apps_backend
+          tag-selection: both
+          keep-n-most-recent: 5
+          cut-off: 1h
