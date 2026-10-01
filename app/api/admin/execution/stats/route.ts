@@ -336,7 +336,7 @@ export async function GET(request: NextRequest) {
       },
     ] as PipelineStage[];
 
-    const results = await Order.aggregate(prePipeline);
+    const results = await Order.aggregate(prePipeline, { allowDiskUse: true });
 
     const totalItems = results.reduce(
       (sum, cat) => sum + (cat.totalItems || 0),

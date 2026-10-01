@@ -267,7 +267,7 @@ export async function GET(request: NextRequest) {
       },
     ];
 
-    const results = await Order.aggregate(pipeline);
+    const results = await Order.aggregate(pipeline, { allowDiskUse: true });
 
     const totalItems = results.reduce(
       (sum, cat) => sum + (cat.totalItems || 0),

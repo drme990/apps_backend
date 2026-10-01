@@ -357,7 +357,7 @@ export async function GET(request: NextRequest) {
       },
     ];
 
-    const facetResult = await Order.aggregate(facetPipeline);
+    const facetResult = await Order.aggregate(facetPipeline, { allowDiskUse: true });
     const totalCount = facetResult[0]?.totalCount[0]?.count || 0;
     const orders = facetResult[0]?.orders || [];
 

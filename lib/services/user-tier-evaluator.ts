@@ -187,7 +187,7 @@ async function getAllUserStats(): Promise<Map<string, PrecomputedUserStats>> {
     },
   ];
 
-  const rows = await Order.aggregate(pipeline);
+  const rows = await Order.aggregate(pipeline, { allowDiskUse: true });
 
   const map = new Map<string, PrecomputedUserStats>();
 

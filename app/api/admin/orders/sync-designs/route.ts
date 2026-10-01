@@ -175,7 +175,7 @@ async function getLatestVersions(
         latestVersion: { $first: '$$ROOT' },
       },
     },
-  ]);
+  ], { allowDiskUse: true });
 
   const map = new Map<string, { version: number; archivedUrl: string }>();
   for (const entry of latestVersions) {

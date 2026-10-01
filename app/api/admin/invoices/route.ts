@@ -208,7 +208,7 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const result = await Order.aggregate(pipeline);
+    const result = await Order.aggregate(pipeline, { allowDiskUse: true });
     const facet = result[0] || { rows: [], total: [], statusCounts: [] };
     const rows = (facet.rows || []) as Array<Record<string, unknown>>;
     const total = (facet.total?.[0]?.count as number) || 0;

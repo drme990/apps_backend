@@ -77,7 +77,7 @@ export async function GET() {
         },
         { $match: { effectiveExecutionDate: getTomorrowDate() } },
         { $count: 'count' },
-      ]).then((result) => result[0]?.count ?? 0),
+      ], { allowDiskUse: true }).then((result) => result[0]?.count ?? 0),
     ]);
 
     return NextResponse.json({

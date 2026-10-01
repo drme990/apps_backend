@@ -1049,6 +1049,7 @@ OrderSchema.pre(['updateOne', 'updateMany', 'findOneAndUpdate'], function () {
 });
 
 OrderSchema.index({ createdAt: -1 });
+OrderSchema.index({ createdAt: -1, _id: -1 });
 OrderSchema.index({ statusUpdateTime: -1 });
 OrderSchema.index({ status: 1, createdAt: -1 });
 OrderSchema.index({ status: 1, statusUpdateTime: -1 });

@@ -17,6 +17,12 @@ const SUPPORTED_EARNINGS_CURRENCIES: readonly SupportedEarningsCurrency[] = [
   'EUR',
 ];
 
+// Disk-sort safety net — aggregations over the orders collection can
+// exceed MongoDB's 32MB in-memory sort/group limit (error 292) as data
+// grows; allowDiskUse opts into disk-based sorting so it never throws.
+const ordersAgg = (pipeline: Parameters<typeof Order.aggregate>[0]) =>
+  Order.aggregate(pipeline, { allowDiskUse: true });
+
 function getLastDaysRange(days: number): Date {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -158,7 +164,7 @@ export async function GET(request: Request) {
       ordersByLocation,
     ] = await Promise.all([
       // Legacy chart: Orders by country
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -181,7 +187,7 @@ export async function GET(request: Request) {
       ]),
 
       // Legacy chart: Orders by weekday
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -202,7 +208,7 @@ export async function GET(request: Request) {
       ]),
 
       // Revenue by day (last 30 days)
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -225,7 +231,7 @@ export async function GET(request: Request) {
       ]),
 
       // Revenue by month (last 12 months)
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -247,7 +253,7 @@ export async function GET(request: Request) {
       ]),
 
       // Orders by status
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -263,7 +269,7 @@ export async function GET(request: Request) {
       ]),
 
       // Payment types
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -279,7 +285,7 @@ export async function GET(request: Request) {
       ]),
 
       // Top products by sold quantity
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -298,7 +304,7 @@ export async function GET(request: Request) {
       ]),
 
       // Earnings by currency from paid payments records.
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,
@@ -330,7 +336,7 @@ export async function GET(request: Request) {
       ]),
 
       // Orders by location (NEW)
-      Order.aggregate([
+      ordersAgg([
         {
           $match: {
             ...matchFilter,

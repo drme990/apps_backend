@@ -5,6 +5,14 @@ import Booking from '@/lib/models/Booking';
 import Category from '@/lib/models/Categories';
 import { normalizeCountryName } from '@/lib/country-visibility';
 
+// Disk-sort safety net — sorting/grouping the whole orders collection
+// exceeds MongoDB's 32MB in-memory limit (error 292) as data grows;
+// allowDiskUse opts into disk-based sorting so it can never throw.
+const ordersAgg = (pipeline: mongoose.PipelineStage[]) =>
+  Order.aggregate(pipeline, { allowDiskUse: true });
+const achievementsAgg = (pipeline: mongoose.PipelineStage[]) =>
+  AdminAchievement.aggregate(pipeline, { allowDiskUse: true });
+
 /**
  * Booking Intent service — see Booking-intent.md.
  *
@@ -402,7 +410,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
   const pipelineStages = intentPipelineStages();
 
   const [listResult, countsAgg] = await Promise.all([
-    Order.aggregate([
+    ordersAgg([
       { $match: scopeMatch },
       { $sort: { createdAt: -1, _id: -1 } },
       ...pipelineStages,
@@ -416,7 +424,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
     ]),
     // Per-customer status counts — each customer counts once, under the
     // derived status of their latest order.
-    Order.aggregate([
+    ordersAgg([
       { $match: scopeMatch },
       { $sort: { createdAt: -1, _id: -1 } },
       ...pipelineStages,
@@ -624,7 +632,7 @@ export async function getBookingIntentStats(
   // contacted → live 'talking' count (no date range)
   // converted → records that went paid in range
   const [claimedRows, contactedRows, convertedRows] = await Promise.all([
-    AdminAchievement.aggregate([
+    achievementsAgg([
       { $match: claimedMatch },
       {
         $group: {
@@ -635,7 +643,7 @@ export async function getBookingIntentStats(
         },
       },
     ]),
-    AdminAchievement.aggregate([
+    achievementsAgg([
       { $match: { status: 'talking' } },
       {
         $group: {
@@ -645,7 +653,7 @@ export async function getBookingIntentStats(
         },
       },
     ]),
-    AdminAchievement.aggregate([
+    achievementsAgg([
       { $match: paidMatch },
       {
         $group: {

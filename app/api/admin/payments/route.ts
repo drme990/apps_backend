@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
             ordersCount: { $sum: 1 },
           },
         },
-      ]),
+      ], { allowDiskUse: true }),
       Order.countDocuments(paidCompletedQuery),
     ]);
 
@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
           totalRemaining: { $sum: { $ifNull: ['$remainingAmount', 0] } },
         },
       },
-    ]);
+    ], { allowDiskUse: true });
 
     const remainingSummary = remainingRows[0] || { totalRemaining: 0 };
 
