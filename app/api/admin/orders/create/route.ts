@@ -879,8 +879,12 @@ export async function POST(request: NextRequest) {
       orderStatus = isPartialManualPayment ? 'partial-paid' : 'paid';
     }
 
+    // The paid amount is stored as entered — it may exceed the order
+    // total on purpose: admins overpay when sub-orders will be created
+    // later and the surplus covers them (combined totals stay ≤ paid →
+    // the order remains 'paid'). Remaining is clamped to 0 either way.
     const paidAmountValue = isFullPayment
-      ? (isEasykash ? 0 : totalAmount)
+      ? (isEasykash ? 0 : Math.max(requestedPaid, totalAmount))
       : requestedPaid;
     const remainingAmountValue = isFullPayment
       ? (isEasykash ? totalAmount : 0)
@@ -1148,7 +1152,11 @@ export async function POST(request: NextRequest) {
       // field, NOT from the invoice values. The invoice is just an
       // attached document. Invoice amounts are only used as payments
       // when uploading invoices to an EXISTING order (PATCH route).
-      const paymentRecordAmount = isPartialManualPayment ? requestedPaid : totalAmount;
+      // Store the real paid amount — may exceed the order total when the
+      // admin prepays for sub-orders. calculateOrderFinancials caps
+      // paidAmount at fullAmount for display, but this record keeps the
+      // surplus so the order stays 'paid' as sub-orders grow the total.
+      const paymentRecordAmount = isPartialManualPayment ? requestedPaid : paidAmountValue;
       order.payments = [
         {
           paymentId: `manual_${Date.now()}`,
