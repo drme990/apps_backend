@@ -35,13 +35,14 @@ export async function GET(request: NextRequest) {
 
     const skip = (page - 1) * limit;
 
-    const products = await Product.find(query)
-      .sort({ displayOrder: 1, createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    const total = await Product.countDocuments(query);
+    const [products, total] = await Promise.all([
+      Product.find(query)
+        .sort({ displayOrder: 1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Product.countDocuments(query),
+    ]);
     const totalPages = Math.ceil(total / limit);
 
     // Normalize product media and reservation fields

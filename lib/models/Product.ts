@@ -371,6 +371,7 @@ const ProductSchema = new mongoose.Schema<IProduct>(
 );
 
 ProductSchema.index({ isDeleted: 1, isActive: 1, displayOrder: 1 });
+ProductSchema.index({ isActive: 1, displayOrder: 1, createdAt: -1 });
 
 // Auto-migrate old sizes that are missing basePrice/baseCurrency (now
 // required by the schema). Populate from prices[] so save() doesn't fail
