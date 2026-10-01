@@ -41,6 +41,10 @@ export async function GET(request: NextRequest) {
       country: searchParams.get('country') || undefined,
       intention: searchParams.get('intention') || undefined,
       referralId: searchParams.get('referralId') || undefined,
+      sortBy:
+        searchParams.get('sortBy') === 'amount' ? 'amount' : undefined,
+      sortOrder:
+        searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc',
       page,
       limit,
     });

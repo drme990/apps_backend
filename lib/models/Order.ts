@@ -95,7 +95,8 @@ export type PaymentMethod =
   | 'insta_pay'
   | 'vodafone_cash'
   | 'paypal'
-  | 'binance';
+  | 'binance'
+  | 'apple_pay';
 
 export type PaymentType = 'full' | 'half' | 'partial';
 
@@ -542,6 +543,7 @@ const PaymentSchema = new mongoose.Schema<IPayment>(
         'vodafone_cash',
         'paypal',
         'binance',
+        'apple_pay',
       ],
     },
     easykashRef: { type: String, index: true },
@@ -799,6 +801,7 @@ const OrderSchema = new mongoose.Schema<IOrder>(
         'vodafone_cash',
         'paypal',
         'binance',
+        'apple_pay',
       ],
       index: true,
     },

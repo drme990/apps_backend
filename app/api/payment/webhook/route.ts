@@ -100,6 +100,7 @@ function mapPaymentMethod(
 ): PaymentMethod {
   const method = (methodRaw || '').toLowerCase();
 
+  if (method.includes('apple')) return 'apple_pay';
   if (method.includes('card')) return 'card';
   if (method.includes('wallet')) return 'wallet';
   if (method.includes('bank')) return 'bank_transfer';

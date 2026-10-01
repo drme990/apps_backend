@@ -157,6 +157,9 @@ export interface ListIntentsParams {
   intention?: string;
   /** Order referralId. */
   referralId?: string;
+  /** Column sort — currently only 'amount' is sortable. */
+  sortBy?: 'amount';
+  sortOrder?: 'asc' | 'desc';
   page: number;
   limit: number;
 }
@@ -403,6 +406,52 @@ export async function listBookingIntents(params: ListIntentsParams) {
   const query = { $and: docFilters };
   const skip = (params.page - 1) * params.limit;
 
+  // Row ordering — applied AFTER grouping so it sorts customers, not
+  // orders.
+  // Default (the work queue): most payment attempts first — the hottest
+  // leads — then oldest `updatedAt` first so untouched customers rise
+  // to the top (+ _id tiebreak). 'amount' sorts by the displayed value
+  // (fullAmount with totalAmount fallback — same expression the row
+  // emits).
+  const sortDocs: mongoose.PipelineStage.FacetPipelineStage[] =
+    params.sortBy === 'amount'
+      ? [
+        {
+          $addFields: {
+            sortAmt: { $ifNull: ['$doc.fullAmount', '$doc.totalAmount'] },
+          },
+        },
+        {
+          $sort: {
+            sortAmt: params.sortOrder === 'asc' ? 1 : -1,
+            'doc._id': -1,
+          },
+        },
+      ]
+      : [
+        {
+          $addFields: {
+            // paymentAttempts?.length ?? payments?.length — same as the
+            // row's paymentAttemptCount.
+            sortTries: {
+              $size: {
+                $ifNull: [
+                  '$doc.paymentAttempts',
+                  { $ifNull: ['$doc.payments', []] },
+                ],
+              },
+            },
+          },
+        },
+        {
+          $sort: {
+            sortTries: -1,
+            'doc.updatedAt': 1,
+            'doc._id': -1,
+          },
+        },
+      ];
+
   // Status counts respect every filter EXCEPT the status one — tab badges.
   const countQuery = { $and: docFilters.filter((c) => c !== statusClause) };
 
@@ -417,7 +466,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
       { $match: query },
       {
         $facet: {
-          docs: [{ $skip: skip }, { $limit: params.limit }],
+          docs: [...sortDocs, { $skip: skip }, { $limit: params.limit }],
           total: [{ $count: 'n' }],
         },
       },
