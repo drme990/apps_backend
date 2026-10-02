@@ -10,8 +10,6 @@ import { normalizeCountryName } from '@/lib/country-visibility';
 // allowDiskUse opts into disk-based sorting so it can never throw.
 const ordersAgg = (pipeline: mongoose.PipelineStage[]) =>
   Order.aggregate(pipeline, { allowDiskUse: true });
-const achievementsAgg = (pipeline: mongoose.PipelineStage[]) =>
-  AdminAchievement.aggregate(pipeline, { allowDiskUse: true });
 
 /**
  * Booking Intent service — see Booking-intent.md.
@@ -143,7 +141,9 @@ export async function getBookingIntentDelayMinutes(): Promise<number> {
 
 // ─── List ─────────────────────────────────────────────────────────────
 
-export interface ListIntentsParams {
+/** Every filter the booking-intent page can apply — shared by the list
+ * and the admin stats so both always describe the SAME customer set. */
+export interface IntentFilterParams {
   status?: BookingIntentStatus | 'all';
   source?: 'manasik' | 'ghadaq';
   search?: string;
@@ -157,6 +157,9 @@ export interface ListIntentsParams {
   intention?: string;
   /** Order referralId. */
   referralId?: string;
+}
+
+export interface ListIntentsParams extends IntentFilterParams {
   /** Column sort — currently only 'amount' is sortable. */
   sortBy?: 'amount';
   sortOrder?: 'asc' | 'desc';
@@ -222,6 +225,7 @@ function intentPipelineStages(): mongoose.PipelineStage[] {
               adminName: 1,
               adminEmail: 1,
               claimedAt: 1,
+              paidAt: 1,
             },
           },
         ],
@@ -242,15 +246,13 @@ function intentPipelineStages(): mongoose.PipelineStage[] {
             0,
           ],
         },
-        hasPaidAch: {
-          $gt: [
+        paidAch: {
+          $arrayElemAt: [
             {
-              $size: {
-                $filter: {
-                  input: '$ach',
-                  as: 'a',
-                  cond: { $eq: ['$$a.status', 'paid'] },
-                },
+              $filter: {
+                input: '$ach',
+                as: 'a',
+                cond: { $eq: ['$$a.status', 'paid'] },
               },
             },
             0,
@@ -274,31 +276,40 @@ function intentPipelineStages(): mongoose.PipelineStage[] {
               $cond: [
                 { $gt: ['$talkingAch', null] },
                 'contacted',
-                { $cond: ['$hasPaidAch', 'converted', 'new'] },
+                { $cond: [{ $gt: ['$paidAch', null] }, 'converted', 'new'] },
               ],
             },
           ],
         },
       },
     },
-    // Keep the docs lean — `ach` and the flag aren't needed downstream.
-    { $project: { ach: 0, hasPaidAch: 0 } },
+    // Keep the docs lean — the raw array isn't needed downstream.
+    // `paidAch` stays: the stats use it as the owner of converted rows.
+    { $project: { ach: 0 } },
   ];
 }
 
-export async function listBookingIntents(params: ListIntentsParams) {
-  const delayMinutes = await getBookingIntentDelayMinutes();
-  const cutoff = new Date(Date.now() - delayMinutes * 60_000);
+// ── Scope: EVERY customer order counts for the "latest order" test.
+// Sub-orders share their parent's lifecycle and free orders are never
+// purchases — both excluded entirely. Manual orders count: they are
+// real bookings for that customer.
+const SCOPE_MATCH = {
+  isFreeOrder: { $ne: true },
+  isSubOrder: { $ne: true },
+};
 
-  // ── Scope: EVERY customer order counts for the "latest order" test.
-  // Sub-orders share their parent's lifecycle and free orders are never
-  // purchases — both excluded entirely. Manual orders count: they are
-  // real bookings for that customer.
-  const scopeMatch = {
-    isFreeOrder: { $ne: true },
-    isSubOrder: { $ne: true },
-  };
-
+/**
+ * Post-grouping $match clauses — eligibility + every page filter.
+ * Shared by the list and the admin stats so both describe the SAME
+ * customer set.
+ */
+async function buildIntentDocFilters(
+  params: IntentFilterParams,
+  cutoff: Date,
+): Promise<{
+  docFilters: Record<string, unknown>[];
+  statusClause: Record<string, unknown> | null;
+}> {
   // ── Eligibility: the customer's LATEST order decides everything.
   // Open/failed → live intent (delay-gated so fresh orders get time
   // to complete). Paid-like → keep the row for the overview only when
@@ -403,6 +414,17 @@ export async function listBookingIntents(params: ListIntentsParams) {
     docFilters.push({ 'doc.referralId': params.referralId });
   }
 
+  return { docFilters, statusClause };
+}
+
+export async function listBookingIntents(params: ListIntentsParams) {
+  const delayMinutes = await getBookingIntentDelayMinutes();
+  const cutoff = new Date(Date.now() - delayMinutes * 60_000);
+  const { docFilters, statusClause } = await buildIntentDocFilters(
+    params,
+    cutoff,
+  );
+
   const query = { $and: docFilters };
   const skip = (params.page - 1) * params.limit;
 
@@ -460,7 +482,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
 
   const [listResult, countsAgg] = await Promise.all([
     ordersAgg([
-      { $match: scopeMatch },
+      { $match: SCOPE_MATCH },
       { $sort: { createdAt: -1, _id: -1 } },
       ...pipelineStages,
       { $match: query },
@@ -474,7 +496,7 @@ export async function listBookingIntents(params: ListIntentsParams) {
     // Per-customer status counts — each customer counts once, under the
     // derived status of their latest order.
     ordersAgg([
-      { $match: scopeMatch },
+      { $match: SCOPE_MATCH },
       { $sort: { createdAt: -1, _id: -1 } },
       ...pipelineStages,
       { $match: countQuery },
@@ -658,62 +680,61 @@ export async function syncAchievementOnOrderPaid(
 
 // ─── Stats (achievements action permission) ───────────────────────────
 
-export async function getBookingIntentStats(
-  fromDate?: string,
-  toDate?: string,
-) {
-  const range: Record<string, Date> = {};
-  if (fromDate) range.$gte = new Date(fromDate);
-  if (toDate) {
-    const end = new Date(toDate);
-    end.setHours(23, 59, 59, 999);
-    range.$lte = end;
-  }
-  const inRange = Object.keys(range).length > 0;
+/**
+ * Per-admin performance over the EXACT customer set the list shows —
+ * same scope, eligibility, delay gating, and every page filter
+ * (including the status tab). Stats are never derived from the
+ * achievements collection globally: an achievement only counts when
+ * its customer is actually displayed.
+ *
+ * Per displayed row, the OWNING achievement is `talkingAch` (live
+ * claim) falling back to `paidAch` (converted rows):
+ *   claimed   → owner achievement's `claimedAt` inside the date range
+ *               (all of them when no range is set)
+ *   contacted → rows with a live talking achievement
+ *   converted → rows shown as converted (paid-like latest order or a
+ *               paid achievement)
+ * Each row counts once, under one admin — the same way it renders once.
+ */
+export async function getBookingIntentStats(params: IntentFilterParams) {
+  const delayMinutes = await getBookingIntentDelayMinutes();
+  const cutoff = new Date(Date.now() - delayMinutes * 60_000);
+  const { docFilters } = await buildIntentDocFilters(params, cutoff);
 
-  const claimedMatch: Record<string, unknown> = {};
-  if (inRange) claimedMatch.claimedAt = range;
+  const rows = (await ordersAgg([
+    { $match: SCOPE_MATCH },
+    { $sort: { createdAt: -1, _id: -1 } },
+    ...intentPipelineStages(),
+    { $match: { $and: docFilters } },
+    {
+      $project: {
+        _id: 0,
+        intentStatus: 1,
+        talkingAch: 1,
+        paidAch: 1,
+      },
+    },
+  ])) as Array<{
+    intentStatus: BookingIntentStatus;
+    talkingAch?: AchievementRef | null;
+    paidAch?: AchievementRef | null;
+  }>;
 
-  const paidMatch: Record<string, unknown> = { status: 'paid' };
-  if (inRange) paidMatch.paidAt = range;
-
-  // claimed → records claimed in range
-  // contacted → live 'talking' count (no date range)
-  // converted → records that went paid in range
-  const [claimedRows, contactedRows, convertedRows] = await Promise.all([
-    achievementsAgg([
-      { $match: claimedMatch },
-      {
-        $group: {
-          _id: '$adminId',
-          name: { $first: '$adminName' },
-          email: { $first: '$adminEmail' },
-          claimed: { $sum: 1 },
-        },
-      },
-    ]),
-    achievementsAgg([
-      { $match: { status: 'talking' } },
-      {
-        $group: {
-          _id: '$adminId',
-          name: { $first: '$adminName' },
-          contacted: { $sum: 1 },
-        },
-      },
-    ]),
-    achievementsAgg([
-      { $match: paidMatch },
-      {
-        $group: {
-          _id: '$adminId',
-          name: { $first: '$adminName' },
-          email: { $first: '$adminEmail' },
-          converted: { $sum: 1 },
-        },
-      },
-    ]),
-  ]);
+  const hasRange = Boolean(params.fromDate || params.toDate);
+  const from = params.fromDate ? new Date(params.fromDate).getTime() : null;
+  const to = params.toDate
+    ? (() => {
+      const end = new Date(params.toDate);
+      end.setHours(23, 59, 59, 999);
+      return end.getTime();
+    })()
+    : null;
+  const claimedInRange = (claimedAt?: Date | string | null) => {
+    if (!claimedAt) return false;
+    if (!hasRange) return true;
+    const t = new Date(claimedAt).getTime();
+    return (!from || t >= from) && (!to || t <= to);
+  };
 
   const byAdmin = new Map<
     string,
@@ -728,13 +749,18 @@ export async function getBookingIntentStats(
     }
   >();
 
-  const ensure = (id: string) => {
+  for (const r of rows) {
+    // 'new' rows have no achievement — nobody owns them.
+    const owner = r.talkingAch ?? r.paidAch;
+    if (!owner?.adminId) continue;
+
+    const id = String(owner.adminId);
     let row = byAdmin.get(id);
     if (!row) {
       row = {
         adminId: id,
-        name: '',
-        email: '',
+        name: owner.adminName ?? '',
+        email: owner.adminEmail ?? '',
         claimed: 0,
         contacted: 0,
         converted: 0,
@@ -742,32 +768,15 @@ export async function getBookingIntentStats(
       };
       byAdmin.set(id, row);
     }
-    return row;
-  };
 
-  for (const r of claimedRows as Array<Record<string, unknown>>) {
-    const row = ensure(String(r._id));
-    row.name = String(r.name ?? '');
-    row.email = String(r.email ?? '');
-    row.claimed = Number(r.claimed ?? 0);
-  }
-  for (const r of contactedRows as Array<Record<string, unknown>>) {
-    if (r._id == null) continue;
-    const row = ensure(String(r._id));
-    row.name = row.name || String(r.name ?? '');
-    row.contacted = Number(r.contacted ?? 0);
-  }
-  for (const r of convertedRows as Array<Record<string, unknown>>) {
-    if (r._id == null) continue;
-    const row = ensure(String(r._id));
-    row.name = row.name || String(r.name ?? '');
-    row.email = row.email || String(r.email ?? '');
-    row.converted = Number(r.converted ?? 0);
+    if (claimedInRange(owner.claimedAt)) row.claimed++;
+    if (r.intentStatus === 'contacted') row.contacted++;
+    else if (r.intentStatus === 'converted') row.converted++;
   }
 
   const admins = [...byAdmin.values()].map((row) => ({
     ...row,
-    // Hit rate: share of this admin's in-range claims that converted.
+    // Hit rate: share of this admin's in-scope claims that converted.
     conversionRate:
       row.claimed > 0
         ? Math.round((row.converted / row.claimed) * 1000) / 10
@@ -776,4 +785,99 @@ export async function getBookingIntentStats(
 
   admins.sort((a, b) => b.converted - a.converted || b.claimed - a.claimed);
   return { admins };
+}
+
+interface AchievementRef {
+  _id?: mongoose.Types.ObjectId;
+  adminId: mongoose.Types.ObjectId;
+  adminName: string;
+  adminEmail: string;
+  status: 'talking' | 'paid';
+  claimedAt: Date;
+  paidAt?: Date;
+}
+
+// ─── Per-admin achievements (booking-intent stats modal) ────────────
+
+/**
+ * The exact displayed rows this admin OWNS — same pipeline, scope,
+ * eligibility, delay, and every page filter as the list + stats, so the
+ * modal rows always match the numbers in the stats table (talking ↔
+ * contacted, paid ↔ converted). Each row shows the customer's LATEST
+ * order — the same `doc` the table renders — not the order that was
+ * originally claimed.
+ */
+export async function getAdminAchievements(
+  adminId: string,
+  params: IntentFilterParams,
+) {
+  const delayMinutes = await getBookingIntentDelayMinutes();
+  const cutoff = new Date(Date.now() - delayMinutes * 60_000);
+  const { docFilters } = await buildIntentDocFilters(params, cutoff);
+
+  const rows = (await ordersAgg([
+    { $match: SCOPE_MATCH },
+    { $sort: { createdAt: -1, _id: -1 } },
+    ...intentPipelineStages(),
+    { $match: { $and: docFilters } },
+    // Owning achievement — same resolution the stats use.
+    {
+      $addFields: {
+        ownerAch: { $ifNull: ['$talkingAch', '$paidAch'] },
+      },
+    },
+    {
+      $match: {
+        'ownerAch.adminId': new mongoose.Types.ObjectId(adminId),
+      },
+    },
+    // Talking rows first (active conversations), newest claims first.
+    {
+      $addFields: {
+        sortKey: { $cond: [{ $eq: ['$intentStatus', 'contacted'] }, 0, 1] },
+      },
+    },
+    { $sort: { sortKey: 1, 'ownerAch.claimedAt': -1 } },
+    { $limit: 200 },
+  ])) as Array<{
+    _id: string;
+    doc: IOrder;
+    intentStatus: BookingIntentStatus;
+    ownerAch: AchievementRef;
+  }>;
+
+  return {
+    achievements: rows.map((row) => {
+      const order = row.doc;
+      const owner = row.ownerAch;
+      return {
+        _id: String(owner._id ?? row._id),
+        customerKey: String(row._id),
+        // Badge mirrors the derived row status: a converted row whose
+        // achievement hasn't flipped to 'paid' yet still reads paid.
+        status: (row.intentStatus === 'converted'
+          ? 'paid'
+          : 'talking') as 'talking' | 'paid',
+        claimedAt: owner.claimedAt,
+        paidAt: owner.paidAt,
+        customer: {
+          fullName: order?.billingData?.fullName ?? '',
+          email: order?.billingData?.email ?? '',
+          phone: order?.billingData?.phone ?? '',
+          country: order?.billingData?.country ?? '',
+        },
+        reservationName: order ? extractReservationName(order) : undefined,
+        order: order
+          ? {
+            _id: String(order._id),
+            orderNumber: order.orderNumber ?? '',
+            status: order.status,
+            createdAt: order.createdAt,
+            amount: order.fullAmount ?? order.totalAmount ?? 0,
+            currency: order.currency ?? 'EGP',
+          }
+          : undefined,
+      };
+    }),
+  };
 }

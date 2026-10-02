@@ -18,7 +18,6 @@ import { trackTiktokPurchase } from '@/lib/services/tiktok-capi';
 import { trackOpenAIPurchase } from '@/lib/services/openai-capi';
 import { trackSnapPurchase } from '@/lib/services/snapchat-capi';
 import { sendOrderConfirmationEmail } from '@/lib/services/email';
-import WebhookEvent from '@/lib/models/WebhookEvent';
 import { parseJsonBody } from '@/lib/validation/http';
 import { webhookSchema } from '@/lib/validation/schemas';
 import { evaluateAndUpdateUserTier } from '@/lib/services/user-tier-evaluator';
@@ -162,31 +161,21 @@ export async function POST(request: NextRequest) {
     const bypassSignatureValidation =
       shouldBypassSignatureValidationForTesting(request);
 
-    if (bypassSignatureValidation) {
-      console.warn(
-        'EasyKash webhook signature validation bypassed for test mode',
-      );
-    } else {
+    if (!bypassSignatureValidation) {
       // Signature verification is mandatory unless test bypass mode is enabled.
       if (!process.env.EASYKASH_HMAC_SECRET) {
-        console.error(
-          'EasyKash webhook rejected: EASYKASH_HMAC_SECRET is not configured',
-        );
         return NextResponse.json(
           { error: 'Webhook signature verification is not configured' },
           { status: 503 },
         );
       }
 
-      if (!body.signatureHash) {
-        console.warn(
-          'EasyKash webhook: Missing signatureHash in payload or headers. Bypassing signature check since EasyKash sometimes omits it on pending/cancel.',
-        );
-      } else {
+      // Missing signatureHash is tolerated — EasyKash sometimes omits it
+      // on pending/cancel callbacks.
+      if (body.signatureHash) {
         const isValid = verifyCallbackSignature(body);
 
         if (!isValid) {
-          console.error('EasyKash webhook: invalid signature');
           return NextResponse.json(
             { error: 'Invalid signature' },
             { status: 403 },
@@ -214,22 +203,13 @@ export async function POST(request: NextRequest) {
     // on pending/cancel callbacks), so we can't reject on its absence.
     // When present and parseable, reject stale callbacks to prevent replays.
     if (timestamp && !isNaN(timestamp) && now - timestamp > MAX_WEBHOOK_AGE) {
-      console.error(
-        `EasyKash webhook rejected: timestamp expired (age=${now - timestamp}s, max=${MAX_WEBHOOK_AGE}s, value=${body.Timestamp})`,
-      );
       return NextResponse.json(
         { error: 'Webhook timestamp expired' },
         { status: 403 },
       );
     }
-
-    if (body.Timestamp && (!timestamp || isNaN(timestamp))) {
-      // Timestamp was provided but couldn't be parsed — log as a warning
-      // (not an error) and continue, since the format varies across providers.
-      console.warn(
-        `EasyKash webhook: timestamp present but unparseable (${body.Timestamp}), skipping freshness check`,
-      );
-    }
+    // An unparseable timestamp skips the freshness check — the format
+    // varies across providers.
 
     const {
       customerReference,
@@ -266,27 +246,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Idempotency key guarantees we process each callback event once.
-    const eventKey = `${String(easykashRef || 'no_ref')}:${customerRefStr || 'no_customer_ref'}:${normalizedStatus || 'UNKNOWN'}`;
-    try {
-      await WebhookEvent.create({
-        provider: 'easykash',
-        eventKey,
-        orderReference: customerRefStr || 'unknown',
-      });
-    } catch (error) {
-      const mongoError = error as { code?: number };
-      if (mongoError?.code === 11000) {
-        console.log('Webhook duplicate ignored:', eventKey);
-        return NextResponse.json({ success: true, duplicate: true });
-      }
-
-      throw error;
-    }
-
     if (parsedReference?.kind === 'custom') {
-      // Standalone custom links are not bound to an order, so processing
-      // ends after idempotency + payment link status synchronization.
+      // Standalone custom links are not bound to an order — the link
+      // status update above is already idempotent ($ne: 'used'), so
+      // processing ends here.
       return NextResponse.json({ success: true, type: 'custom_link' });
     }
 
@@ -322,7 +285,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (!order) {
-      console.error('Webhook order not found:', customerRefStr);
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
@@ -373,6 +335,18 @@ export async function POST(request: NextRequest) {
       paymentRecord = order.payments[order.payments.length - 1];
     }
 
+    // Idempotency — the payment record stores the gateway ref and the
+    // status of the last callback applied to it. A callback carrying the
+    // same ref + status is an exact replay; nothing left to do.
+    const isReplayedEvent =
+      Boolean(easykashRef) &&
+      paymentRecord?.easykashRef === easykashRef &&
+      String(paymentRecord?.easykashResponse?.status || '') ===
+      normalizedStatus;
+    if (isReplayedEvent) {
+      return NextResponse.json({ success: true, duplicate: true });
+    }
+
     const expectedGatewayAmount = Number(paymentRecord?.gatewayAmount || 0);
     const expectedOrderAmount = Number(
       paymentRecord?.orderAmount ||
@@ -389,10 +363,6 @@ export async function POST(request: NextRequest) {
       expectedAmountForWarning > 0 &&
       Math.abs(webhookAmount - expectedAmountForWarning) > 1
     ) {
-      console.error(
-        `payment.amount_mismatch for ${customerRefStr}: webhook=${webhookAmount} expected=${expectedAmountForWarning}`,
-      );
-
       // Flag the order for admin review — a mismatch on a paid event can
       // mean a stale gateway link paid against totals the order was
       // updated away from (enhance-order-createing.md §3.4). Never
@@ -524,9 +494,7 @@ export async function POST(request: NextRequest) {
 
     // ── Sync shared fields with linked sub-order/parent ──
     if (order.isSubOrder || order.hasSubOrder) {
-      await syncSharedFields(String(order._id)).catch((err) => {
-        console.error(`[webhook] syncSharedFields failed:`, err);
-      });
+      await syncSharedFields(String(order._id)).catch(() => { });
     }
 
     const transitionedToPaid =
@@ -557,12 +525,7 @@ export async function POST(request: NextRequest) {
     // A paid order marks the talking admin's achievement as paid.
     // Fire-and-forget — never block the webhook on tracking.
     if (transitionedToPaid || transitionedToPartialPaid) {
-      syncAchievementOnOrderPaid(order.toObject()).catch((err) => {
-        console.error(
-          `[webhook] booking-intent sync failed for ${order.orderNumber}:`,
-          err instanceof Error ? err.message : err,
-        );
-      });
+      syncAchievementOnOrderPaid(order.toObject()).catch(() => { });
     }
 
     // ── Auto design generation ──────────────────────────────────────
@@ -573,12 +536,7 @@ export async function POST(request: NextRequest) {
       order.toObject(),
       orderStatusBefore,
       'auto_webhook',
-    ).catch((err) => {
-      console.error(
-        `[webhook] Auto design evaluation failed for order ${order.orderNumber}:`,
-        err instanceof Error ? err.message : err,
-      );
-    });
+    ).catch(() => { });
 
     if (transitionedToPaid) {
       const item = order.items?.[0];
@@ -753,8 +711,6 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('EasyKash webhook error:', error);
-
     captureException(error, {
       service: 'PaymentWebhook',
       operation: 'POST',

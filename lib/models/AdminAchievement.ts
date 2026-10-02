@@ -48,11 +48,10 @@ const AdminAchievementSchema = new mongoose.Schema<IAdminAchievement>(
 
 // A customer appears ONCE per admin — the unique key is the point system.
 AdminAchievementSchema.index({ adminId: 1, customerKey: 1 }, { unique: true });
-// List $lookup + exclusivity check ("is anyone talking to this customer").
+// List $lookup + exclusivity check ("is anyone talking to this customer")
+// + the paid hook's {customerKey, status:'talking'} update. Also covers
+// stats, which join by customerKey through the orders pipeline.
 AdminAchievementSchema.index({ customerKey: 1, status: 1 });
-// Achievements stats aggregations.
-AdminAchievementSchema.index({ status: 1, paidAt: 1 });
-AdminAchievementSchema.index({ claimedAt: 1 });
 
 const AdminAchievement =
   (mongoose.models.AdminAchievement as mongoose.Model<IAdminAchievement>) ||

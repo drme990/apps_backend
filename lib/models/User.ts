@@ -67,7 +67,6 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'admins',
         'users',
         'referrals',
-        'refTracker',
         'activityLogs',
         'appearance',
         'exchange',
@@ -80,11 +79,12 @@ const UserSchema = new mongoose.Schema<IUser, UserModel>(
         'orderDesigns',
         // Legacy values — kept in the enum so existing documents that still
         // carry them don't fail validation on save. They now live in
-        // allowedActions and are no longer offered as pages.
+        // allowedActions or were removed, and are no longer offered as pages.
         'orderStatsComponent',
         'export',
         'freeOrders',
-        'shares'
+        'shares',
+        'refTracker'
       ],
       default: [],
     },

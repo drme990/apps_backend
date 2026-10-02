@@ -2,32 +2,46 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/db';
 import { requireAdminAction, requireAdminPageAccess } from '@/lib/auth';
 import {
-  getBookingIntentStats,
+  getAdminAchievements,
   type BookingIntentStatus,
 } from '@/lib/services/order-intent';
+import mongoose from 'mongoose';
 
 const VALID_STATUSES = new Set(['all', 'new', 'contacted', 'converted']);
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     await connectDB();
+    // Opened from the booking-intent achievements stats — gate on the
+    // same orders page access as the list, not the admins page.
     const pageAuth = await requireAdminPageAccess('orders');
     if ('error' in pageAuth) return pageAuth.error;
 
-    // Achievements are an action-level permission — not everyone with
-    // orders access can see per-admin performance.
+    // Per-admin performance data — same action permission as the
+    // booking-intent stats endpoint.
     const auth = await requireAdminAction('achievements');
     if ('error' in auth) return auth.error;
 
-    const { searchParams } = request.nextUrl;
+    const { id } = await params;
+    if (!mongoose.isValidObjectId(id)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid user id' },
+        { status: 400 },
+      );
+    }
 
-    // Same filters as the list — stats describe the displayed rows.
+    // Same filters as the booking-intent list/stats — the modal shows
+    // exactly the displayed rows this admin owns.
+    const { searchParams } = request.nextUrl;
     const rawStatus = (searchParams.get('status') || 'all').toLowerCase();
     const status = (
       VALID_STATUSES.has(rawStatus) ? rawStatus : 'all'
     ) as BookingIntentStatus | 'all';
 
-    const stats = await getBookingIntentStats({
+    const data = await getAdminAchievements(id, {
       status,
       source:
         searchParams.get('source') === 'ghadaq' ||
@@ -42,12 +56,11 @@ export async function GET(request: NextRequest) {
       intention: searchParams.get('intention') || undefined,
       referralId: searchParams.get('referralId') || undefined,
     });
-
-    return NextResponse.json({ success: true, data: stats });
+    return NextResponse.json({ success: true, data });
   } catch (error) {
-    console.error('Error fetching booking-intent stats:', error);
+    console.error('Error fetching admin achievements:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch stats' },
+      { success: false, error: 'Failed to fetch admin achievements' },
       { status: 500 },
     );
   }
